@@ -13,6 +13,7 @@ from dataset.MMLU.download import download
 from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
 from AgentPrune.utils.const import AgentPrune_ROOT
+from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
 
 
@@ -81,6 +82,9 @@ async def main():
     
     score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size)
     print(f"Score: {score}")
+    print(f"Prompt Tokens: {PromptTokens.instance().value}")
+    print(f"Completion Tokens: {CompletionTokens.instance().value}")
+    print(f"Total Tokens: {PromptTokens.instance().value + CompletionTokens.instance().value}")
 
 
 

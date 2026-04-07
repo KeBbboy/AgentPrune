@@ -10,6 +10,7 @@ from AgentPrune.llm.format import Message
 from AgentPrune.llm.price import cost_count
 from AgentPrune.llm.llm import LLM
 from AgentPrune.llm.llm_registry import LLMRegistry
+from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
 
 OPENAI_API_KEYS = ['']
@@ -32,6 +33,10 @@ async def achat(
     msg: List[Dict],):
     client = AsyncOpenAI(base_url = _normalize_base_url(MINE_BASE_URL), api_key = MINE_API_KEY,)
     chat_completion = await client.chat.completions.create(messages = msg,model = model,)
+    usage = chat_completion.usage
+    if usage is not None:
+        PromptTokens.instance().value += usage.prompt_tokens or 0
+        CompletionTokens.instance().value += usage.completion_tokens or 0
     response = chat_completion.choices[0].message.content
     return response
     

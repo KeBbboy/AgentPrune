@@ -1,5 +1,6 @@
 from typing import Union, Dict, Any, List
 import itertools
+import re
 
 from AgentPrune.prompt.prompt_set import PromptSet
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
@@ -187,6 +188,15 @@ The first line of your reply must contain only one letter(for example : A, B, C 
                 answer = ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
-        if len(answer) > 0:
-            answer = answer[0] # Try to format the answer by taking the first letter
-        return answer
+        if len(answer) == 0:
+            return answer
+
+        first_line = answer.strip().splitlines()[0].strip()
+        if first_line in {"A", "B", "C", "D"}:
+            return first_line
+
+        match = re.search(r"\b([ABCD])\b", answer.upper())
+        if match is not None:
+            return match.group(1)
+
+        return answer[0]
