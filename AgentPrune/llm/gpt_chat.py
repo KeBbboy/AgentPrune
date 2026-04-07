@@ -20,11 +20,17 @@ MINE_BASE_URL = os.getenv('BASE_URL')
 MINE_API_KEY = os.getenv('API_KEY')
 
 
+def _normalize_base_url(base_url: Optional[str]) -> Optional[str]:
+    if not base_url:
+        return base_url
+    return base_url.removesuffix('/chat/completions')
+
+
 @retry(wait=wait_random_exponential(max=300), stop=stop_after_attempt(3))
 async def achat(
     model: str,
     msg: List[Dict],):
-    client = AsyncOpenAI(base_url = MINE_BASE_URL, api_key = MINE_API_KEY,)
+    client = AsyncOpenAI(base_url = _normalize_base_url(MINE_BASE_URL), api_key = MINE_API_KEY,)
     chat_completion = await client.chat.completions.create(messages = msg,model = model,)
     response = chat_completion.choices[0].message.content
     return response

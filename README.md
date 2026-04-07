@@ -21,9 +21,9 @@ We provide the code of our paper. The algorithm implementation code is in `Agent
 ### 📦 Install packages
 
 ```bash
-conda create -n agentprune python=3.10
-conda activate agentprune
-pip install -r requirements.txt
+uv venv --python 3.10
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
 ### 📊 Datasets

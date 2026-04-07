@@ -35,7 +35,7 @@ def parse_args():
                         help="Number of optimization iterations. Default 10.")
     parser.add_argument('--imp_per_iterations', type=int, default=5,
                         help="Prune every few iterations. Default 5.")
-    parser.add_argument('--num_rounds',type=int,default=1,
+    parser.add_argument('--num_rounds',type=int,default=2,
                         help="Number of optimization/inference rounds for one query")
     parser.add_argument('--pruning_rate', type=float, default=0.25,
                         help="The Rate of Pruning. Default 0.05.")
