@@ -6,6 +6,7 @@ import asyncio
 from typing import Union, Literal, List
 import argparse
 import random
+import copy
 
 from AgentPrune.graph.graph import Graph
 from dataset.mmlu_dataset import MMLUDataset
@@ -52,6 +53,10 @@ def parse_args():
                         help="Only keep the content after the last blank line for Critic, Mathematician, Psychologist, and Historian when sharing outputs.")
     parser.add_argument('--use_pruned_edge_tail_patch', action='store_true',
                         help="During evaluation, pass only the content after the last blank line for pruned spatial edges.")
+    parser.add_argument('--replace_high_cost_edges', action='store_true',
+                        help="After training, replace the highest-cost kept spatial edges with the lowest-cost pruned spatial edges for evaluation.")
+    parser.add_argument('--num_replaced_edges', type=int, default=2,
+                        help="Number of kept spatial edges to remove and pruned spatial edges to add back in replacement mode.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -85,9 +90,47 @@ async def main():
         graph.set_eval_mode(False)
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
                     lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate)
-    
+
     graph.set_eval_mode(True)
-    score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size)
+
+    if args.replace_high_cost_edges:
+        replacement_graph = copy.deepcopy(graph)
+        replacement_graph.share_cost_state(graph)
+        replacement_graph.set_eval_mode(True)
+        replacement_summary = replacement_graph.replace_high_cost_edges(args.num_replaced_edges)
+        print("Replacement Removed Edges:")
+        for edge in replacement_summary["removed_edges"]:
+            print(f"  {edge['src_role']}({edge['src_id']}) -> {edge['dst_role']}({edge['dst_id']}), "
+                  f"score={edge['score']:.4f}, token_cost={edge['token_cost']}, usage_count={edge['usage_count']}")
+        print("Replacement Added Edges:")
+        for edge in replacement_summary["added_edges"]:
+            print(f"  {edge['src_role']}({edge['src_id']}) -> {edge['dst_role']}({edge['dst_id']}), "
+                  f"score={edge['score']:.4f}, token_cost={edge['token_cost']}, usage_count={edge['usage_count']}")
+
+        eval_prompt_start = PromptTokens.instance().value
+        eval_completion_start = CompletionTokens.instance().value
+        score = await evaluate(
+            graph=replacement_graph,
+            dataset=dataset_val,
+            num_rounds=args.num_rounds,
+            limit_questions=limit_questions,
+            eval_batch_size=args.batch_size,
+        )
+        eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
+        eval_completion_used = CompletionTokens.instance().value - eval_completion_start
+        print(f"Replacement Score: {score}")
+        print(f"Replacement Eval Prompt Tokens: {eval_prompt_used}")
+        print(f"Replacement Eval Completion Tokens: {eval_completion_used}")
+    else:
+        eval_prompt_start = PromptTokens.instance().value
+        eval_completion_start = CompletionTokens.instance().value
+        score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size)
+        eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
+        eval_completion_used = CompletionTokens.instance().value - eval_completion_start
+        print(f"Baseline Score: {score}")
+        print(f"Baseline Eval Prompt Tokens: {eval_prompt_used}")
+        print(f"Baseline Eval Completion Tokens: {eval_completion_used}")
+
     print(f"Score: {score}")
     print(f"Prompt Tokens: {PromptTokens.instance().value}")
     print(f"Completion Tokens: {CompletionTokens.instance().value}")

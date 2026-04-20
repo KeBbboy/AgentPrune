@@ -42,6 +42,7 @@ async def train(graph:Graph,
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_cost_state(graph)
             input_dict = dataset.record_to_input(record)
             print(input_dict)
             answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))

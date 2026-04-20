@@ -4,6 +4,7 @@ from abc import ABC
 import numpy as np
 import torch
 import asyncio
+import tiktoken
 
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
@@ -62,14 +63,26 @@ class Graph(ABC):
         self.optimized_temporal = optimized_temporal
         self.use_pruned_edge_tail_patch = use_pruned_edge_tail_patch
         self.enable_pruned_edge_tail_patch = False
+        self.enable_edge_cost_recording = True
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
         self.nodes:Dict[str,Node] = {}
         self.potential_spatial_edges:List[List[str, str]] = []
         self.potential_temporal_edges:List[List[str,str]] = []
         self.node_kwargs = node_kwargs if node_kwargs is not None else [{} for _ in agent_names]
+        self._token_encoder = None
         
         self.init_nodes() # add nodes to the self.nodes
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
+        self.spatial_edge_token_totals: Dict[tuple[str, str], int] = {
+            (src_id, dst_id): 0
+            for src_id, dst_id in self.potential_spatial_edges
+            if src_id != dst_id
+        }
+        self.spatial_edge_usage_counts: Dict[tuple[str, str], int] = {
+            (src_id, dst_id): 0
+            for src_id, dst_id in self.potential_spatial_edges
+            if src_id != dst_id
+        }
         
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         self.spatial_logits = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,
@@ -155,6 +168,54 @@ class Graph(ABC):
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
         self.decision_node.pruned_spatial_predecessors = []
+
+    def _get_token_encoder(self):
+        if self._token_encoder is not None:
+            return self._token_encoder
+        try:
+            self._token_encoder = tiktoken.encoding_for_model(self.llm_name or "gpt-4o")
+        except Exception:
+            self._token_encoder = tiktoken.get_encoding("cl100k_base")
+        return self._token_encoder
+
+    def count_text_tokens(self, text: Any) -> int:
+        if text is None:
+            return 0
+        if not isinstance(text, str):
+            text = str(text)
+        if not text:
+            return 0
+        try:
+            return len(self._get_token_encoder().encode(text))
+        except Exception:
+            return len(text.split())
+
+    def _get_latest_output(self, node: Node) -> Any:
+        outputs = node.outputs
+        if isinstance(outputs, list):
+            if len(outputs) == 0:
+                return None
+            return outputs[-1]
+        return outputs
+
+    def record_spatial_edge_costs(self, node: Node):
+        if not self.enable_edge_cost_recording:
+            return
+        for predecessor in node.spatial_predecessors:
+            if predecessor.id == node.id:
+                continue
+            edge_key = (predecessor.id, node.id)
+            if edge_key not in self.spatial_edge_token_totals:
+                continue
+            token_cost = self.count_text_tokens(self._get_latest_output(predecessor))
+            self.spatial_edge_token_totals[edge_key] += token_cost
+            self.spatial_edge_usage_counts[edge_key] += 1
+
+    def share_cost_state(self, other: "Graph"):
+        self.spatial_edge_token_totals = other.spatial_edge_token_totals
+        self.spatial_edge_usage_counts = other.spatial_edge_usage_counts
+        self._token_encoder = other._token_encoder
+        self.enable_edge_cost_recording = other.enable_edge_cost_recording
     
     def clear_temporal_connection(self):
         """
@@ -244,6 +305,7 @@ class Graph(ABC):
                 tries = 0
                 while tries < max_tries:
                     try:
+                        self.record_spatial_edge_costs(self.nodes[current_node_id])
                         self.nodes[current_node_id].execute(inputs) # output is saved in the node.outputs
                         break
                     except Exception as e:
@@ -285,6 +347,7 @@ class Graph(ABC):
                 tries = 0
                 while tries < max_tries:
                     try:
+                        self.record_spatial_edge_costs(self.nodes[current_node_id])
                         await asyncio.wait_for(self.nodes[current_node_id].async_execute(input),timeout=max_time) # output is saved in the node.outputs
                         break
                     except Exception as e:
@@ -315,6 +378,59 @@ class Graph(ABC):
 
     def set_eval_mode(self, enabled: bool):
         self.enable_pruned_edge_tail_patch = self.use_pruned_edge_tail_patch and enabled
+        self.enable_edge_cost_recording = not enabled
+
+    def get_spatial_edge_metrics(self):
+        metrics = []
+        for edge_idx, (src_id, dst_id) in enumerate(self.potential_spatial_edges):
+            if src_id == dst_id:
+                continue
+            src_node = self.find_node(src_id)
+            dst_node = self.find_node(dst_id)
+            metrics.append({
+                "index": edge_idx,
+                "src_id": src_id,
+                "dst_id": dst_id,
+                "src_role": src_node.role,
+                "dst_role": dst_node.role,
+                "mask": int(self.spatial_masks[edge_idx].item()),
+                "score": float(torch.sigmoid(self.spatial_logits[edge_idx]).item()),
+                "token_cost": int(self.spatial_edge_token_totals.get((src_id, dst_id), 0)),
+                "usage_count": int(self.spatial_edge_usage_counts.get((src_id, dst_id), 0)),
+            })
+        return metrics
+
+    def replace_high_cost_edges(self, num_edges: int = 2):
+        kept_edges = []
+        deleted_edges = []
+        for metric in self.get_spatial_edge_metrics():
+            if metric["mask"] == 1:
+                kept_edges.append(metric)
+            else:
+                deleted_edges.append(metric)
+
+        kept_edges = sorted(
+            kept_edges,
+            key=lambda item: (-item["token_cost"], -item["score"], item["index"]),
+        )
+        deleted_edges = sorted(
+            deleted_edges,
+            key=lambda item: (item["token_cost"], -item["score"], item["index"]),
+        )
+
+        replace_count = min(num_edges, len(kept_edges), len(deleted_edges))
+        removed_edges = kept_edges[:replace_count]
+        added_edges = deleted_edges[:replace_count]
+
+        for edge in removed_edges:
+            self.spatial_masks[edge["index"]] = 0
+        for edge in added_edges:
+            self.spatial_masks[edge["index"]] = 1
+
+        return {
+            "removed_edges": removed_edges,
+            "added_edges": added_edges,
+        }
     
     def check_cycle(self, new_node, target_nodes):
         if new_node in target_nodes:
