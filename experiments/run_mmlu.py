@@ -48,6 +48,8 @@ def parse_args():
                         help="the decision method of the final node")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
+    parser.add_argument('--trim_special_roles_output', action='store_true',
+                        help="Only keep the content after the last blank line for Critic, Mathematician, Psychologist, and Historian when sharing outputs.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -62,7 +64,7 @@ async def main():
     mode = args.mode
     decision_method = args.decision_method
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
-    kwargs = get_kwargs(mode,len(agent_names))
+    kwargs = get_kwargs(mode, len(agent_names), trim_special_roles_output=args.trim_special_roles_output)
     limit_questions = 153
     
     graph = Graph(domain=args.domain,
@@ -90,7 +92,8 @@ async def main():
 
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star'],Literal['Mesh'],
                           Literal['FakeFullConnected'],Literal['FakeRandom'],Literal['FakeChain'],Literal['FakeStar'],Literal['FakeMesh'],Literal['FakeAGRandom'],Literal['FakeAGFull']],
-               N:int):
+               N:int,
+               trim_special_roles_output: bool = False):
     initial_spatial_probability: float = 0.5
     fixed_spatial_masks:List[List[int]] = None
     initial_temporal_probability: float = 0.5
@@ -156,6 +159,11 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
         node_kwargs = [{'role':'Fake'} if i % 2 == N % 2 else {'role':'Normal'} for i in range(N)]
     elif 'Fake' in mode and 'AG' in mode:
         node_kwargs = [{'role':'Fake'} if i % 2 == N % 2 else {'role':None} for i in range(N)]
+
+    if trim_special_roles_output:
+        if node_kwargs is None:
+            node_kwargs = [{} for _ in range(N)]
+        node_kwargs = [{**kwargs, 'trim_special_roles_output': True} for kwargs in node_kwargs]
         
     return {"initial_spatial_probability": initial_spatial_probability,
             "fixed_spatial_masks": fixed_spatial_masks,

@@ -8,18 +8,31 @@ from AgentPrune.llm.llm_registry import LLMRegistry
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
 from AgentPrune.tools.search.wiki import search_wiki_main
 
+TRIMMED_SOURCE_ROLES = {"Critic", "Mathematician", "Psychologist", "Historian"}
+
 def find_strings_between_pluses(text):
     return re.findall(r'\@(.*?)\@', text)
 
 @AgentRegistry.register('AnalyzeAgent')
 class AnalyzeAgent(Node):
-    def __init__(self, id: str | None =None, role:str = None,  domain: str = "", llm_name: str = "",):
+    def __init__(self, id: str | None =None, role:str = None, domain: str = "", llm_name: str = "", trim_special_roles_output: bool = False):
         super().__init__(id, "AnalyzeAgent" ,domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
         self.prompt_set = PromptSetRegistry.get(domain)
         self.role = self.prompt_set.get_role() if role is None else role
         self.constraint = self.prompt_set.get_analyze_constraint(self.role)
         self.wiki_summary = ""
+        self.trim_special_roles_output = trim_special_roles_output
+
+    def _format_shared_output(self, info: Dict[str, str]) -> str:
+        output = info["output"]
+        if not self.trim_special_roles_output or info["role"] not in TRIMMED_SOURCE_ROLES:
+            return output
+
+        parts = output.rsplit("\n\n", 1)
+        if len(parts) == 2 and parts[1].strip():
+            return parts[1].strip()
+        return output.strip()
         
     async def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict], **kwargs)->List[Any]:
         """ To be overriden by the descendant class """
@@ -35,9 +48,11 @@ class AnalyzeAgent(Node):
                 if len(wiki):
                     self.wiki_summary = ".\n".join(wiki)
                     user_prompt += f"The key entities of the problem are explained in Wikipedia as follows:{self.wiki_summary}"
-            spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {info['output']}\n\n"
+            formatted_output = self._format_shared_output(info)
+            spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
         for id, info in temporal_info.items():
-            temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {info['output']}\n\n"
+            formatted_output = self._format_shared_output(info)
+            temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
             
         user_prompt += f"At the same time, the outputs of other agents are as follows:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
         user_prompt += f"In the last round of dialogue, the outputs of other agents were: \n\n{temporal_str}" if len(temporal_str) else ""
