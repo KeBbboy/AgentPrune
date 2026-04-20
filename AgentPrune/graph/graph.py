@@ -42,6 +42,7 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                use_pruned_edge_tail_patch: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -59,6 +60,8 @@ class Graph(ABC):
         self.agent_names:List[str] = agent_names
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
+        self.use_pruned_edge_tail_patch = use_pruned_edge_tail_patch
+        self.enable_pruned_edge_tail_patch = False
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
         self.nodes:Dict[str,Node] = {}
         self.potential_spatial_edges:List[List[str, str]] = []
@@ -148,8 +151,10 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].spatial_predecessors = []
             self.nodes[node_id].spatial_successors = []
+            self.nodes[node_id].pruned_spatial_predecessors = []
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
+        self.decision_node.pruned_spatial_predecessors = []
     
     def clear_temporal_connection(self):
         """
@@ -174,6 +179,8 @@ class Graph(ABC):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
+                if self.enable_pruned_edge_tail_patch and out_node.id != in_node.id:
+                    in_node.pruned_spatial_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_spatial==False:
                 if not self.check_cycle(in_node, {out_node}):
@@ -305,6 +312,9 @@ class Graph(ABC):
     def update_memory(self):
         for id,node in self.nodes.items():
             node.update_memory()
+
+    def set_eval_mode(self, enabled: bool):
+        self.enable_pruned_edge_tail_patch = self.use_pruned_edge_tail_patch and enabled
     
     def check_cycle(self, new_node, target_nodes):
         if new_node in target_nodes:

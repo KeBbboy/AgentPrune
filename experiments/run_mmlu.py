@@ -50,6 +50,8 @@ def parse_args():
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--trim_special_roles_output', action='store_true',
                         help="Only keep the content after the last blank line for Critic, Mathematician, Psychologist, and Historian when sharing outputs.")
+    parser.add_argument('--use_pruned_edge_tail_patch', action='store_true',
+                        help="During evaluation, pass only the content after the last blank line for pruned spatial edges.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -73,15 +75,18 @@ async def main():
                   decision_method=decision_method,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
+                  use_pruned_edge_tail_patch=args.use_pruned_edge_tail_patch,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')
     
     if args.optimized_spatial or args.optimized_temporal:
+        graph.set_eval_mode(False)
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
                     lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate)
     
+    graph.set_eval_mode(True)
     score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size)
     print(f"Score: {score}")
     print(f"Prompt Tokens: {PromptTokens.instance().value}")

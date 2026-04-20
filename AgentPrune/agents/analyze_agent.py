@@ -40,6 +40,7 @@ class AnalyzeAgent(Node):
         system_prompt = f"{self.constraint}"
         user_prompt = f"The task is: {raw_inputs['task']}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
         spatial_str = ""
+        pruned_patch_str = ""
         temporal_str = ""
         for id, info in spatial_info.items():
             if self.role == 'Wiki Searcher' and info['role']=='Knowlegable Expert':
@@ -49,12 +50,16 @@ class AnalyzeAgent(Node):
                     self.wiki_summary = ".\n".join(wiki)
                     user_prompt += f"The key entities of the problem are explained in Wikipedia as follows:{self.wiki_summary}"
             formatted_output = self._format_shared_output(info)
-            spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
+            if info.get("message_type") == "pruned_tail_patch":
+                pruned_patch_str += f"Agent {id}, role is {info['role']}, final conclusion snippet is:\n\n {formatted_output}\n\n"
+            else:
+                spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
         for id, info in temporal_info.items():
             formatted_output = self._format_shared_output(info)
             temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
             
         user_prompt += f"At the same time, the outputs of other agents are as follows:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
+        user_prompt += f"For pruned communication edges, only the final conclusion snippets of other agents are available:\n\n{pruned_patch_str}\n\n" if len(pruned_patch_str) else ""
         user_prompt += f"In the last round of dialogue, the outputs of other agents were: \n\n{temporal_str}" if len(temporal_str) else ""
         return system_prompt, user_prompt
                 

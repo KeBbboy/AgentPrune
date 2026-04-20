@@ -55,6 +55,7 @@ class Node(ABC):
         self.llm_name:str = llm_name
         self.spatial_predecessors: List[Node] = []
         self.spatial_successors: List[Node] = []
+        self.pruned_spatial_predecessors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []
         self.inputs: List[Any] = []
@@ -103,6 +104,7 @@ class Node(ABC):
     def clear_connections(self):
         self.spatial_predecessors: List[Node] = []
         self.spatial_successors: List[Node] = []
+        self.pruned_spatial_predecessors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []        
     
@@ -123,7 +125,31 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                spatial_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
+                spatial_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": predecessor_output,
+                    "message_type": "full",
+                }
+
+        if self.pruned_spatial_predecessors is not None:
+            for predecessor in self.pruned_spatial_predecessors:
+                predecessor_outputs = predecessor.outputs
+                if isinstance(predecessor_outputs, list) and len(predecessor_outputs):
+                    predecessor_output = predecessor_outputs[-1]
+                elif isinstance(predecessor_outputs, list) and len(predecessor_outputs) == 0:
+                    continue
+                else:
+                    predecessor_output = predecessor_outputs
+                if not isinstance(predecessor_output, str):
+                    predecessor_output = str(predecessor_output)
+                patched_output = predecessor_output.rsplit("\n\n", 1)[-1].strip()
+                if not patched_output:
+                    continue
+                spatial_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": patched_output,
+                    "message_type": "pruned_tail_patch",
+                }
 
         return spatial_info
 
