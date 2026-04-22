@@ -66,6 +66,10 @@ def parse_args():
                         help="Domain (the same as dataset name), default 'MMLU'")
     parser.add_argument('--decision_method', type=str, default="FinalRefer",
                         help="the decision method of the final node")
+    parser.add_argument('--log_agent_outputs', action='store_true',
+                        help="Print each agent's raw output and extracted answer to stdout/logs.")
+    parser.add_argument('--limit_questions', type=int, default=153,
+                        help="Maximum number of validation questions to evaluate.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--trim_special_roles_output', action='store_true',
@@ -100,12 +104,13 @@ async def main():
     decision_method = args.decision_method
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     kwargs = get_kwargs(mode, len(agent_names), trim_special_roles_output=args.trim_special_roles_output)
-    limit_questions = 153
+    limit_questions = args.limit_questions
     
     graph = Graph(domain=args.domain,
                   llm_name=args.llm_name,
                   agent_names=agent_names,
                   decision_method=decision_method,
+                  log_node_outputs=args.log_agent_outputs,
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,

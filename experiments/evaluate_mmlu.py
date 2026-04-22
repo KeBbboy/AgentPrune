@@ -47,11 +47,12 @@ async def evaluate(
         start_ts = time.time()
         answer_log_probs = []
         
-        for record in record_batch:
+        for record_offset, record in enumerate(record_batch):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
             realized_graph.share_cost_state(graph)
+            realized_graph.current_sample_index = i_batch * eval_batch_size + record_offset + 1
             input_dict = dataset.record_to_input(record)
             # print(input_dict)
             answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))

@@ -36,6 +36,7 @@ class Graph(ABC):
                 llm_name: Optional[str],
                 agent_names: List[str],
                 decision_method: str,
+                log_node_outputs: bool = False,
                 llm_temperature: float = 0.0,
                 optimized_spatial:bool = False,
                 initial_spatial_probability: float = 0.5,
@@ -61,11 +62,13 @@ class Graph(ABC):
         self.llm_name:str = llm_name
         self.llm_temperature: float = llm_temperature
         self.agent_names:List[str] = agent_names
+        self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
         self.use_pruned_edge_tail_patch = use_pruned_edge_tail_patch
         self.enable_pruned_edge_tail_patch = False
         self.enable_edge_cost_recording = True
+        self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
         self.nodes:Dict[str,Node] = {}
         self.potential_spatial_edges:List[List[str, str]] = []
@@ -96,6 +99,29 @@ class Graph(ABC):
         self.temporal_logits = torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,
                                                  requires_grad=optimized_temporal) # trainable edge logits
         self.temporal_masks = torch.nn.Parameter(fixed_temporal_masks,requires_grad=False)  # fixed edge masks
+
+    def _log_node_output(self, node: Node, phase: str = "round") -> None:
+        if not self.log_node_outputs:
+            return
+
+        raw_output = self._get_latest_output(node)
+        extracted_answer = None
+        if hasattr(node, "prompt_set") and hasattr(node.prompt_set, "postprocess_answer"):
+            try:
+                extracted_answer = node.prompt_set.postprocess_answer(raw_output)
+            except Exception:
+                extracted_answer = None
+
+        display_name = node.role or node.agent_name or node.id
+        sample_tag = (
+            f" sample_index={self.current_sample_index}"
+            if self.current_sample_index is not None
+            else ""
+        )
+        print(
+            f"[NodeOutput][{phase}]{sample_tag} agent={repr(display_name)} id={node.id} role={repr(node.role)} "
+            f"extracted_answer={repr(extracted_answer)} raw_output={repr(raw_output)}"
+        )
         
     @property
     def spatial_adj_matrix(self):
@@ -390,9 +416,12 @@ class Graph(ABC):
                         self.record_spatial_edge_costs(self.nodes[current_node_id])
                         self.nodes[current_node_id].execute(inputs, temperature=self.llm_temperature) # output is saved in the node.outputs
                         self.record_node_token_usage(self.nodes[current_node_id])
+                        self._log_node_output(self.nodes[current_node_id], phase=f"round-{round}")
                         break
                     except Exception as e:
-                        print(f"Error during execution of node {current_node_id}: {e}")
+                        node = self.nodes[current_node_id]
+                        display_name = node.role or node.agent_name or node.id
+                        print(f"Error during execution of agent {repr(display_name)} (id={current_node_id}): {e}")
                     tries += 1
                 for successor in self.nodes[current_node_id].spatial_successors:
                     if successor.id not in self.nodes.keys():
@@ -407,6 +436,7 @@ class Graph(ABC):
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
         self.decision_node.execute(inputs, temperature=self.llm_temperature)
+        self._log_node_output(self.decision_node, phase="final-decision")
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
             final_answers.append("No answer of the decision node")
@@ -433,12 +463,15 @@ class Graph(ABC):
                         self.record_spatial_edge_costs(self.nodes[current_node_id])
                         await asyncio.wait_for(
                             self.nodes[current_node_id].async_execute(input, temperature=self.llm_temperature),
-                            timeout=max_time,
+                        timeout=max_time,
                         ) # output is saved in the node.outputs
                         self.record_node_token_usage(self.nodes[current_node_id])
+                        self._log_node_output(self.nodes[current_node_id], phase=f"round-{round}")
                         break
                     except Exception as e:
-                        print(f"Error during execution of node {current_node_id}: {e}")
+                        node = self.nodes[current_node_id]
+                        display_name = node.role or node.agent_name or node.id
+                        print(f"Error during execution of agent {repr(display_name)} (id={current_node_id}): {e}")
                     tries += 1
                 for successor in self.nodes[current_node_id].spatial_successors:
                     if successor.id not in self.nodes.keys():
@@ -454,6 +487,7 @@ class Graph(ABC):
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
         await self.decision_node.async_execute(input, temperature=self.llm_temperature)
+        self._log_node_output(self.decision_node, phase="final-decision")
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
             final_answers.append("No answer of the decision node")
