@@ -5,6 +5,7 @@ import yaml
 import json
 import time
 import asyncio
+import math
 from pathlib import Path
 import torch
 import copy
@@ -57,6 +58,14 @@ def parse_args():
                         help='Specify the number of agents for each name in agent_names')
     parser.add_argument('--decision_method', type=str, default='FinalWriteCode',
                         help='The decison method of the agentprune')
+    parser.add_argument('--log_agent_outputs', action='store_true',
+                        help="Print each agent's raw output and extracted answer to stdout/logs.")
+    parser.add_argument('--limit_questions', type=int, default=None,
+                        help="Maximum number of HumanEval samples to run.")
+    parser.add_argument('--temperature', type=float, default=0.0,
+                        help="LLM generation temperature. Default 0.0 for near-deterministic output.")
+    parser.add_argument('--seed', type=int, default=42,
+                        help="Random seed for Python, NumPy, and PyTorch. Default 42.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
     
@@ -70,13 +79,18 @@ def parse_args():
 
 async def main():
     args = parse_args()
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     result_file = None
     dataset = JSONLReader.parse_file(args.dataset_json)
     current_time = Time.instance().value or time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     Time.instance().value = current_time
     result_dir = Path(f"{AgentPrune_ROOT}/result/eval")
     result_dir.mkdir(parents=True, exist_ok=True)
-    result_file = result_dir / f"{args.llm_name}_{current_time}.json"
+    safe_llm_name = args.llm_name.replace("/", "_")
+    result_file = result_dir / f"{safe_llm_name}_{current_time}.json"
     
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     decision_method = args.decision_method
@@ -85,12 +99,15 @@ async def main():
                   llm_name=args.llm_name,
                   agent_names=agent_names,
                   decision_method=decision_method,
+                  log_node_outputs=args.log_agent_outputs,
+                  llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
                   **kwargs)
     optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
     
-    num_batches = int(len(dataset)/args.batch_size)
+    dataset_limit = min(len(dataset), args.limit_questions) if args.limit_questions is not None else len(dataset)
+    num_batches = int(math.ceil(dataset_limit / args.batch_size))
     total_solved, total_executed = (0, 0)
     for i_batch in range(num_batches):
         print(f"Batch {i_batch}",80*'-')
@@ -98,8 +115,8 @@ async def main():
         answer_log_probs = []
         tests = []
         
-        current_batch = dataloader(dataset,args.batch_size,i_batch)
-        if current_batch is None:
+        current_batch = dataloader(dataset[:dataset_limit], args.batch_size, i_batch)
+        if not current_batch:
             print("No more data available.")
             break
         
@@ -107,6 +124,7 @@ async def main():
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.current_sample_index = i_batch * args.batch_size + i_record + 1
             task = record["prompt"]
             test = record["test"]
             tests.append(test)
