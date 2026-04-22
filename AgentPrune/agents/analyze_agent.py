@@ -5,6 +5,7 @@ import asyncio
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
 from AgentPrune.llm.llm_registry import LLMRegistry
+from AgentPrune.llm.gpt_chat import set_active_usage_recorder, reset_active_usage_recorder
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
 from AgentPrune.tools.search.wiki import search_wiki_main
 
@@ -69,6 +70,7 @@ class AnalyzeAgent(Node):
   
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        self.set_last_input_messages(message)
         response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         return response
 
@@ -77,7 +79,14 @@ class AnalyzeAgent(Node):
         """ Use the processed input to get the result """
         system_prompt, user_prompt = await self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
+        self.set_last_input_messages(message)
+        usage_recorder = {"prompt_tokens": None, "completion_tokens": None}
+        usage_token = set_active_usage_recorder(usage_recorder)
+        try:
+            response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
+        finally:
+            reset_active_usage_recorder(usage_token)
+        self.last_llm_usage = usage_recorder
         if self.wiki_summary != "":
             response += f"\n\n{self.wiki_summary}"
             self.wiki_summary = ""

@@ -4,6 +4,7 @@ from tenacity import retry, wait_random_exponential, stop_after_attempt
 from typing import Dict, Any
 from dotenv import load_dotenv
 import os
+from contextvars import ContextVar
 from openai import OpenAI, AsyncOpenAI
 
 from AgentPrune.llm.format import Message
@@ -19,12 +20,21 @@ BASE_URL = ''
 load_dotenv()
 MINE_BASE_URL = os.getenv('BASE_URL')
 MINE_API_KEY = os.getenv('API_KEY')
+ACTIVE_USAGE_RECORDER: ContextVar[Optional[Dict[str, int]]] = ContextVar("active_usage_recorder", default=None)
 
 
 def _normalize_base_url(base_url: Optional[str]) -> Optional[str]:
     if not base_url:
         return base_url
     return base_url.removesuffix('/chat/completions')
+
+
+def set_active_usage_recorder(recorder: Optional[Dict[str, int]]):
+    return ACTIVE_USAGE_RECORDER.set(recorder)
+
+
+def reset_active_usage_recorder(token):
+    ACTIVE_USAGE_RECORDER.reset(token)
 
 
 @retry(wait=wait_random_exponential(max=300), stop=stop_after_attempt(3))
@@ -47,6 +57,10 @@ async def achat(
     if usage is not None:
         PromptTokens.instance().value += usage.prompt_tokens or 0
         CompletionTokens.instance().value += usage.completion_tokens or 0
+        recorder = ACTIVE_USAGE_RECORDER.get()
+        if recorder is not None:
+            recorder["prompt_tokens"] = usage.prompt_tokens or 0
+            recorder["completion_tokens"] = usage.completion_tokens or 0
     response = chat_completion.choices[0].message.content
     return response
     

@@ -63,11 +63,16 @@ class Node(ABC):
         self.raw_inputs: List[Any] = []
         self.role = ""
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}
-        self.conversation_history : List[Dict] = [] # chat history of the whole conversation        
+        self.conversation_history : List[Dict] = [] # chat history of the whole conversation
+        self.last_input_messages: Optional[List[Dict[str, Any]]] = None
+        self.last_llm_usage: Optional[Dict[str, int]] = None
 
     @property
     def node_name(self):
         return self.__class__.__name__
+
+    def set_last_input_messages(self, messages: Optional[List[Dict[str, Any]]]):
+        self.last_input_messages = messages
     
     def add_predecessor(self, operation: 'Node', st='spatial'):
         if st == 'spatial' and operation not in self.spatial_predecessors:
@@ -170,6 +175,8 @@ class Node(ABC):
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []
+        self.last_input_messages = None
+        self.last_llm_usage = None
         spatial_info:Dict[str,Dict] = self.get_spatial_info()
         temporal_info:Dict[str,Dict] = self.get_temporal_info()
         results = [self._execute(input, spatial_info, temporal_info, **kwargs)]
@@ -183,6 +190,8 @@ class Node(ABC):
 
     async def async_execute(self, input:Any, **kwargs):
         self.outputs = []
+        self.last_input_messages = None
+        self.last_llm_usage = None
         spatial_info:Dict[str,Any] = self.get_spatial_info()
         temporal_info:Dict[str,Any] = self.get_temporal_info()
         tasks = [asyncio.create_task(self._async_execute(input, spatial_info, temporal_info, **kwargs))]

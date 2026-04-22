@@ -18,6 +18,23 @@ from experiments.evaluate_mmlu import evaluate
 from AgentPrune.utils.const import AgentPrune_ROOT
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
+def print_agent_token_summary(graph: Graph):
+    print("Per-Agent Token Usage:")
+    for item in graph.get_agent_token_metrics():
+        print(
+            f"  {item['role']} ({item['id']}, {item['agent_name']}): "
+            f"input={item['prompt_tokens']}, output={item['completion_tokens']}, "
+            f"total={item['total_tokens']}, calls={item['calls']}"
+        )
+
+    print("Per-Role Token Usage:")
+    for item in graph.get_role_token_metrics():
+        print(
+            f"  {item['role']}: input={item['prompt_tokens']}, "
+            f"output={item['completion_tokens']}, total={item['total_tokens']}, "
+            f"calls={item['calls']}, agents={item['agents']}"
+        )
+
 
 
 def parse_args():
@@ -147,6 +164,7 @@ async def main():
     print(f"Prompt Tokens: {PromptTokens.instance().value}")
     print(f"Completion Tokens: {CompletionTokens.instance().value}")
     print(f"Total Tokens: {PromptTokens.instance().value + CompletionTokens.instance().value}")
+    print_agent_token_summary(graph)
 
 
 

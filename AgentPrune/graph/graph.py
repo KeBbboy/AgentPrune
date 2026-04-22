@@ -85,6 +85,7 @@ class Graph(ABC):
             for src_id, dst_id in self.potential_spatial_edges
             if src_id != dst_id
         }
+        self.agent_token_stats: Dict[str, Dict[str, Any]] = {}
         
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         self.spatial_logits = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,
@@ -192,6 +193,21 @@ class Graph(ABC):
         except Exception:
             return len(text.split())
 
+    def count_message_tokens(self, messages: Any) -> int:
+        if messages is None:
+            return 0
+        if not isinstance(messages, list):
+            return self.count_text_tokens(messages)
+
+        token_count = 0
+        for message in messages:
+            if isinstance(message, dict):
+                token_count += self.count_text_tokens(message.get("role", ""))
+                token_count += self.count_text_tokens(message.get("content", ""))
+            else:
+                token_count += self.count_text_tokens(message)
+        return token_count
+
     def _get_latest_output(self, node: Node) -> Any:
         outputs = node.outputs
         if isinstance(outputs, list):
@@ -216,8 +232,72 @@ class Graph(ABC):
     def share_cost_state(self, other: "Graph"):
         self.spatial_edge_token_totals = other.spatial_edge_token_totals
         self.spatial_edge_usage_counts = other.spatial_edge_usage_counts
+        self.agent_token_stats = other.agent_token_stats
         self._token_encoder = other._token_encoder
         self.enable_edge_cost_recording = other.enable_edge_cost_recording
+
+    def record_node_token_usage(self, node: Node):
+        if node is self.decision_node:
+            return
+        prompt_tokens = None
+        completion_tokens = None
+        if node.last_llm_usage is not None:
+            prompt_tokens = node.last_llm_usage.get("prompt_tokens")
+            completion_tokens = node.last_llm_usage.get("completion_tokens")
+
+        if prompt_tokens is None:
+            prompt_tokens = self.count_message_tokens(node.last_input_messages)
+        if completion_tokens is None:
+            completion_tokens = self.count_text_tokens(self._get_latest_output(node))
+        node_key = node.id
+
+        if node_key not in self.agent_token_stats:
+            self.agent_token_stats[node_key] = {
+                "id": node.id,
+                "agent_name": node.agent_name,
+                "role": node.role or node.node_name,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "calls": 0,
+            }
+
+        stats = self.agent_token_stats[node_key]
+        stats["agent_name"] = node.agent_name
+        stats["role"] = node.role or node.node_name
+        stats["prompt_tokens"] += prompt_tokens
+        stats["completion_tokens"] += completion_tokens
+        stats["total_tokens"] += prompt_tokens + completion_tokens
+        stats["calls"] += 1
+
+    def get_agent_token_metrics(self):
+        return sorted(
+            self.agent_token_stats.values(),
+            key=lambda item: (-item["total_tokens"], item["role"], item["id"]),
+        )
+
+    def get_role_token_metrics(self):
+        role_metrics: Dict[str, Dict[str, Any]] = {}
+        for item in self.agent_token_stats.values():
+            role = item["role"]
+            if role not in role_metrics:
+                role_metrics[role] = {
+                    "role": role,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "calls": 0,
+                    "agents": 0,
+                }
+            role_metrics[role]["prompt_tokens"] += item["prompt_tokens"]
+            role_metrics[role]["completion_tokens"] += item["completion_tokens"]
+            role_metrics[role]["total_tokens"] += item["total_tokens"]
+            role_metrics[role]["calls"] += item["calls"]
+            role_metrics[role]["agents"] += 1
+        return sorted(
+            role_metrics.values(),
+            key=lambda item: (-item["total_tokens"], item["role"]),
+        )
     
     def clear_temporal_connection(self):
         """
@@ -309,6 +389,7 @@ class Graph(ABC):
                     try:
                         self.record_spatial_edge_costs(self.nodes[current_node_id])
                         self.nodes[current_node_id].execute(inputs, temperature=self.llm_temperature) # output is saved in the node.outputs
+                        self.record_node_token_usage(self.nodes[current_node_id])
                         break
                     except Exception as e:
                         print(f"Error during execution of node {current_node_id}: {e}")
@@ -354,6 +435,7 @@ class Graph(ABC):
                             self.nodes[current_node_id].async_execute(input, temperature=self.llm_temperature),
                             timeout=max_time,
                         ) # output is saved in the node.outputs
+                        self.record_node_token_usage(self.nodes[current_node_id])
                         break
                     except Exception as e:
                         print(f"Error during execution of node {current_node_id}: {e}")
