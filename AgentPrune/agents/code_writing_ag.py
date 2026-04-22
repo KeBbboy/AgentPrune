@@ -58,7 +58,7 @@ class CodeWritingAG(NodeAutoGen):
             self.update_conversation_history(user_prompt,history_conversation)
             return user_prompt
         message = history_conversation + [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = self.llm.gen(message)
+        response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         self.update_conversation_history(response,history_conversation)
         return response
 
@@ -73,6 +73,6 @@ class CodeWritingAG(NodeAutoGen):
             self.update_conversation_history(user_prompt,history_conversation)
             return user_prompt
         message = history_conversation + [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = await self.llm.agen(message)
+        response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
         self.update_conversation_history(response,history_conversation)
         return response

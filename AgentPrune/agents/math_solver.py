@@ -44,7 +44,7 @@ class MathSolver(Node):
         """ Use the processed input to get the result """
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = self.llm.gen(message)
+        response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         return response
 
     async def _async_execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
@@ -53,7 +53,7 @@ class MathSolver(Node):
         """ The input type of this node is Dict """
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = await self.llm.agen(message)
+        response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
         if self.role == "Programming Expert":
             answer = execute_code_get_return(response.lstrip("```python\n").rstrip("\n```"))
             response += f"\nthe answer is {answer}"

@@ -36,6 +36,7 @@ class Graph(ABC):
                 llm_name: Optional[str],
                 agent_names: List[str],
                 decision_method: str,
+                llm_temperature: float = 0.0,
                 optimized_spatial:bool = False,
                 initial_spatial_probability: float = 0.5,
                 fixed_spatial_masks:List[List[int]] = None,
@@ -58,6 +59,7 @@ class Graph(ABC):
         self.id:str = shortuuid.ShortUUID().random(length=4)
         self.domain:str = domain
         self.llm_name:str = llm_name
+        self.llm_temperature: float = llm_temperature
         self.agent_names:List[str] = agent_names
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
@@ -306,7 +308,7 @@ class Graph(ABC):
                 while tries < max_tries:
                     try:
                         self.record_spatial_edge_costs(self.nodes[current_node_id])
-                        self.nodes[current_node_id].execute(inputs) # output is saved in the node.outputs
+                        self.nodes[current_node_id].execute(inputs, temperature=self.llm_temperature) # output is saved in the node.outputs
                         break
                     except Exception as e:
                         print(f"Error during execution of node {current_node_id}: {e}")
@@ -323,7 +325,7 @@ class Graph(ABC):
             self.connect_decision_node()
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
-        self.decision_node.execute(inputs)
+        self.decision_node.execute(inputs, temperature=self.llm_temperature)
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
             final_answers.append("No answer of the decision node")
@@ -348,7 +350,10 @@ class Graph(ABC):
                 while tries < max_tries:
                     try:
                         self.record_spatial_edge_costs(self.nodes[current_node_id])
-                        await asyncio.wait_for(self.nodes[current_node_id].async_execute(input),timeout=max_time) # output is saved in the node.outputs
+                        await asyncio.wait_for(
+                            self.nodes[current_node_id].async_execute(input, temperature=self.llm_temperature),
+                            timeout=max_time,
+                        ) # output is saved in the node.outputs
                         break
                     except Exception as e:
                         print(f"Error during execution of node {current_node_id}: {e}")
@@ -366,7 +371,7 @@ class Graph(ABC):
             self.connect_decision_node()
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
-        await self.decision_node.async_execute(input)
+        await self.decision_node.async_execute(input, temperature=self.llm_temperature)
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
             final_answers.append("No answer of the decision node")

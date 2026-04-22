@@ -69,7 +69,7 @@ class AnalyzeAgent(Node):
   
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = self.llm.gen(message)
+        response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         return response
 
     async def _async_execute(self, input:Dict[str,str],  spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict],**kwargs):
@@ -77,7 +77,7 @@ class AnalyzeAgent(Node):
         """ Use the processed input to get the result """
         system_prompt, user_prompt = await self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = await self.llm.agen(message)
+        response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
         if self.wiki_summary != "":
             response += f"\n\n{self.wiki_summary}"
             self.wiki_summary = ""

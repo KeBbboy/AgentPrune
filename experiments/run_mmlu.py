@@ -7,6 +7,8 @@ from typing import Union, Literal, List
 import argparse
 import random
 import copy
+import numpy as np
+import torch
 
 from AgentPrune.graph.graph import Graph
 from dataset.mmlu_dataset import MMLUDataset
@@ -57,6 +59,10 @@ def parse_args():
                         help="After training, replace the highest-cost kept spatial edges with the lowest-cost pruned spatial edges for evaluation.")
     parser.add_argument('--num_replaced_edges', type=int, default=2,
                         help="Number of kept spatial edges to remove and pruned spatial edges to add back in replacement mode.")
+    parser.add_argument('--temperature', type=float, default=0.0,
+                        help="LLM generation temperature. Default 0.0 for near-deterministic output.")
+    parser.add_argument('--seed', type=int, default=42,
+                        help="Random seed for Python, NumPy, and PyTorch. Default 42.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -67,6 +73,11 @@ def parse_args():
 
 async def main():
     args = parse_args()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     
     mode = args.mode
     decision_method = args.decision_method
@@ -78,6 +89,7 @@ async def main():
                   llm_name=args.llm_name,
                   agent_names=agent_names,
                   decision_method=decision_method,
+                  llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
                   use_pruned_edge_tail_patch=args.use_pruned_edge_tail_patch,

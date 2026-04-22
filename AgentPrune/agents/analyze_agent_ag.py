@@ -33,7 +33,7 @@ class AnalyzeAgentAG(NodeAutoGen):
         history_conversation = self.get_neighbor_history(input['task'])
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = history_conversation + [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = self.llm.gen(message)
+        response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         self.update_conversation_history(response,history_conversation)
         return response
 
@@ -43,6 +43,6 @@ class AnalyzeAgentAG(NodeAutoGen):
         history_conversation = self.get_neighbor_history(input['task'])
         system_prompt, user_prompt = await self._process_inputs(input, spatial_info, temporal_info)
         message = history_conversation + [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = await self.llm.agen(message)
+        response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
         self.update_conversation_history(response,history_conversation)
         return response

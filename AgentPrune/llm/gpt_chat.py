@@ -30,9 +30,19 @@ def _normalize_base_url(base_url: Optional[str]) -> Optional[str]:
 @retry(wait=wait_random_exponential(max=300), stop=stop_after_attempt(3))
 async def achat(
     model: str,
-    msg: List[Dict],):
+    msg: List[Dict],
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    num_comps: Optional[int] = None,
+):
     client = AsyncOpenAI(base_url = _normalize_base_url(MINE_BASE_URL), api_key = MINE_API_KEY,)
-    chat_completion = await client.chat.completions.create(messages = msg,model = model,)
+    chat_completion = await client.chat.completions.create(
+        messages=msg,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        n=num_comps,
+    )
     usage = chat_completion.usage
     if usage is not None:
         PromptTokens.instance().value += usage.prompt_tokens or 0
@@ -64,7 +74,13 @@ class GPTChat(LLM):
         
         if isinstance(messages, str):
             messages = [{'role':'user', 'content':'messages'}]
-        return await achat(self.model_name,messages)
+        return await achat(
+            self.model_name,
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            num_comps=num_comps,
+        )
     
     def gen(
         self,
