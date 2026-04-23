@@ -133,8 +133,11 @@ def parse_args():
                         help="Maximum number of validation questions to evaluate.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
-    parser.add_argument('--trim_special_roles_output', action='store_true',
+    trim_group = parser.add_mutually_exclusive_group()
+    trim_group.add_argument('--trim_special_roles_output', action='store_true',
                         help="Only keep the content after the last blank line for Critic, Mathematician, Psychologist, and Historian when sharing outputs.")
+    trim_group.add_argument('--drop_special_roles_conclusion', action='store_true',
+                        help="Drop the content after the last blank line for Critic, Mathematician, Psychologist, and Historian when sharing outputs.")
     parser.add_argument('--use_pruned_edge_tail_patch', action='store_true',
                         help="During evaluation, pass only the content after the last blank line for pruned spatial edges.")
     parser.add_argument('--replace_high_cost_edges', action='store_true',
@@ -164,7 +167,12 @@ async def main():
     mode = args.mode
     decision_method = args.decision_method
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
-    kwargs = get_kwargs(mode, len(agent_names), trim_special_roles_output=args.trim_special_roles_output)
+    kwargs = get_kwargs(
+        mode,
+        len(agent_names),
+        trim_special_roles_output=args.trim_special_roles_output,
+        drop_special_roles_conclusion=args.drop_special_roles_conclusion,
+    )
     limit_questions = args.limit_questions
     
     graph = Graph(domain=args.domain,
@@ -253,7 +261,8 @@ async def main():
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star'],Literal['Mesh'],
                           Literal['FakeFullConnected'],Literal['FakeRandom'],Literal['FakeChain'],Literal['FakeStar'],Literal['FakeMesh'],Literal['FakeAGRandom'],Literal['FakeAGFull']],
                N:int,
-               trim_special_roles_output: bool = False):
+               trim_special_roles_output: bool = False,
+               drop_special_roles_conclusion: bool = False):
     initial_spatial_probability: float = 0.5
     fixed_spatial_masks:List[List[int]] = None
     initial_temporal_probability: float = 0.5
@@ -324,6 +333,11 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
         if node_kwargs is None:
             node_kwargs = [{} for _ in range(N)]
         node_kwargs = [{**kwargs, 'trim_special_roles_output': True} for kwargs in node_kwargs]
+
+    if drop_special_roles_conclusion:
+        if node_kwargs is None:
+            node_kwargs = [{} for _ in range(N)]
+        node_kwargs = [{**kwargs, 'drop_special_roles_conclusion': True} for kwargs in node_kwargs]
         
     return {"initial_spatial_probability": initial_spatial_probability,
             "fixed_spatial_masks": fixed_spatial_masks,

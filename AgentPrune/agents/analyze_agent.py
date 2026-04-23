@@ -16,7 +16,15 @@ def find_strings_between_pluses(text):
 
 @AgentRegistry.register('AnalyzeAgent')
 class AnalyzeAgent(Node):
-    def __init__(self, id: str | None =None, role:str = None, domain: str = "", llm_name: str = "", trim_special_roles_output: bool = False):
+    def __init__(
+        self,
+        id: str | None =None,
+        role:str = None,
+        domain: str = "",
+        llm_name: str = "",
+        trim_special_roles_output: bool = False,
+        drop_special_roles_conclusion: bool = False,
+    ):
         super().__init__(id, "AnalyzeAgent" ,domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
         self.prompt_set = PromptSetRegistry.get(domain)
@@ -24,15 +32,24 @@ class AnalyzeAgent(Node):
         self.constraint = self.prompt_set.get_analyze_constraint(self.role)
         self.wiki_summary = ""
         self.trim_special_roles_output = trim_special_roles_output
+        self.drop_special_roles_conclusion = drop_special_roles_conclusion
 
     def _format_shared_output(self, info: Dict[str, str]) -> str:
         output = info["output"]
-        if not self.trim_special_roles_output or info["role"] not in TRIMMED_SOURCE_ROLES:
+        if info["role"] not in TRIMMED_SOURCE_ROLES:
             return output
 
         parts = output.rsplit("\n\n", 1)
-        if len(parts) == 2 and parts[1].strip():
-            return parts[1].strip()
+        if self.trim_special_roles_output:
+            if len(parts) == 2 and parts[1].strip():
+                return parts[1].strip()
+            return output.strip()
+
+        if self.drop_special_roles_conclusion:
+            if len(parts) == 2 and parts[0].strip():
+                return parts[0].strip()
+            return output.strip()
+
         return output.strip()
         
     async def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict], **kwargs)->List[Any]:
