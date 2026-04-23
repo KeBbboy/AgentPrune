@@ -36,6 +36,17 @@ def print_agent_token_summary(graph: Graph):
         )
 
 
+def get_token_snapshot():
+    return PromptTokens.instance().value, CompletionTokens.instance().value
+
+
+def print_phase_token_summary(phase_name: str, prompt_used: float, completion_used: float):
+    total_used = prompt_used + completion_used
+    print(f"{phase_name} Prompt Tokens: {prompt_used}")
+    print(f"{phase_name} Completion Tokens: {completion_used}")
+    print(f"{phase_name} Total Tokens: {total_used}")
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Process some parameters.")
@@ -119,11 +130,20 @@ async def main():
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')
+    train_prompt_used = 0.0
+    train_completion_used = 0.0
     
     if args.optimized_spatial or args.optimized_temporal:
         graph.set_eval_mode(False)
+        train_prompt_start, train_completion_start = get_token_snapshot()
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
                     lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate)
+        train_prompt_used = PromptTokens.instance().value - train_prompt_start
+        train_completion_used = CompletionTokens.instance().value - train_completion_start
+        print_phase_token_summary("Training", train_prompt_used, train_completion_used)
+    else:
+        print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
+        print_phase_token_summary("Training", train_prompt_used, train_completion_used)
 
     graph.set_eval_mode(True)
 
@@ -141,8 +161,7 @@ async def main():
             print(f"  {edge['src_role']}({edge['src_id']}) -> {edge['dst_role']}({edge['dst_id']}), "
                   f"score={edge['score']:.4f}, token_cost={edge['token_cost']}, usage_count={edge['usage_count']}")
 
-        eval_prompt_start = PromptTokens.instance().value
-        eval_completion_start = CompletionTokens.instance().value
+        eval_prompt_start, eval_completion_start = get_token_snapshot()
         score = await evaluate(
             graph=replacement_graph,
             dataset=dataset_val,
@@ -156,8 +175,7 @@ async def main():
         print(f"Replacement Eval Prompt Tokens: {eval_prompt_used}")
         print(f"Replacement Eval Completion Tokens: {eval_completion_used}")
     else:
-        eval_prompt_start = PromptTokens.instance().value
-        eval_completion_start = CompletionTokens.instance().value
+        eval_prompt_start, eval_completion_start = get_token_snapshot()
         score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size)
         eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
         eval_completion_used = CompletionTokens.instance().value - eval_completion_start
@@ -165,6 +183,7 @@ async def main():
         print(f"Baseline Eval Prompt Tokens: {eval_prompt_used}")
         print(f"Baseline Eval Completion Tokens: {eval_completion_used}")
 
+    print_phase_token_summary("Inference", eval_prompt_used, eval_completion_used)
     print(f"Score: {score}")
     print(f"Prompt Tokens: {PromptTokens.instance().value}")
     print(f"Completion Tokens: {CompletionTokens.instance().value}")
