@@ -148,6 +148,11 @@ def parse_args():
                         help="During evaluation, pass only the content after the last blank line for pruned temporal edges.")
     pruned_temporal_patch_group.add_argument('--drop_pruned_temporal_conclusion', action='store_true',
                         help="During evaluation, drop the content after the last blank line for pruned temporal edges.")
+    unified_pruned_patch_group = parser.add_mutually_exclusive_group()
+    unified_pruned_patch_group.add_argument('--use_pruned_all_tail_patch', action='store_true',
+                        help="During evaluation, pass only the content after the last blank line for both pruned spatial and pruned temporal edges.")
+    unified_pruned_patch_group.add_argument('--drop_pruned_all_conclusion', action='store_true',
+                        help="During evaluation, drop the content after the last blank line for both pruned spatial and pruned temporal edges.")
     parser.add_argument('--replace_high_cost_edges', action='store_true',
                         help="After training, replace the highest-cost kept spatial edges with the lowest-cost pruned spatial edges for evaluation.")
     parser.add_argument('--num_replaced_edges', type=int, default=2,
@@ -161,6 +166,26 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if args.use_pruned_all_tail_patch:
+        if (
+            args.use_pruned_edge_tail_patch
+            or args.drop_pruned_edge_conclusion
+            or args.use_pruned_temporal_tail_patch
+            or args.drop_pruned_temporal_conclusion
+        ):
+            parser.error("--use_pruned_all_tail_patch cannot be combined with the fine-grained pruned edge patch flags.")
+        args.use_pruned_edge_tail_patch = True
+        args.use_pruned_temporal_tail_patch = True
+    if args.drop_pruned_all_conclusion:
+        if (
+            args.use_pruned_edge_tail_patch
+            or args.drop_pruned_edge_conclusion
+            or args.use_pruned_temporal_tail_patch
+            or args.drop_pruned_temporal_conclusion
+        ):
+            parser.error("--drop_pruned_all_conclusion cannot be combined with the fine-grained pruned edge patch flags.")
+        args.drop_pruned_edge_conclusion = True
+        args.drop_pruned_temporal_conclusion = True
         
     return args
 
