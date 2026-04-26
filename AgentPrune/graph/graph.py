@@ -46,6 +46,7 @@ class Graph(ABC):
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
                 use_pruned_edge_tail_patch: bool = False,
+                drop_pruned_edge_conclusion: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -66,6 +67,7 @@ class Graph(ABC):
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
         self.use_pruned_edge_tail_patch = use_pruned_edge_tail_patch
+        self.drop_pruned_edge_conclusion = drop_pruned_edge_conclusion
         self.enable_pruned_edge_tail_patch = False
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
@@ -499,6 +501,15 @@ class Graph(ABC):
 
     def set_eval_mode(self, enabled: bool):
         self.enable_pruned_edge_tail_patch = self.use_pruned_edge_tail_patch and enabled
+        pruned_edge_patch_mode = "none"
+        if enabled:
+            if self.use_pruned_edge_tail_patch:
+                pruned_edge_patch_mode = "tail"
+            elif self.drop_pruned_edge_conclusion:
+                pruned_edge_patch_mode = "body"
+        for node in self.nodes.values():
+            node.pruned_edge_patch_mode = pruned_edge_patch_mode
+        self.decision_node.pruned_edge_patch_mode = pruned_edge_patch_mode
         self.enable_edge_cost_recording = not enabled
 
     def get_spatial_edge_metrics(self):

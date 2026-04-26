@@ -66,6 +66,7 @@ class Node(ABC):
         self.conversation_history : List[Dict] = [] # chat history of the whole conversation
         self.last_input_messages: Optional[List[Dict[str, Any]]] = None
         self.last_llm_usage: Optional[Dict[str, int]] = None
+        self.pruned_edge_patch_mode: str = "none"
 
     @property
     def node_name(self):
@@ -147,13 +148,20 @@ class Node(ABC):
                     predecessor_output = predecessor_outputs
                 if not isinstance(predecessor_output, str):
                     predecessor_output = str(predecessor_output)
-                patched_output = predecessor_output.rsplit("\n\n", 1)[-1].strip()
+                parts = predecessor_output.rsplit("\n\n", 1)
+                if self.pruned_edge_patch_mode == "tail":
+                    patched_output = parts[-1].strip()
+                elif self.pruned_edge_patch_mode == "body":
+                    patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
+                else:
+                    patched_output = predecessor_output.strip()
                 if not patched_output:
                     continue
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": patched_output,
-                    "message_type": "pruned_tail_patch",
+                    "message_type": "pruned_patch",
+                    "patch_mode": self.pruned_edge_patch_mode,
                 }
 
         return spatial_info

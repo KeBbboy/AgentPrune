@@ -68,8 +68,11 @@ class AnalyzeAgent(Node):
                     self.wiki_summary = ".\n".join(wiki)
                     user_prompt += f"The key entities of the problem are explained in Wikipedia as follows:{self.wiki_summary}"
             formatted_output = self._format_shared_output(info)
-            if info.get("message_type") == "pruned_tail_patch":
-                pruned_patch_str += f"Agent {id}, role is {info['role']}, final conclusion snippet is:\n\n {formatted_output}\n\n"
+            if info.get("message_type") == "pruned_patch":
+                if info.get("patch_mode") == "body":
+                    pruned_patch_str += f"Agent {id}, role is {info['role']}, analysis content excluding the final conclusion is:\n\n {formatted_output}\n\n"
+                else:
+                    pruned_patch_str += f"Agent {id}, role is {info['role']}, final conclusion snippet is:\n\n {formatted_output}\n\n"
             else:
                 spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
         for id, info in temporal_info.items():
@@ -77,7 +80,7 @@ class AnalyzeAgent(Node):
             temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
             
         user_prompt += f"At the same time, the outputs of other agents are as follows:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
-        user_prompt += f"For pruned communication edges, only the final conclusion snippets of other agents are available:\n\n{pruned_patch_str}\n\n" if len(pruned_patch_str) else ""
+        user_prompt += f"For pruned communication edges, only partial outputs of other agents are available:\n\n{pruned_patch_str}\n\n" if len(pruned_patch_str) else ""
         user_prompt += f"In the last round of dialogue, the outputs of other agents were: \n\n{temporal_str}" if len(temporal_str) else ""
         return system_prompt, user_prompt
                 
