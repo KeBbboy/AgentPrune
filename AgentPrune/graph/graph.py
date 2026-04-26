@@ -47,6 +47,8 @@ class Graph(ABC):
                 node_kwargs:List[Dict] = None,
                 use_pruned_edge_tail_patch: bool = False,
                 drop_pruned_edge_conclusion: bool = False,
+                use_pruned_temporal_tail_patch: bool = False,
+                drop_pruned_temporal_conclusion: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -68,7 +70,10 @@ class Graph(ABC):
         self.optimized_temporal = optimized_temporal
         self.use_pruned_edge_tail_patch = use_pruned_edge_tail_patch
         self.drop_pruned_edge_conclusion = drop_pruned_edge_conclusion
+        self.use_pruned_temporal_tail_patch = use_pruned_temporal_tail_patch
+        self.drop_pruned_temporal_conclusion = drop_pruned_temporal_conclusion
         self.enable_pruned_edge_tail_patch = False
+        self.enable_pruned_temporal_patch = False
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -334,6 +339,7 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].temporal_predecessors = []
             self.nodes[node_id].temporal_successors = []
+            self.nodes[node_id].pruned_temporal_predecessors = []
 
     def connect_decision_node(self, last_node_id: str = None):
         for node_id in self.nodes.keys():
@@ -378,6 +384,8 @@ class Graph(ABC):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
+                if self.enable_pruned_temporal_patch and out_node.id != in_node.id:
+                    in_node.pruned_temporal_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
@@ -501,15 +509,26 @@ class Graph(ABC):
 
     def set_eval_mode(self, enabled: bool):
         self.enable_pruned_edge_tail_patch = self.use_pruned_edge_tail_patch and enabled
+        self.enable_pruned_temporal_patch = (
+            (self.use_pruned_temporal_tail_patch or self.drop_pruned_temporal_conclusion) and enabled
+        )
         pruned_edge_patch_mode = "none"
         if enabled:
             if self.use_pruned_edge_tail_patch:
                 pruned_edge_patch_mode = "tail"
             elif self.drop_pruned_edge_conclusion:
                 pruned_edge_patch_mode = "body"
+        pruned_temporal_patch_mode = "none"
+        if enabled:
+            if self.use_pruned_temporal_tail_patch:
+                pruned_temporal_patch_mode = "tail"
+            elif self.drop_pruned_temporal_conclusion:
+                pruned_temporal_patch_mode = "body"
         for node in self.nodes.values():
             node.pruned_edge_patch_mode = pruned_edge_patch_mode
+            node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
         self.decision_node.pruned_edge_patch_mode = pruned_edge_patch_mode
+        self.decision_node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
         self.enable_edge_cost_recording = not enabled
 
     def get_spatial_edge_metrics(self):

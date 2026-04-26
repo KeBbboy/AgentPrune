@@ -58,6 +58,7 @@ class Node(ABC):
         self.pruned_spatial_predecessors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []
+        self.pruned_temporal_predecessors: List[Node] = []
         self.inputs: List[Any] = []
         self.outputs: List[Any] = []
         self.raw_inputs: List[Any] = []
@@ -67,6 +68,7 @@ class Node(ABC):
         self.last_input_messages: Optional[List[Dict[str, Any]]] = None
         self.last_llm_usage: Optional[Dict[str, int]] = None
         self.pruned_edge_patch_mode: str = "none"
+        self.pruned_temporal_patch_mode: str = "none"
 
     @property
     def node_name(self):
@@ -112,7 +114,8 @@ class Node(ABC):
         self.spatial_successors: List[Node] = []
         self.pruned_spatial_predecessors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
-        self.temporal_successors: List[Node] = []        
+        self.temporal_successors: List[Node] = []
+        self.pruned_temporal_predecessors: List[Node] = []
     
     def update_memory(self):
         self.last_memory['inputs'] = self.inputs
@@ -178,6 +181,33 @@ class Node(ABC):
                 else:
                     predecessor_output = predecessor_outputs
                 temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
+
+        if self.pruned_temporal_predecessors is not None:
+            for predecessor in self.pruned_temporal_predecessors:
+                predecessor_outputs = predecessor.last_memory['outputs']
+                if isinstance(predecessor_outputs, list) and len(predecessor_outputs):
+                    predecessor_output = predecessor_outputs[-1]
+                elif isinstance(predecessor_outputs, list) and len(predecessor_outputs)==0:
+                    continue
+                else:
+                    predecessor_output = predecessor_outputs
+                if not isinstance(predecessor_output, str):
+                    predecessor_output = str(predecessor_output)
+                parts = predecessor_output.rsplit("\n\n", 1)
+                if self.pruned_temporal_patch_mode == "tail":
+                    patched_output = parts[-1].strip()
+                elif self.pruned_temporal_patch_mode == "body":
+                    patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
+                else:
+                    patched_output = predecessor_output.strip()
+                if not patched_output:
+                    continue
+                temporal_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": patched_output,
+                    "message_type": "pruned_patch",
+                    "patch_mode": self.pruned_temporal_patch_mode,
+                }
         
         return temporal_info
     

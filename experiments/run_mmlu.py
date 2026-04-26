@@ -143,6 +143,11 @@ def parse_args():
                         help="During evaluation, pass only the content after the last blank line for pruned spatial edges.")
     pruned_patch_group.add_argument('--drop_pruned_edge_conclusion', action='store_true',
                         help="During evaluation, drop the content after the last blank line for pruned spatial edges.")
+    pruned_temporal_patch_group = parser.add_mutually_exclusive_group()
+    pruned_temporal_patch_group.add_argument('--use_pruned_temporal_tail_patch', action='store_true',
+                        help="During evaluation, pass only the content after the last blank line for pruned temporal edges.")
+    pruned_temporal_patch_group.add_argument('--drop_pruned_temporal_conclusion', action='store_true',
+                        help="During evaluation, drop the content after the last blank line for pruned temporal edges.")
     parser.add_argument('--replace_high_cost_edges', action='store_true',
                         help="After training, replace the highest-cost kept spatial edges with the lowest-cost pruned spatial edges for evaluation.")
     parser.add_argument('--num_replaced_edges', type=int, default=2,
@@ -188,6 +193,8 @@ async def main():
                   optimized_temporal=args.optimized_temporal,
                   use_pruned_edge_tail_patch=args.use_pruned_edge_tail_patch,
                   drop_pruned_edge_conclusion=args.drop_pruned_edge_conclusion,
+                  use_pruned_temporal_tail_patch=args.use_pruned_temporal_tail_patch,
+                  drop_pruned_temporal_conclusion=args.drop_pruned_temporal_conclusion,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')

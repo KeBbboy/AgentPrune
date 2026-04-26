@@ -60,6 +60,7 @@ class AnalyzeAgent(Node):
         spatial_str = ""
         pruned_patch_str = ""
         temporal_str = ""
+        pruned_temporal_patch_str = ""
         for id, info in spatial_info.items():
             if self.role == 'Wiki Searcher' and info['role']=='Knowlegable Expert':
                 queries = find_strings_between_pluses(info['output'])
@@ -77,11 +78,18 @@ class AnalyzeAgent(Node):
                 spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
         for id, info in temporal_info.items():
             formatted_output = self._format_shared_output(info)
-            temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
+            if info.get("message_type") == "pruned_patch":
+                if info.get("patch_mode") == "body":
+                    pruned_temporal_patch_str += f"Agent {id}, role is {info['role']}, analysis content excluding the final conclusion from the last round is:\n\n {formatted_output}\n\n"
+                else:
+                    pruned_temporal_patch_str += f"Agent {id}, role is {info['role']}, final conclusion snippet from the last round is:\n\n {formatted_output}\n\n"
+            else:
+                temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {formatted_output}\n\n"
             
         user_prompt += f"At the same time, the outputs of other agents are as follows:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
         user_prompt += f"For pruned communication edges, only partial outputs of other agents are available:\n\n{pruned_patch_str}\n\n" if len(pruned_patch_str) else ""
         user_prompt += f"In the last round of dialogue, the outputs of other agents were: \n\n{temporal_str}" if len(temporal_str) else ""
+        user_prompt += f"\n\nFor pruned temporal communication edges from the last round, only partial outputs of other agents are available:\n\n{pruned_temporal_patch_str}\n\n" if len(pruned_temporal_patch_str) else ""
         return system_prompt, user_prompt
                 
     def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict],**kwargs):
