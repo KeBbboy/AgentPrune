@@ -151,6 +151,8 @@ def parse_args():
     unified_pruned_patch_group = parser.add_mutually_exclusive_group()
     unified_pruned_patch_group.add_argument('--share_pruned_all_full_output', action='store_true',
                         help="During evaluation, share the full outputs for both pruned spatial and pruned temporal edges.")
+    unified_pruned_patch_group.add_argument('--share_pruned_all_full_output_original_prompt', action='store_true',
+                        help="During evaluation, share the full outputs for both pruned spatial and pruned temporal edges using the original non-pruned prompt format.")
     unified_pruned_patch_group.add_argument('--share_pruned_all_conclusion_only', action='store_true',
                         help="During evaluation, only share the final conclusion paragraph for both pruned spatial and pruned temporal edges.")
     unified_pruned_patch_group.add_argument('--share_pruned_all_analysis_only', action='store_true',
@@ -168,19 +170,20 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
-    if args.share_pruned_all_full_output:
+    if args.share_pruned_all_full_output or args.share_pruned_all_full_output_original_prompt:
         if (
             args.share_pruned_spatial_conclusion_only
             or args.share_pruned_spatial_analysis_only
             or args.share_pruned_temporal_conclusion_only
             or args.share_pruned_temporal_analysis_only
         ):
-            parser.error("--share_pruned_all_full_output cannot be combined with the fine-grained pruned-edge sharing flags.")
+            parser.error("--share_pruned_all_full_output and --share_pruned_all_full_output_original_prompt cannot be combined with the fine-grained pruned-edge sharing flags.")
         args.share_pruned_spatial_full_output = True
         args.share_pruned_temporal_full_output = True
     else:
         args.share_pruned_spatial_full_output = False
         args.share_pruned_temporal_full_output = False
+    args.share_pruned_full_output_original_prompt = args.share_pruned_all_full_output_original_prompt
     if args.share_pruned_all_conclusion_only:
         if (
             args.share_pruned_spatial_conclusion_only
@@ -237,6 +240,7 @@ async def main():
                   share_pruned_temporal_full_output=args.share_pruned_temporal_full_output,
                   share_pruned_temporal_conclusion_only=args.share_pruned_temporal_conclusion_only,
                   share_pruned_temporal_analysis_only=args.share_pruned_temporal_analysis_only,
+                  share_pruned_full_output_original_prompt=args.share_pruned_full_output_original_prompt,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')

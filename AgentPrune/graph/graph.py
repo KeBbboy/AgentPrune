@@ -51,6 +51,7 @@ class Graph(ABC):
                 share_pruned_temporal_full_output: bool = False,
                 share_pruned_temporal_conclusion_only: bool = False,
                 share_pruned_temporal_analysis_only: bool = False,
+                share_pruned_full_output_original_prompt: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -76,6 +77,7 @@ class Graph(ABC):
         self.share_pruned_temporal_full_output = share_pruned_temporal_full_output
         self.share_pruned_temporal_conclusion_only = share_pruned_temporal_conclusion_only
         self.share_pruned_temporal_analysis_only = share_pruned_temporal_analysis_only
+        self.share_pruned_full_output_original_prompt = share_pruned_full_output_original_prompt
         self.enable_pruned_edge_tail_patch = False
         self.enable_pruned_temporal_patch = False
         self.enable_edge_cost_recording = True
@@ -546,8 +548,12 @@ class Graph(ABC):
         for node in self.nodes.values():
             node.pruned_edge_patch_mode = pruned_edge_patch_mode
             node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
+            node.pruned_edge_use_original_prompt = self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full"
+            node.pruned_temporal_use_original_prompt = self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full"
         self.decision_node.pruned_edge_patch_mode = pruned_edge_patch_mode
         self.decision_node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
+        self.decision_node.pruned_edge_use_original_prompt = self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full"
+        self.decision_node.pruned_temporal_use_original_prompt = self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full"
         self.enable_edge_cost_recording = not enabled
 
     def get_spatial_edge_metrics(self):
