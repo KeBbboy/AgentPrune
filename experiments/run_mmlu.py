@@ -104,6 +104,11 @@ def freeze_graph_for_evaluation(graph: Graph) -> None:
     graph.temporal_logits.requires_grad_(False)
 
 
+def restore_all_edges_for_evaluation(graph: Graph) -> None:
+    graph.spatial_masks.data.fill_(1)
+    graph.temporal_masks.data.fill_(1)
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Process some parameters.")
@@ -142,6 +147,8 @@ def parse_args():
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--freeze_after_training', action='store_true',
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
+    parser.add_argument('--restore_all_edges_for_eval', action='store_true',
+                        help="Before evaluation, restore all spatial and temporal masks to 1 so every edge is treated as active.")
     trim_group = parser.add_mutually_exclusive_group()
     trim_group.add_argument('--share_special_roles_conclusion_only', action='store_true',
                         help="Only share the final conclusion paragraph for Critic, Mathematician, Psychologist, and Historian outputs.")
@@ -299,6 +306,10 @@ async def main():
     if args.freeze_after_training:
         freeze_graph_for_evaluation(graph)
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
+
+    if args.restore_all_edges_for_eval:
+        restore_all_edges_for_evaluation(graph)
+        print("Evaluation graph restored: all spatial and temporal masks set to 1 before evaluation.")
 
     graph.set_eval_mode(True)
     eval_agent_start = get_agent_token_snapshot(graph)
