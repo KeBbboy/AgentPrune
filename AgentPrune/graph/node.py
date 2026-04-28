@@ -71,6 +71,10 @@ class Node(ABC):
         self.pruned_temporal_patch_mode: str = "none"
         self.pruned_edge_use_original_prompt: bool = False
         self.pruned_temporal_use_original_prompt: bool = False
+        self.restored_edge_patch_mode: str = "none"
+        self.restored_temporal_patch_mode: str = "none"
+        self.restored_spatial_predecessor_ids: set[str] = set()
+        self.restored_temporal_predecessor_ids: set[str] = set()
 
     @property
     def node_name(self):
@@ -118,11 +122,27 @@ class Node(ABC):
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []
         self.pruned_temporal_predecessors: List[Node] = []
+        self.restored_spatial_predecessor_ids = set()
+        self.restored_temporal_predecessor_ids = set()
     
     def update_memory(self):
         self.last_memory['inputs'] = self.inputs
         self.last_memory['outputs'] = self.outputs
         self.last_memory['raw_inputs'] = self.raw_inputs
+
+    def _extract_patched_output(self, predecessor_output: Any, patch_mode: str) -> str:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
+        parts = predecessor_output.rsplit("\n\n", 1)
+        if patch_mode == "full":
+            patched_output = predecessor_output.strip()
+        elif patch_mode == "tail":
+            patched_output = parts[-1].strip()
+        elif patch_mode == "body":
+            patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
+        else:
+            patched_output = predecessor_output.strip()
+        return patched_output
 
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
@@ -136,6 +156,13 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
+                if predecessor.id in self.restored_spatial_predecessor_ids:
+                    predecessor_output = self._extract_patched_output(
+                        predecessor_output,
+                        self.restored_edge_patch_mode,
+                    )
+                    if not predecessor_output:
+                        continue
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": predecessor_output,
@@ -151,17 +178,10 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                if not isinstance(predecessor_output, str):
-                    predecessor_output = str(predecessor_output)
-                parts = predecessor_output.rsplit("\n\n", 1)
-                if self.pruned_edge_patch_mode == "full":
-                    patched_output = predecessor_output.strip()
-                elif self.pruned_edge_patch_mode == "tail":
-                    patched_output = parts[-1].strip()
-                elif self.pruned_edge_patch_mode == "body":
-                    patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
-                else:
-                    patched_output = predecessor_output.strip()
+                patched_output = self._extract_patched_output(
+                    predecessor_output,
+                    self.pruned_edge_patch_mode,
+                )
                 if not patched_output:
                     continue
                 spatial_info[predecessor.id] = {
@@ -184,6 +204,13 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
+                if predecessor.id in self.restored_temporal_predecessor_ids:
+                    predecessor_output = self._extract_patched_output(
+                        predecessor_output,
+                        self.restored_temporal_patch_mode,
+                    )
+                    if not predecessor_output:
+                        continue
                 temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
 
         if self.pruned_temporal_predecessors is not None:
@@ -195,17 +222,10 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                if not isinstance(predecessor_output, str):
-                    predecessor_output = str(predecessor_output)
-                parts = predecessor_output.rsplit("\n\n", 1)
-                if self.pruned_temporal_patch_mode == "full":
-                    patched_output = predecessor_output.strip()
-                elif self.pruned_temporal_patch_mode == "tail":
-                    patched_output = parts[-1].strip()
-                elif self.pruned_temporal_patch_mode == "body":
-                    patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
-                else:
-                    patched_output = predecessor_output.strip()
+                patched_output = self._extract_patched_output(
+                    predecessor_output,
+                    self.pruned_temporal_patch_mode,
+                )
                 if not patched_output:
                     continue
                 temporal_info[predecessor.id] = {

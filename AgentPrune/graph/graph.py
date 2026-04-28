@@ -84,6 +84,8 @@ class Graph(ABC):
         self.share_pruned_all_analysis_only_original_prompt = share_pruned_all_analysis_only_original_prompt
         self.enable_pruned_edge_tail_patch = False
         self.enable_pruned_temporal_patch = False
+        self.restore_pruned_spatial_edges_in_original_prompt = False
+        self.restore_pruned_temporal_edges_in_original_prompt = False
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -111,11 +113,13 @@ class Graph(ABC):
         self.spatial_logits = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,
                                                  requires_grad=optimized_spatial) # trainable edge logits
         self.spatial_masks = torch.nn.Parameter(fixed_spatial_masks,requires_grad=False)  # fixed edge masks
+        self.initial_spatial_masks = fixed_spatial_masks.clone()
 
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
         self.temporal_logits = torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,
                                                  requires_grad=optimized_temporal) # trainable edge logits
         self.temporal_masks = torch.nn.Parameter(fixed_temporal_masks,requires_grad=False)  # fixed edge masks
+        self.initial_temporal_masks = fixed_temporal_masks.clone()
 
     def _log_node_output(self, node: Node, phase: str = "round") -> None:
         if not self.log_node_outputs:
@@ -362,11 +366,19 @@ class Graph(ABC):
         self.clear_spatial_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
         
-        for potential_connection, edge_logit, edge_mask in zip(self.potential_spatial_edges, self.spatial_logits, self.spatial_masks):
+        for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_logits, self.spatial_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
-                if self.enable_pruned_edge_tail_patch and out_node.id != in_node.id:
+                if (
+                    self.restore_pruned_spatial_edges_in_original_prompt
+                    and self.initial_spatial_masks[edge_idx] == 1.0
+                    and out_node.id != in_node.id
+                    and not self.check_cycle(in_node, {out_node})
+                ):
+                    out_node.add_successor(in_node,'spatial')
+                    in_node.restored_spatial_predecessor_ids.add(out_node.id)
+                elif self.enable_pruned_edge_tail_patch and out_node.id != in_node.id:
                     in_node.pruned_spatial_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_spatial==False:
@@ -390,11 +402,19 @@ class Graph(ABC):
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal)]
         if round == 0:
             return torch.sum(torch.stack(log_probs))  
-        for potential_connection, edge_logit, edge_mask in zip(self.potential_temporal_edges, self.temporal_logits, self.temporal_masks):
+        for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_logits, self.temporal_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
-                if self.enable_pruned_temporal_patch and out_node.id != in_node.id:
+                if (
+                    self.restore_pruned_temporal_edges_in_original_prompt
+                    and self.initial_temporal_masks[edge_idx] == 1.0
+                    and out_node.id != in_node.id
+                    and not self.check_cycle(in_node, {out_node})
+                ):
+                    out_node.add_successor(in_node,'temporal')
+                    in_node.restored_temporal_predecessor_ids.add(out_node.id)
+                elif self.enable_pruned_temporal_patch and out_node.id != in_node.id:
                     in_node.pruned_temporal_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
@@ -518,13 +538,17 @@ class Graph(ABC):
             node.update_memory()
 
     def set_eval_mode(self, enabled: bool):
+        restore_original_prompt_edges = enabled and (
+            self.share_pruned_all_conclusion_only_original_prompt
+            or self.share_pruned_all_analysis_only_original_prompt
+        )
+        self.restore_pruned_spatial_edges_in_original_prompt = restore_original_prompt_edges
+        self.restore_pruned_temporal_edges_in_original_prompt = restore_original_prompt_edges
         self.enable_pruned_edge_tail_patch = (
             (
                 self.share_pruned_spatial_full_output
                 or self.share_pruned_spatial_conclusion_only
                 or self.share_pruned_spatial_analysis_only
-                or self.share_pruned_all_conclusion_only_original_prompt
-                or self.share_pruned_all_analysis_only_original_prompt
             )
             and enabled
         )
@@ -533,8 +557,6 @@ class Graph(ABC):
                 self.share_pruned_temporal_full_output
                 or self.share_pruned_temporal_conclusion_only
                 or self.share_pruned_temporal_analysis_only
-                or self.share_pruned_all_conclusion_only_original_prompt
-                or self.share_pruned_all_analysis_only_original_prompt
             ) and enabled
         )
         pruned_edge_patch_mode = "none"
@@ -564,27 +586,23 @@ class Graph(ABC):
         for node in self.nodes.values():
             node.pruned_edge_patch_mode = pruned_edge_patch_mode
             node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
+            node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
+            node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_original_prompt_edges else "none"
             node.pruned_edge_use_original_prompt = (
                 (self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full")
-                or self.share_pruned_all_conclusion_only_original_prompt
-                or self.share_pruned_all_analysis_only_original_prompt
             )
             node.pruned_temporal_use_original_prompt = (
                 (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
-                or self.share_pruned_all_conclusion_only_original_prompt
-                or self.share_pruned_all_analysis_only_original_prompt
             )
         self.decision_node.pruned_edge_patch_mode = pruned_edge_patch_mode
         self.decision_node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
+        self.decision_node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
+        self.decision_node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_original_prompt_edges else "none"
         self.decision_node.pruned_edge_use_original_prompt = (
             (self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full")
-            or self.share_pruned_all_conclusion_only_original_prompt
-            or self.share_pruned_all_analysis_only_original_prompt
         )
         self.decision_node.pruned_temporal_use_original_prompt = (
             (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
-            or self.share_pruned_all_conclusion_only_original_prompt
-            or self.share_pruned_all_analysis_only_original_prompt
         )
         self.enable_edge_cost_recording = not enabled
 
