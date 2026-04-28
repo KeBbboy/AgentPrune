@@ -155,8 +155,12 @@ def parse_args():
                         help="During evaluation, share the full outputs for both pruned spatial and pruned temporal edges using the original non-pruned prompt format.")
     unified_pruned_patch_group.add_argument('--share_pruned_all_conclusion_only', action='store_true',
                         help="During evaluation, only share the final conclusion paragraph for both pruned spatial and pruned temporal edges.")
+    unified_pruned_patch_group.add_argument('--share_pruned_all_conclusion_only_original_prompt', action='store_true',
+                        help="During evaluation, only share the final conclusion paragraph for both pruned spatial and pruned temporal edges using the original non-pruned prompt format.")
     unified_pruned_patch_group.add_argument('--share_pruned_all_analysis_only', action='store_true',
                         help="During evaluation, only share the analysis content before the final conclusion paragraph for both pruned spatial and pruned temporal edges.")
+    unified_pruned_patch_group.add_argument('--share_pruned_all_analysis_only_original_prompt', action='store_true',
+                        help="During evaluation, only share the analysis content before the final conclusion paragraph for both pruned spatial and pruned temporal edges using the original non-pruned prompt format.")
     parser.add_argument('--replace_high_cost_edges', action='store_true',
                         help="After training, replace the highest-cost kept spatial edges with the lowest-cost pruned spatial edges for evaluation.")
     parser.add_argument('--num_replaced_edges', type=int, default=2,
@@ -204,6 +208,22 @@ def parse_args():
             parser.error("--share_pruned_all_analysis_only cannot be combined with the fine-grained pruned-edge sharing flags.")
         args.share_pruned_spatial_analysis_only = True
         args.share_pruned_temporal_analysis_only = True
+    if args.share_pruned_all_conclusion_only_original_prompt:
+        if (
+            args.share_pruned_spatial_conclusion_only
+            or args.share_pruned_spatial_analysis_only
+            or args.share_pruned_temporal_conclusion_only
+            or args.share_pruned_temporal_analysis_only
+        ):
+            parser.error("--share_pruned_all_conclusion_only_original_prompt cannot be combined with the fine-grained pruned-edge sharing flags.")
+    if args.share_pruned_all_analysis_only_original_prompt:
+        if (
+            args.share_pruned_spatial_conclusion_only
+            or args.share_pruned_spatial_analysis_only
+            or args.share_pruned_temporal_conclusion_only
+            or args.share_pruned_temporal_analysis_only
+        ):
+            parser.error("--share_pruned_all_analysis_only_original_prompt cannot be combined with the fine-grained pruned-edge sharing flags.")
 
     return args
 
@@ -241,6 +261,8 @@ async def main():
                   share_pruned_temporal_conclusion_only=args.share_pruned_temporal_conclusion_only,
                   share_pruned_temporal_analysis_only=args.share_pruned_temporal_analysis_only,
                   share_pruned_full_output_original_prompt=args.share_pruned_full_output_original_prompt,
+                  share_pruned_all_conclusion_only_original_prompt=args.share_pruned_all_conclusion_only_original_prompt,
+                  share_pruned_all_analysis_only_original_prompt=args.share_pruned_all_analysis_only_original_prompt,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
