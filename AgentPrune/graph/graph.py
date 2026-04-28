@@ -388,11 +388,7 @@ class Graph(ABC):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
-                allow_self_temporal_patch = (
-                    self.share_pruned_temporal_full_output
-                    and self.enable_pruned_temporal_patch
-                )
-                if self.enable_pruned_temporal_patch and (out_node.id != in_node.id or allow_self_temporal_patch):
+                if self.enable_pruned_temporal_patch and out_node.id != in_node.id:
                     in_node.pruned_temporal_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
