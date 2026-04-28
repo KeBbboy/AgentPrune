@@ -45,12 +45,12 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
-                use_pruned_edge_full_patch: bool = False,
-                use_pruned_edge_tail_patch: bool = False,
-                drop_pruned_edge_conclusion: bool = False,
-                use_pruned_temporal_full_patch: bool = False,
-                use_pruned_temporal_tail_patch: bool = False,
-                drop_pruned_temporal_conclusion: bool = False,
+                share_pruned_spatial_full_output: bool = False,
+                share_pruned_spatial_conclusion_only: bool = False,
+                share_pruned_spatial_analysis_only: bool = False,
+                share_pruned_temporal_full_output: bool = False,
+                share_pruned_temporal_conclusion_only: bool = False,
+                share_pruned_temporal_analysis_only: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -61,7 +61,7 @@ class Graph(ABC):
         fixed_temporal_masks = torch.tensor(fixed_temporal_masks).view(-1)
         assert len(fixed_spatial_masks)==len(agent_names)*len(agent_names),"The fixed_spatial_masks doesn't match the number of agents"
         assert len(fixed_temporal_masks)==len(agent_names)*len(agent_names),"The fixed_temporal_masks doesn't match the number of agents"
-        
+
         self.id:str = shortuuid.ShortUUID().random(length=4)
         self.domain:str = domain
         self.llm_name:str = llm_name
@@ -70,12 +70,12 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
-        self.use_pruned_edge_full_patch = use_pruned_edge_full_patch
-        self.use_pruned_edge_tail_patch = use_pruned_edge_tail_patch
-        self.drop_pruned_edge_conclusion = drop_pruned_edge_conclusion
-        self.use_pruned_temporal_full_patch = use_pruned_temporal_full_patch
-        self.use_pruned_temporal_tail_patch = use_pruned_temporal_tail_patch
-        self.drop_pruned_temporal_conclusion = drop_pruned_temporal_conclusion
+        self.share_pruned_spatial_full_output = share_pruned_spatial_full_output
+        self.share_pruned_spatial_conclusion_only = share_pruned_spatial_conclusion_only
+        self.share_pruned_spatial_analysis_only = share_pruned_spatial_analysis_only
+        self.share_pruned_temporal_full_output = share_pruned_temporal_full_output
+        self.share_pruned_temporal_conclusion_only = share_pruned_temporal_conclusion_only
+        self.share_pruned_temporal_analysis_only = share_pruned_temporal_analysis_only
         self.enable_pruned_edge_tail_patch = False
         self.enable_pruned_temporal_patch = False
         self.enable_edge_cost_recording = True
@@ -389,7 +389,7 @@ class Graph(ABC):
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
                 allow_self_temporal_patch = (
-                    self.use_pruned_temporal_full_patch
+                    self.share_pruned_temporal_full_output
                     and self.enable_pruned_temporal_patch
                 )
                 if self.enable_pruned_temporal_patch and (out_node.id != in_node.id or allow_self_temporal_patch):
@@ -517,31 +517,35 @@ class Graph(ABC):
 
     def set_eval_mode(self, enabled: bool):
         self.enable_pruned_edge_tail_patch = (
-            (self.use_pruned_edge_full_patch or self.use_pruned_edge_tail_patch or self.drop_pruned_edge_conclusion)
+            (
+                self.share_pruned_spatial_full_output
+                or self.share_pruned_spatial_conclusion_only
+                or self.share_pruned_spatial_analysis_only
+            )
             and enabled
         )
         self.enable_pruned_temporal_patch = (
             (
-                self.use_pruned_temporal_full_patch
-                or self.use_pruned_temporal_tail_patch
-                or self.drop_pruned_temporal_conclusion
+                self.share_pruned_temporal_full_output
+                or self.share_pruned_temporal_conclusion_only
+                or self.share_pruned_temporal_analysis_only
             ) and enabled
         )
         pruned_edge_patch_mode = "none"
         if enabled:
-            if self.use_pruned_edge_full_patch:
+            if self.share_pruned_spatial_full_output:
                 pruned_edge_patch_mode = "full"
-            elif self.use_pruned_edge_tail_patch:
+            elif self.share_pruned_spatial_conclusion_only:
                 pruned_edge_patch_mode = "tail"
-            elif self.drop_pruned_edge_conclusion:
+            elif self.share_pruned_spatial_analysis_only:
                 pruned_edge_patch_mode = "body"
         pruned_temporal_patch_mode = "none"
         if enabled:
-            if self.use_pruned_temporal_full_patch:
+            if self.share_pruned_temporal_full_output:
                 pruned_temporal_patch_mode = "full"
-            elif self.use_pruned_temporal_tail_patch:
+            elif self.share_pruned_temporal_conclusion_only:
                 pruned_temporal_patch_mode = "tail"
-            elif self.drop_pruned_temporal_conclusion:
+            elif self.share_pruned_temporal_analysis_only:
                 pruned_temporal_patch_mode = "body"
         for node in self.nodes.values():
             node.pruned_edge_patch_mode = pruned_edge_patch_mode

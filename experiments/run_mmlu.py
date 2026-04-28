@@ -134,27 +134,27 @@ def parse_args():
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
     trim_group = parser.add_mutually_exclusive_group()
-    trim_group.add_argument('--trim_special_roles_output', action='store_true',
-                        help="Only keep the content after the last blank line for Critic, Mathematician, Psychologist, and Historian when sharing outputs.")
-    trim_group.add_argument('--drop_special_roles_conclusion', action='store_true',
-                        help="Drop the content after the last blank line for Critic, Mathematician, Psychologist, and Historian when sharing outputs.")
+    trim_group.add_argument('--share_special_roles_conclusion_only', action='store_true',
+                        help="Only share the final conclusion paragraph for Critic, Mathematician, Psychologist, and Historian outputs.")
+    trim_group.add_argument('--share_special_roles_analysis_only', action='store_true',
+                        help="Only share the analysis content before the final conclusion paragraph for Critic, Mathematician, Psychologist, and Historian outputs.")
     pruned_patch_group = parser.add_mutually_exclusive_group()
-    pruned_patch_group.add_argument('--use_pruned_edge_tail_patch', action='store_true',
-                        help="During evaluation, pass only the content after the last blank line for pruned spatial edges.")
-    pruned_patch_group.add_argument('--drop_pruned_edge_conclusion', action='store_true',
-                        help="During evaluation, drop the content after the last blank line for pruned spatial edges.")
+    pruned_patch_group.add_argument('--share_pruned_spatial_conclusion_only', action='store_true',
+                        help="During evaluation, only share the final conclusion paragraph for pruned spatial edges.")
+    pruned_patch_group.add_argument('--share_pruned_spatial_analysis_only', action='store_true',
+                        help="During evaluation, only share the analysis content before the final conclusion paragraph for pruned spatial edges.")
     pruned_temporal_patch_group = parser.add_mutually_exclusive_group()
-    pruned_temporal_patch_group.add_argument('--use_pruned_temporal_tail_patch', action='store_true',
-                        help="During evaluation, pass only the content after the last blank line for pruned temporal edges.")
-    pruned_temporal_patch_group.add_argument('--drop_pruned_temporal_conclusion', action='store_true',
-                        help="During evaluation, drop the content after the last blank line for pruned temporal edges.")
+    pruned_temporal_patch_group.add_argument('--share_pruned_temporal_conclusion_only', action='store_true',
+                        help="During evaluation, only share the final conclusion paragraph for pruned temporal edges.")
+    pruned_temporal_patch_group.add_argument('--share_pruned_temporal_analysis_only', action='store_true',
+                        help="During evaluation, only share the analysis content before the final conclusion paragraph for pruned temporal edges.")
     unified_pruned_patch_group = parser.add_mutually_exclusive_group()
-    unified_pruned_patch_group.add_argument('--use_pruned_all_full_patch', action='store_true',
-                        help="During evaluation, pass the full outputs for both pruned spatial and pruned temporal edges.")
-    unified_pruned_patch_group.add_argument('--use_pruned_all_tail_patch', action='store_true',
-                        help="During evaluation, pass only the content after the last blank line for both pruned spatial and pruned temporal edges.")
-    unified_pruned_patch_group.add_argument('--drop_pruned_all_conclusion', action='store_true',
-                        help="During evaluation, drop the content after the last blank line for both pruned spatial and pruned temporal edges.")
+    unified_pruned_patch_group.add_argument('--share_pruned_all_full_output', action='store_true',
+                        help="During evaluation, share the full outputs for both pruned spatial and pruned temporal edges.")
+    unified_pruned_patch_group.add_argument('--share_pruned_all_conclusion_only', action='store_true',
+                        help="During evaluation, only share the final conclusion paragraph for both pruned spatial and pruned temporal edges.")
+    unified_pruned_patch_group.add_argument('--share_pruned_all_analysis_only', action='store_true',
+                        help="During evaluation, only share the analysis content before the final conclusion paragraph for both pruned spatial and pruned temporal edges.")
     parser.add_argument('--replace_high_cost_edges', action='store_true',
                         help="After training, replace the highest-cost kept spatial edges with the lowest-cost pruned spatial edges for evaluation.")
     parser.add_argument('--num_replaced_edges', type=int, default=2,
@@ -168,40 +168,40 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
-    if args.use_pruned_all_full_patch:
+    if args.share_pruned_all_full_output:
         if (
-            args.use_pruned_edge_tail_patch
-            or args.drop_pruned_edge_conclusion
-            or args.use_pruned_temporal_tail_patch
-            or args.drop_pruned_temporal_conclusion
+            args.share_pruned_spatial_conclusion_only
+            or args.share_pruned_spatial_analysis_only
+            or args.share_pruned_temporal_conclusion_only
+            or args.share_pruned_temporal_analysis_only
         ):
-            parser.error("--use_pruned_all_full_patch cannot be combined with the fine-grained pruned edge patch flags.")
-        args.use_pruned_edge_full_patch = True
-        args.use_pruned_temporal_full_patch = True
+            parser.error("--share_pruned_all_full_output cannot be combined with the fine-grained pruned-edge sharing flags.")
+        args.share_pruned_spatial_full_output = True
+        args.share_pruned_temporal_full_output = True
     else:
-        args.use_pruned_edge_full_patch = False
-        args.use_pruned_temporal_full_patch = False
-    if args.use_pruned_all_tail_patch:
+        args.share_pruned_spatial_full_output = False
+        args.share_pruned_temporal_full_output = False
+    if args.share_pruned_all_conclusion_only:
         if (
-            args.use_pruned_edge_tail_patch
-            or args.drop_pruned_edge_conclusion
-            or args.use_pruned_temporal_tail_patch
-            or args.drop_pruned_temporal_conclusion
+            args.share_pruned_spatial_conclusion_only
+            or args.share_pruned_spatial_analysis_only
+            or args.share_pruned_temporal_conclusion_only
+            or args.share_pruned_temporal_analysis_only
         ):
-            parser.error("--use_pruned_all_tail_patch cannot be combined with the fine-grained pruned edge patch flags.")
-        args.use_pruned_edge_tail_patch = True
-        args.use_pruned_temporal_tail_patch = True
-    if args.drop_pruned_all_conclusion:
+            parser.error("--share_pruned_all_conclusion_only cannot be combined with the fine-grained pruned-edge sharing flags.")
+        args.share_pruned_spatial_conclusion_only = True
+        args.share_pruned_temporal_conclusion_only = True
+    if args.share_pruned_all_analysis_only:
         if (
-            args.use_pruned_edge_tail_patch
-            or args.drop_pruned_edge_conclusion
-            or args.use_pruned_temporal_tail_patch
-            or args.drop_pruned_temporal_conclusion
+            args.share_pruned_spatial_conclusion_only
+            or args.share_pruned_spatial_analysis_only
+            or args.share_pruned_temporal_conclusion_only
+            or args.share_pruned_temporal_analysis_only
         ):
-            parser.error("--drop_pruned_all_conclusion cannot be combined with the fine-grained pruned edge patch flags.")
-        args.drop_pruned_edge_conclusion = True
-        args.drop_pruned_temporal_conclusion = True
-        
+            parser.error("--share_pruned_all_analysis_only cannot be combined with the fine-grained pruned-edge sharing flags.")
+        args.share_pruned_spatial_analysis_only = True
+        args.share_pruned_temporal_analysis_only = True
+
     return args
 
 async def main():
@@ -218,8 +218,8 @@ async def main():
     kwargs = get_kwargs(
         mode,
         len(agent_names),
-        trim_special_roles_output=args.trim_special_roles_output,
-        drop_special_roles_conclusion=args.drop_special_roles_conclusion,
+        share_special_roles_conclusion_only=args.share_special_roles_conclusion_only,
+        share_special_roles_analysis_only=args.share_special_roles_analysis_only,
     )
     limit_questions = args.limit_questions
     
@@ -231,12 +231,12 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
-                  use_pruned_edge_full_patch=args.use_pruned_edge_full_patch,
-                  use_pruned_edge_tail_patch=args.use_pruned_edge_tail_patch,
-                  drop_pruned_edge_conclusion=args.drop_pruned_edge_conclusion,
-                  use_pruned_temporal_full_patch=args.use_pruned_temporal_full_patch,
-                  use_pruned_temporal_tail_patch=args.use_pruned_temporal_tail_patch,
-                  drop_pruned_temporal_conclusion=args.drop_pruned_temporal_conclusion,
+                  share_pruned_spatial_full_output=args.share_pruned_spatial_full_output,
+                  share_pruned_spatial_conclusion_only=args.share_pruned_spatial_conclusion_only,
+                  share_pruned_spatial_analysis_only=args.share_pruned_spatial_analysis_only,
+                  share_pruned_temporal_full_output=args.share_pruned_temporal_full_output,
+                  share_pruned_temporal_conclusion_only=args.share_pruned_temporal_conclusion_only,
+                  share_pruned_temporal_analysis_only=args.share_pruned_temporal_analysis_only,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
@@ -314,8 +314,8 @@ async def main():
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star'],Literal['Mesh'],
                           Literal['FakeFullConnected'],Literal['FakeRandom'],Literal['FakeChain'],Literal['FakeStar'],Literal['FakeMesh'],Literal['FakeAGRandom'],Literal['FakeAGFull']],
                N:int,
-               trim_special_roles_output: bool = False,
-               drop_special_roles_conclusion: bool = False):
+               share_special_roles_conclusion_only: bool = False,
+               share_special_roles_analysis_only: bool = False):
     initial_spatial_probability: float = 0.5
     fixed_spatial_masks:List[List[int]] = None
     initial_temporal_probability: float = 0.5
@@ -382,15 +382,15 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
     elif 'Fake' in mode and 'AG' in mode:
         node_kwargs = [{'role':'Fake'} if i % 2 == N % 2 else {'role':None} for i in range(N)]
 
-    if trim_special_roles_output:
+    if share_special_roles_conclusion_only:
         if node_kwargs is None:
             node_kwargs = [{} for _ in range(N)]
-        node_kwargs = [{**kwargs, 'trim_special_roles_output': True} for kwargs in node_kwargs]
+        node_kwargs = [{**kwargs, 'share_special_roles_conclusion_only': True} for kwargs in node_kwargs]
 
-    if drop_special_roles_conclusion:
+    if share_special_roles_analysis_only:
         if node_kwargs is None:
             node_kwargs = [{} for _ in range(N)]
-        node_kwargs = [{**kwargs, 'drop_special_roles_conclusion': True} for kwargs in node_kwargs]
+        node_kwargs = [{**kwargs, 'share_special_roles_analysis_only': True} for kwargs in node_kwargs]
         
     return {"initial_spatial_probability": initial_spatial_probability,
             "fixed_spatial_masks": fixed_spatial_masks,

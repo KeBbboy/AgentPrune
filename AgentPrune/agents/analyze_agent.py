@@ -22,8 +22,8 @@ class AnalyzeAgent(Node):
         role:str = None,
         domain: str = "",
         llm_name: str = "",
-        trim_special_roles_output: bool = False,
-        drop_special_roles_conclusion: bool = False,
+        share_special_roles_conclusion_only: bool = False,
+        share_special_roles_analysis_only: bool = False,
     ):
         super().__init__(id, "AnalyzeAgent" ,domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
@@ -31,8 +31,8 @@ class AnalyzeAgent(Node):
         self.role = self.prompt_set.get_role() if role is None else role
         self.constraint = self.prompt_set.get_analyze_constraint(self.role)
         self.wiki_summary = ""
-        self.trim_special_roles_output = trim_special_roles_output
-        self.drop_special_roles_conclusion = drop_special_roles_conclusion
+        self.share_special_roles_conclusion_only = share_special_roles_conclusion_only
+        self.share_special_roles_analysis_only = share_special_roles_analysis_only
 
     def _format_shared_output(self, info: Dict[str, str]) -> str:
         output = info["output"]
@@ -40,12 +40,12 @@ class AnalyzeAgent(Node):
             return output
 
         parts = output.rsplit("\n\n", 1)
-        if self.trim_special_roles_output:
+        if self.share_special_roles_conclusion_only:
             if len(parts) == 2 and parts[1].strip():
                 return parts[1].strip()
             return output.strip()
 
-        if self.drop_special_roles_conclusion:
+        if self.share_special_roles_analysis_only:
             if len(parts) == 2 and parts[0].strip():
                 return parts[0].strip()
             return output.strip()
