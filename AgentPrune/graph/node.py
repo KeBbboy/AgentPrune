@@ -152,7 +152,9 @@ class Node(ABC):
                 if not isinstance(predecessor_output, str):
                     predecessor_output = str(predecessor_output)
                 parts = predecessor_output.rsplit("\n\n", 1)
-                if self.pruned_edge_patch_mode == "tail":
+                if self.pruned_edge_patch_mode == "full":
+                    patched_output = predecessor_output.strip()
+                elif self.pruned_edge_patch_mode == "tail":
                     patched_output = parts[-1].strip()
                 elif self.pruned_edge_patch_mode == "body":
                     patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
@@ -194,7 +196,9 @@ class Node(ABC):
                 if not isinstance(predecessor_output, str):
                     predecessor_output = str(predecessor_output)
                 parts = predecessor_output.rsplit("\n\n", 1)
-                if self.pruned_temporal_patch_mode == "tail":
+                if self.pruned_temporal_patch_mode == "full":
+                    patched_output = predecessor_output.strip()
+                elif self.pruned_temporal_patch_mode == "tail":
                     patched_output = parts[-1].strip()
                 elif self.pruned_temporal_patch_mode == "body":
                     patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()

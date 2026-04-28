@@ -72,6 +72,8 @@ class AnalyzeAgent(Node):
             if info.get("message_type") == "pruned_patch":
                 if info.get("patch_mode") == "body":
                     pruned_patch_str += f"Agent {id}, role is {info['role']}, analysis content excluding the final conclusion is:\n\n {formatted_output}\n\n"
+                elif info.get("patch_mode") == "full":
+                    pruned_patch_str += f"Agent {id}, role is {info['role']}, full output is still available despite the pruned edge:\n\n {formatted_output}\n\n"
                 else:
                     pruned_patch_str += f"Agent {id}, role is {info['role']}, final conclusion snippet is:\n\n {formatted_output}\n\n"
             else:
@@ -81,6 +83,8 @@ class AnalyzeAgent(Node):
             if info.get("message_type") == "pruned_patch":
                 if info.get("patch_mode") == "body":
                     pruned_temporal_patch_str += f"Agent {id}, role is {info['role']}, analysis content excluding the final conclusion from the last round is:\n\n {formatted_output}\n\n"
+                elif info.get("patch_mode") == "full":
+                    pruned_temporal_patch_str += f"Agent {id}, role is {info['role']}, full output from the last round is still available despite the pruned temporal edge:\n\n {formatted_output}\n\n"
                 else:
                     pruned_temporal_patch_str += f"Agent {id}, role is {info['role']}, final conclusion snippet from the last round is:\n\n {formatted_output}\n\n"
             else:

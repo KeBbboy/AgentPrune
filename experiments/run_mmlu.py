@@ -149,6 +149,8 @@ def parse_args():
     pruned_temporal_patch_group.add_argument('--drop_pruned_temporal_conclusion', action='store_true',
                         help="During evaluation, drop the content after the last blank line for pruned temporal edges.")
     unified_pruned_patch_group = parser.add_mutually_exclusive_group()
+    unified_pruned_patch_group.add_argument('--use_pruned_all_full_patch', action='store_true',
+                        help="During evaluation, pass the full outputs for both pruned spatial and pruned temporal edges.")
     unified_pruned_patch_group.add_argument('--use_pruned_all_tail_patch', action='store_true',
                         help="During evaluation, pass only the content after the last blank line for both pruned spatial and pruned temporal edges.")
     unified_pruned_patch_group.add_argument('--drop_pruned_all_conclusion', action='store_true',
@@ -166,6 +168,19 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if args.use_pruned_all_full_patch:
+        if (
+            args.use_pruned_edge_tail_patch
+            or args.drop_pruned_edge_conclusion
+            or args.use_pruned_temporal_tail_patch
+            or args.drop_pruned_temporal_conclusion
+        ):
+            parser.error("--use_pruned_all_full_patch cannot be combined with the fine-grained pruned edge patch flags.")
+        args.use_pruned_edge_full_patch = True
+        args.use_pruned_temporal_full_patch = True
+    else:
+        args.use_pruned_edge_full_patch = False
+        args.use_pruned_temporal_full_patch = False
     if args.use_pruned_all_tail_patch:
         if (
             args.use_pruned_edge_tail_patch
@@ -216,8 +231,10 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
+                  use_pruned_edge_full_patch=args.use_pruned_edge_full_patch,
                   use_pruned_edge_tail_patch=args.use_pruned_edge_tail_patch,
                   drop_pruned_edge_conclusion=args.drop_pruned_edge_conclusion,
+                  use_pruned_temporal_full_patch=args.use_pruned_temporal_full_patch,
                   use_pruned_temporal_tail_patch=args.use_pruned_temporal_tail_patch,
                   drop_pruned_temporal_conclusion=args.drop_pruned_temporal_conclusion,
                   **kwargs)

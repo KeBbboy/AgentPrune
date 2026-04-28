@@ -45,8 +45,10 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                use_pruned_edge_full_patch: bool = False,
                 use_pruned_edge_tail_patch: bool = False,
                 drop_pruned_edge_conclusion: bool = False,
+                use_pruned_temporal_full_patch: bool = False,
                 use_pruned_temporal_tail_patch: bool = False,
                 drop_pruned_temporal_conclusion: bool = False,
                 ):
@@ -68,8 +70,10 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
+        self.use_pruned_edge_full_patch = use_pruned_edge_full_patch
         self.use_pruned_edge_tail_patch = use_pruned_edge_tail_patch
         self.drop_pruned_edge_conclusion = drop_pruned_edge_conclusion
+        self.use_pruned_temporal_full_patch = use_pruned_temporal_full_patch
         self.use_pruned_temporal_tail_patch = use_pruned_temporal_tail_patch
         self.drop_pruned_temporal_conclusion = drop_pruned_temporal_conclusion
         self.enable_pruned_edge_tail_patch = False
@@ -384,7 +388,11 @@ class Graph(ABC):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
-                if self.enable_pruned_temporal_patch and out_node.id != in_node.id:
+                allow_self_temporal_patch = (
+                    self.use_pruned_temporal_full_patch
+                    and self.enable_pruned_temporal_patch
+                )
+                if self.enable_pruned_temporal_patch and (out_node.id != in_node.id or allow_self_temporal_patch):
                     in_node.pruned_temporal_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
@@ -508,19 +516,30 @@ class Graph(ABC):
             node.update_memory()
 
     def set_eval_mode(self, enabled: bool):
-        self.enable_pruned_edge_tail_patch = self.use_pruned_edge_tail_patch and enabled
+        self.enable_pruned_edge_tail_patch = (
+            (self.use_pruned_edge_full_patch or self.use_pruned_edge_tail_patch or self.drop_pruned_edge_conclusion)
+            and enabled
+        )
         self.enable_pruned_temporal_patch = (
-            (self.use_pruned_temporal_tail_patch or self.drop_pruned_temporal_conclusion) and enabled
+            (
+                self.use_pruned_temporal_full_patch
+                or self.use_pruned_temporal_tail_patch
+                or self.drop_pruned_temporal_conclusion
+            ) and enabled
         )
         pruned_edge_patch_mode = "none"
         if enabled:
-            if self.use_pruned_edge_tail_patch:
+            if self.use_pruned_edge_full_patch:
+                pruned_edge_patch_mode = "full"
+            elif self.use_pruned_edge_tail_patch:
                 pruned_edge_patch_mode = "tail"
             elif self.drop_pruned_edge_conclusion:
                 pruned_edge_patch_mode = "body"
         pruned_temporal_patch_mode = "none"
         if enabled:
-            if self.use_pruned_temporal_tail_patch:
+            if self.use_pruned_temporal_full_patch:
+                pruned_temporal_patch_mode = "full"
+            elif self.use_pruned_temporal_tail_patch:
                 pruned_temporal_patch_mode = "tail"
             elif self.drop_pruned_temporal_conclusion:
                 pruned_temporal_patch_mode = "body"
