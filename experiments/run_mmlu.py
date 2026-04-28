@@ -97,6 +97,13 @@ def print_phase_agent_token_summary(phase_name: str, phase_metrics: List[Dict[st
         )
 
 
+def freeze_graph_for_evaluation(graph: Graph) -> None:
+    graph.optimized_spatial = False
+    graph.optimized_temporal = False
+    graph.spatial_logits.requires_grad_(False)
+    graph.temporal_logits.requires_grad_(False)
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Process some parameters.")
@@ -133,6 +140,8 @@ def parse_args():
                         help="Maximum number of validation questions to evaluate.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
+    parser.add_argument('--freeze_after_training', action='store_true',
+                        help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
     trim_group = parser.add_mutually_exclusive_group()
     trim_group.add_argument('--share_special_roles_conclusion_only', action='store_true',
                         help="Only share the final conclusion paragraph for Critic, Mathematician, Psychologist, and Historian outputs.")
@@ -286,6 +295,10 @@ async def main():
         print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
         print_phase_token_summary("Training", train_prompt_used, train_completion_used)
         print_phase_agent_token_summary("Training", train_agent_metrics)
+
+    if args.freeze_after_training:
+        freeze_graph_for_evaluation(graph)
+        print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
 
     graph.set_eval_mode(True)
     eval_agent_start = get_agent_token_snapshot(graph)
