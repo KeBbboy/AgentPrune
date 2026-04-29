@@ -52,6 +52,9 @@ class Graph(ABC):
                 share_pruned_temporal_conclusion_only: bool = False,
                 share_pruned_temporal_analysis_only: bool = False,
                 share_pruned_full_output_original_prompt: bool = False,
+                share_pruned_temporal_full_output_original_prompt: bool = False,
+                share_pruned_temporal_conclusion_only_original_prompt: bool = False,
+                share_pruned_temporal_analysis_only_original_prompt: bool = False,
                 restore_pruned_edges_as_active_conclusion_only: bool = False,
                 restore_pruned_edges_as_active_analysis_only: bool = False,
                 ):
@@ -80,6 +83,15 @@ class Graph(ABC):
         self.share_pruned_temporal_conclusion_only = share_pruned_temporal_conclusion_only
         self.share_pruned_temporal_analysis_only = share_pruned_temporal_analysis_only
         self.share_pruned_full_output_original_prompt = share_pruned_full_output_original_prompt
+        self.share_pruned_temporal_full_output_original_prompt = (
+            share_pruned_temporal_full_output_original_prompt
+        )
+        self.share_pruned_temporal_conclusion_only_original_prompt = (
+            share_pruned_temporal_conclusion_only_original_prompt
+        )
+        self.share_pruned_temporal_analysis_only_original_prompt = (
+            share_pruned_temporal_analysis_only_original_prompt
+        )
         self.restore_pruned_edges_as_active_conclusion_only = restore_pruned_edges_as_active_conclusion_only
         self.restore_pruned_edges_as_active_analysis_only = restore_pruned_edges_as_active_analysis_only
         self.enable_pruned_edge_tail_patch = False
@@ -593,6 +605,18 @@ class Graph(ABC):
             )
             node.pruned_temporal_use_original_prompt = (
                 (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
+                or (
+                    self.share_pruned_temporal_full_output_original_prompt
+                    and pruned_temporal_patch_mode == "full"
+                )
+                or (
+                    self.share_pruned_temporal_conclusion_only_original_prompt
+                    and pruned_temporal_patch_mode == "tail"
+                )
+                or (
+                    self.share_pruned_temporal_analysis_only_original_prompt
+                    and pruned_temporal_patch_mode == "body"
+                )
             )
         self.decision_node.pruned_edge_patch_mode = pruned_edge_patch_mode
         self.decision_node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
@@ -603,6 +627,18 @@ class Graph(ABC):
         )
         self.decision_node.pruned_temporal_use_original_prompt = (
             (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
+            or (
+                self.share_pruned_temporal_full_output_original_prompt
+                and pruned_temporal_patch_mode == "full"
+            )
+            or (
+                self.share_pruned_temporal_conclusion_only_original_prompt
+                and pruned_temporal_patch_mode == "tail"
+            )
+            or (
+                self.share_pruned_temporal_analysis_only_original_prompt
+                and pruned_temporal_patch_mode == "body"
+            )
         )
         self.enable_edge_cost_recording = not enabled
 
