@@ -48,6 +48,9 @@ class Graph(ABC):
                 share_pruned_spatial_full_output: bool = False,
                 share_pruned_spatial_conclusion_only: bool = False,
                 share_pruned_spatial_analysis_only: bool = False,
+                restore_pruned_spatial_edges_as_active_full_output_original_prompt: bool = False,
+                restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt: bool = False,
+                restore_pruned_spatial_edges_as_active_analysis_only_original_prompt: bool = False,
                 share_pruned_temporal_full_output: bool = False,
                 share_pruned_temporal_conclusion_only: bool = False,
                 share_pruned_temporal_analysis_only: bool = False,
@@ -83,6 +86,15 @@ class Graph(ABC):
         self.share_pruned_spatial_full_output = share_pruned_spatial_full_output
         self.share_pruned_spatial_conclusion_only = share_pruned_spatial_conclusion_only
         self.share_pruned_spatial_analysis_only = share_pruned_spatial_analysis_only
+        self.restore_pruned_spatial_edges_as_active_full_output_original_prompt = (
+            restore_pruned_spatial_edges_as_active_full_output_original_prompt
+        )
+        self.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt = (
+            restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt
+        )
+        self.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt = (
+            restore_pruned_spatial_edges_as_active_analysis_only_original_prompt
+        )
         self.share_pruned_temporal_full_output = share_pruned_temporal_full_output
         self.share_pruned_temporal_conclusion_only = share_pruned_temporal_conclusion_only
         self.share_pruned_temporal_analysis_only = share_pruned_temporal_analysis_only
@@ -594,6 +606,11 @@ class Graph(ABC):
 
     def set_eval_mode(self, enabled: bool):
         restore_original_prompt_edges = enabled and (
+            self.restore_pruned_spatial_edges_as_active_full_output_original_prompt
+            or
+            self.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt
+            or self.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt
+            or
             self.restore_pruned_edges_as_active_conclusion_only
             or self.restore_pruned_edges_as_active_analysis_only
         )
@@ -626,11 +643,17 @@ class Graph(ABC):
         if enabled:
             if self.share_pruned_spatial_full_output:
                 pruned_edge_patch_mode = "full"
+            elif self.restore_pruned_spatial_edges_as_active_full_output_original_prompt:
+                pruned_edge_patch_mode = "full"
             elif self.share_pruned_spatial_conclusion_only:
+                pruned_edge_patch_mode = "tail"
+            elif self.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt:
                 pruned_edge_patch_mode = "tail"
             elif self.restore_pruned_edges_as_active_conclusion_only:
                 pruned_edge_patch_mode = "tail"
             elif self.share_pruned_spatial_analysis_only:
+                pruned_edge_patch_mode = "body"
+            elif self.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt:
                 pruned_edge_patch_mode = "body"
             elif self.restore_pruned_edges_as_active_analysis_only:
                 pruned_edge_patch_mode = "body"
