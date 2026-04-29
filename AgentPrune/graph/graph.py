@@ -48,6 +48,7 @@ class Graph(ABC):
                 share_pruned_spatial_full_output: bool = False,
                 share_pruned_spatial_conclusion_only: bool = False,
                 share_pruned_spatial_analysis_only: bool = False,
+                share_pruned_spatial_full_output_original_prompt: bool = False,
                 restore_pruned_spatial_edges_as_active_full_output_original_prompt: bool = False,
                 restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt: bool = False,
                 restore_pruned_spatial_edges_as_active_analysis_only_original_prompt: bool = False,
@@ -86,6 +87,9 @@ class Graph(ABC):
         self.share_pruned_spatial_full_output = share_pruned_spatial_full_output
         self.share_pruned_spatial_conclusion_only = share_pruned_spatial_conclusion_only
         self.share_pruned_spatial_analysis_only = share_pruned_spatial_analysis_only
+        self.share_pruned_spatial_full_output_original_prompt = (
+            share_pruned_spatial_full_output_original_prompt
+        )
         self.restore_pruned_spatial_edges_as_active_full_output_original_prompt = (
             restore_pruned_spatial_edges_as_active_full_output_original_prompt
         )
@@ -643,6 +647,8 @@ class Graph(ABC):
         if enabled:
             if self.share_pruned_spatial_full_output:
                 pruned_edge_patch_mode = "full"
+            elif self.share_pruned_spatial_full_output_original_prompt:
+                pruned_edge_patch_mode = "full"
             elif self.restore_pruned_spatial_edges_as_active_full_output_original_prompt:
                 pruned_edge_patch_mode = "full"
             elif self.share_pruned_spatial_conclusion_only:
@@ -682,6 +688,10 @@ class Graph(ABC):
             node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"
             node.pruned_edge_use_original_prompt = (
                 (self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full")
+                or (
+                    self.share_pruned_spatial_full_output_original_prompt
+                    and pruned_edge_patch_mode == "full"
+                )
             )
             node.pruned_temporal_use_original_prompt = (
                 (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
@@ -704,6 +714,10 @@ class Graph(ABC):
         self.decision_node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"
         self.decision_node.pruned_edge_use_original_prompt = (
             (self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full")
+            or (
+                self.share_pruned_spatial_full_output_original_prompt
+                and pruned_edge_patch_mode == "full"
+            )
         )
         self.decision_node.pruned_temporal_use_original_prompt = (
             (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
