@@ -57,6 +57,7 @@ class Graph(ABC):
                 share_pruned_temporal_analysis_only_original_prompt: bool = False,
                 restore_pruned_edges_as_active_conclusion_only: bool = False,
                 restore_pruned_edges_as_active_analysis_only: bool = False,
+                enable_pruned_delivery_audit: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -94,6 +95,7 @@ class Graph(ABC):
         )
         self.restore_pruned_edges_as_active_conclusion_only = restore_pruned_edges_as_active_conclusion_only
         self.restore_pruned_edges_as_active_analysis_only = restore_pruned_edges_as_active_analysis_only
+        self.enable_pruned_delivery_audit = enable_pruned_delivery_audit
         self.enable_pruned_edge_tail_patch = False
         self.enable_pruned_temporal_patch = False
         self.restore_pruned_spatial_edges_in_original_prompt = False
@@ -108,6 +110,9 @@ class Graph(ABC):
         self._token_encoder = None
         
         self.init_nodes() # add nodes to the self.nodes
+        for node in self.nodes.values():
+            node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
+        self.decision_node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
         self.spatial_edge_token_totals: Dict[tuple[str, str], int] = {
             (src_id, dst_id): 0
@@ -367,6 +372,20 @@ class Graph(ABC):
             self.nodes[node_id].temporal_successors = []
             self.nodes[node_id].pruned_temporal_predecessors = []
 
+    def reset_runtime_audit(self):
+        for node in self.nodes.values():
+            node.reset_runtime_audit()
+            node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
+        self.decision_node.reset_runtime_audit()
+        self.decision_node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
+
+    def get_pruned_delivery_audit_events(self) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        for node in self.nodes.values():
+            events.extend(node.transmission_audit_events)
+        events.extend(self.decision_node.transmission_audit_events)
+        return events
+
     def connect_decision_node(self, last_node_id: str = None):
         for node_id in self.nodes.keys():
             if last_node_id is None:
@@ -452,6 +471,7 @@ class Graph(ABC):
                   max_time: int = 600,
                   aggregate_mode: str = "all connected") -> List[Any]:
         # inputs:{'task':"xxx"}
+        self.reset_runtime_audit()
         log_probs = 0
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
@@ -459,23 +479,28 @@ class Graph(ABC):
             
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
+            execution_index = 0
 
             while zero_in_degree_queue:
                 current_node_id = zero_in_degree_queue.pop(0)
+                current_node = self.nodes[current_node_id]
+                current_node.runtime_sample_index = self.current_sample_index
+                current_node.runtime_round_index = round
+                current_node.runtime_execution_index = execution_index
                 tries = 0
                 while tries < max_tries:
                     try:
-                        self.record_spatial_edge_costs(self.nodes[current_node_id])
-                        self.nodes[current_node_id].execute(inputs, temperature=self.llm_temperature) # output is saved in the node.outputs
-                        self.record_node_token_usage(self.nodes[current_node_id])
-                        self._log_node_output(self.nodes[current_node_id], phase=f"round-{round}")
+                        self.record_spatial_edge_costs(current_node)
+                        current_node.execute(inputs, temperature=self.llm_temperature) # output is saved in the node.outputs
+                        self.record_node_token_usage(current_node)
+                        self._log_node_output(current_node, phase=f"round-{round}")
                         break
                     except Exception as e:
-                        node = self.nodes[current_node_id]
-                        display_name = node.role or node.agent_name or node.id
+                        display_name = current_node.role or current_node.agent_name or current_node.id
                         print(f"Error during execution of agent {repr(display_name)} (id={current_node_id}): {e}")
                     tries += 1
-                for successor in self.nodes[current_node_id].spatial_successors:
+                execution_index += 1
+                for successor in current_node.spatial_successors:
                     if successor.id not in self.nodes.keys():
                         continue
                     in_degree[successor.id] -= 1
@@ -500,32 +525,38 @@ class Graph(ABC):
                   max_tries: int = 3, 
                   max_time: int = 600,
                   aggregate_mode: str = "all connected",) -> List[Any]:
+        self.reset_runtime_audit()
         log_probs = 0
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
+            execution_index = 0
 
             while zero_in_degree_queue:
                 current_node_id = zero_in_degree_queue.pop(0)
+                current_node = self.nodes[current_node_id]
+                current_node.runtime_sample_index = self.current_sample_index
+                current_node.runtime_round_index = round
+                current_node.runtime_execution_index = execution_index
                 tries = 0
                 while tries < max_tries:
                     try:
-                        self.record_spatial_edge_costs(self.nodes[current_node_id])
+                        self.record_spatial_edge_costs(current_node)
                         await asyncio.wait_for(
-                            self.nodes[current_node_id].async_execute(input, temperature=self.llm_temperature),
+                            current_node.async_execute(input, temperature=self.llm_temperature),
                         timeout=max_time,
                         ) # output is saved in the node.outputs
-                        self.record_node_token_usage(self.nodes[current_node_id])
-                        self._log_node_output(self.nodes[current_node_id], phase=f"round-{round}")
+                        self.record_node_token_usage(current_node)
+                        self._log_node_output(current_node, phase=f"round-{round}")
                         break
                     except Exception as e:
-                        node = self.nodes[current_node_id]
-                        display_name = node.role or node.agent_name or node.id
+                        display_name = current_node.role or current_node.agent_name or current_node.id
                         print(f"Error during execution of agent {repr(display_name)} (id={current_node_id}): {e}")
                     tries += 1
-                for successor in self.nodes[current_node_id].spatial_successors:
+                execution_index += 1
+                for successor in current_node.spatial_successors:
                     if successor.id not in self.nodes.keys():
                         continue
                     in_degree[successor.id] -= 1

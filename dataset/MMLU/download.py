@@ -6,6 +6,9 @@ import tarfile
 def download():
 
     this_file_path = os.path.split(__file__)[0]
+    data_path = os.path.join(this_file_path, "data")
+    if os.path.exists(data_path):
+        return
     tar_path = os.path.join(this_file_path, "data.tar")
     if not os.path.exists(tar_path):
         url = "https://people.eecs.berkeley.edu/~hendrycks/data.tar"
@@ -15,7 +18,6 @@ def download():
             f.write(r.content)
         print(f"Saved to {tar_path}")
 
-    data_path = os.path.join(this_file_path, "data")
     if not os.path.exists(data_path):
         tar = tarfile.open(tar_path)
         tar.extractall(this_file_path)

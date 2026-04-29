@@ -191,6 +191,10 @@ def parse_args():
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
                         help="Random seed for Python, NumPy, and PyTorch. Default 42.")
+    parser.add_argument('--audit_pruned_delivery', action='store_true',
+                        help="Audit which pruned-edge messages were delivered versus dropped during evaluation.")
+    parser.add_argument('--audit_pruned_delivery_json', type=str, default='',
+                        help="Optional JSON output path for pruned-edge delivery audit results.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -303,6 +307,7 @@ async def main():
                   share_pruned_temporal_analysis_only_original_prompt=args.share_pruned_temporal_analysis_only_original_prompt,
                   restore_pruned_edges_as_active_conclusion_only=args.restore_pruned_edges_as_active_conclusion_only,
                   restore_pruned_edges_as_active_analysis_only=args.restore_pruned_edges_as_active_analysis_only,
+                  enable_pruned_delivery_audit=args.audit_pruned_delivery,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
@@ -359,6 +364,8 @@ async def main():
             num_rounds=args.num_rounds,
             limit_questions=limit_questions,
             eval_batch_size=args.batch_size,
+            audit_pruned_delivery=args.audit_pruned_delivery,
+            audit_output_path=args.audit_pruned_delivery_json or None,
         )
         eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
         eval_completion_used = CompletionTokens.instance().value - eval_completion_start
@@ -367,7 +374,15 @@ async def main():
         print(f"Replacement Eval Completion Tokens: {eval_completion_used}")
     else:
         eval_prompt_start, eval_completion_start = get_token_snapshot()
-        score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size)
+        score = await evaluate(
+            graph=graph,
+            dataset=dataset_val,
+            num_rounds=args.num_rounds,
+            limit_questions=limit_questions,
+            eval_batch_size=args.batch_size,
+            audit_pruned_delivery=args.audit_pruned_delivery,
+            audit_output_path=args.audit_pruned_delivery_json or None,
+        )
         eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
         eval_completion_used = CompletionTokens.instance().value - eval_completion_start
         print(f"Baseline Score: {score}")
