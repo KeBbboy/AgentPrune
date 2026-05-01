@@ -63,6 +63,10 @@ class Graph(ABC):
                 restore_pruned_temporal_edges_as_active_full_output_original_prompt: bool = False,
                 restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt: bool = False,
                 restore_pruned_temporal_edges_as_active_analysis_only_original_prompt: bool = False,
+                share_active_spatial_conclusion_only: bool = False,
+                share_active_spatial_analysis_only: bool = False,
+                share_active_temporal_conclusion_only: bool = False,
+                share_active_temporal_analysis_only: bool = False,
                 restore_pruned_edges_as_active_conclusion_only: bool = False,
                 restore_pruned_edges_as_active_analysis_only: bool = False,
                 enable_pruned_delivery_audit: bool = False,
@@ -125,6 +129,10 @@ class Graph(ABC):
         self.restore_pruned_temporal_edges_as_active_analysis_only_original_prompt = (
             restore_pruned_temporal_edges_as_active_analysis_only_original_prompt
         )
+        self.share_active_spatial_conclusion_only = share_active_spatial_conclusion_only
+        self.share_active_spatial_analysis_only = share_active_spatial_analysis_only
+        self.share_active_temporal_conclusion_only = share_active_temporal_conclusion_only
+        self.share_active_temporal_analysis_only = share_active_temporal_analysis_only
         self.restore_pruned_edges_as_active_conclusion_only = restore_pruned_edges_as_active_conclusion_only
         self.restore_pruned_edges_as_active_analysis_only = restore_pruned_edges_as_active_analysis_only
         self.enable_pruned_delivery_audit = enable_pruned_delivery_audit
@@ -700,9 +708,23 @@ class Graph(ABC):
                 pruned_temporal_patch_mode = "body"
             elif self.restore_pruned_edges_as_active_analysis_only:
                 pruned_temporal_patch_mode = "body"
+        active_edge_patch_mode = "none"
+        if enabled:
+            if self.share_active_spatial_conclusion_only:
+                active_edge_patch_mode = "tail"
+            elif self.share_active_spatial_analysis_only:
+                active_edge_patch_mode = "body"
+        active_temporal_patch_mode = "none"
+        if enabled:
+            if self.share_active_temporal_conclusion_only:
+                active_temporal_patch_mode = "tail"
+            elif self.share_active_temporal_analysis_only:
+                active_temporal_patch_mode = "body"
         for node in self.nodes.values():
             node.pruned_edge_patch_mode = pruned_edge_patch_mode
             node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
+            node.active_edge_patch_mode = active_edge_patch_mode
+            node.active_temporal_patch_mode = active_temporal_patch_mode
             node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
             node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"
             node.pruned_edge_use_original_prompt = (
@@ -733,6 +755,8 @@ class Graph(ABC):
             )
         self.decision_node.pruned_edge_patch_mode = pruned_edge_patch_mode
         self.decision_node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
+        self.decision_node.active_edge_patch_mode = "none"
+        self.decision_node.active_temporal_patch_mode = "none"
         self.decision_node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
         self.decision_node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"
         self.decision_node.pruned_edge_use_original_prompt = (

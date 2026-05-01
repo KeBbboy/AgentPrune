@@ -69,6 +69,8 @@ class Node(ABC):
         self.last_llm_usage: Optional[Dict[str, int]] = None
         self.pruned_edge_patch_mode: str = "none"
         self.pruned_temporal_patch_mode: str = "none"
+        self.active_edge_patch_mode: str = "none"
+        self.active_temporal_patch_mode: str = "none"
         self.pruned_edge_use_original_prompt: bool = False
         self.pruned_temporal_use_original_prompt: bool = False
         self.restored_edge_patch_mode: str = "none"
@@ -217,6 +219,13 @@ class Node(ABC):
                     )
                     if not predecessor_output:
                         continue
+                elif self.active_edge_patch_mode != "none":
+                    predecessor_output = self._extract_patched_output(
+                        predecessor_output,
+                        self.active_edge_patch_mode,
+                    )
+                    if not predecessor_output:
+                        continue
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": predecessor_output,
@@ -294,6 +303,13 @@ class Node(ABC):
                     predecessor_output = self._extract_patched_output(
                         predecessor_output,
                         self.restored_temporal_patch_mode,
+                    )
+                    if not predecessor_output:
+                        continue
+                elif self.active_temporal_patch_mode != "none":
+                    predecessor_output = self._extract_patched_output(
+                        predecessor_output,
+                        self.active_temporal_patch_mode,
                     )
                     if not predecessor_output:
                         continue
