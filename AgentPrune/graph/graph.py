@@ -49,6 +49,7 @@ class Graph(ABC):
                 share_pruned_spatial_conclusion_only: bool = False,
                 share_pruned_spatial_analysis_only: bool = False,
                 share_pruned_spatial_full_output_original_prompt: bool = False,
+                share_pruned_spatial_full_output_original_prompt_no_residual: bool = False,
                 restore_pruned_spatial_edges_as_active_full_output_original_prompt: bool = False,
                 restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt: bool = False,
                 restore_pruned_spatial_edges_as_active_analysis_only_original_prompt: bool = False,
@@ -90,6 +91,9 @@ class Graph(ABC):
         self.share_pruned_spatial_full_output_original_prompt = (
             share_pruned_spatial_full_output_original_prompt
         )
+        self.share_pruned_spatial_full_output_original_prompt_no_residual = (
+            share_pruned_spatial_full_output_original_prompt_no_residual
+        )
         self.restore_pruned_spatial_edges_as_active_full_output_original_prompt = (
             restore_pruned_spatial_edges_as_active_full_output_original_prompt
         )
@@ -128,6 +132,7 @@ class Graph(ABC):
         self.enable_pruned_temporal_patch = False
         self.restore_pruned_spatial_edges_in_original_prompt = False
         self.restore_pruned_temporal_edges_in_original_prompt = False
+        self.clear_residual_outputs_before_round = False
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -407,6 +412,11 @@ class Graph(ABC):
         self.decision_node.reset_runtime_audit()
         self.decision_node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
 
+    def clear_current_outputs(self):
+        for node in self.nodes.values():
+            node.outputs = []
+        self.decision_node.outputs = []
+
     def get_pruned_delivery_audit_events(self) -> List[Dict[str, Any]]:
         events: List[Dict[str, Any]] = []
         for node in self.nodes.values():
@@ -502,6 +512,8 @@ class Graph(ABC):
         self.reset_runtime_audit()
         log_probs = 0
         for round in range(num_rounds):
+            if self.clear_residual_outputs_before_round and round > 0:
+                self.clear_current_outputs()
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
             
@@ -556,6 +568,8 @@ class Graph(ABC):
         self.reset_runtime_audit()
         log_probs = 0
         for round in range(num_rounds):
+            if self.clear_residual_outputs_before_round and round > 0:
+                self.clear_current_outputs()
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
@@ -628,6 +642,9 @@ class Graph(ABC):
         )
         self.restore_pruned_spatial_edges_in_original_prompt = restore_original_prompt_edges
         self.restore_pruned_temporal_edges_in_original_prompt = restore_temporal_original_prompt_edges
+        self.clear_residual_outputs_before_round = enabled and (
+            self.share_pruned_spatial_full_output_original_prompt_no_residual
+        )
         self.enable_pruned_edge_tail_patch = (
             (
                 self.share_pruned_spatial_full_output
@@ -648,6 +665,8 @@ class Graph(ABC):
             if self.share_pruned_spatial_full_output:
                 pruned_edge_patch_mode = "full"
             elif self.share_pruned_spatial_full_output_original_prompt:
+                pruned_edge_patch_mode = "full"
+            elif self.share_pruned_spatial_full_output_original_prompt_no_residual:
                 pruned_edge_patch_mode = "full"
             elif self.restore_pruned_spatial_edges_as_active_full_output_original_prompt:
                 pruned_edge_patch_mode = "full"
@@ -692,6 +711,10 @@ class Graph(ABC):
                     self.share_pruned_spatial_full_output_original_prompt
                     and pruned_edge_patch_mode == "full"
                 )
+                or (
+                    self.share_pruned_spatial_full_output_original_prompt_no_residual
+                    and pruned_edge_patch_mode == "full"
+                )
             )
             node.pruned_temporal_use_original_prompt = (
                 (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
@@ -716,6 +739,10 @@ class Graph(ABC):
             (self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full")
             or (
                 self.share_pruned_spatial_full_output_original_prompt
+                and pruned_edge_patch_mode == "full"
+            )
+            or (
+                self.share_pruned_spatial_full_output_original_prompt_no_residual
                 and pruned_edge_patch_mode == "full"
             )
         )
