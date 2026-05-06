@@ -71,6 +71,7 @@ class Node(ABC):
         self.pruned_temporal_patch_mode: str = "none"
         self.active_edge_patch_mode: str = "none"
         self.active_temporal_patch_mode: str = "none"
+        self.truncate_content_ratio: float = 1.0
         self.pruned_edge_use_original_prompt: bool = False
         self.pruned_temporal_use_original_prompt: bool = False
         self.restored_edge_patch_mode: str = "none"
@@ -196,9 +197,35 @@ class Node(ABC):
             patched_output = parts[-1].strip()
         elif patch_mode == "body":
             patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
+        elif patch_mode == "answer_only":
+            patched_output = self._extract_answer_only(predecessor_output)
+        elif patch_mode == "truncate":
+            patched_output = self._extract_truncated_output(predecessor_output)
         else:
             patched_output = predecessor_output.strip()
         return patched_output
+
+    def _extract_answer_only(self, predecessor_output: str) -> str:
+        stripped_output = predecessor_output.strip()
+        if not stripped_output:
+            return ""
+        return stripped_output[0]
+
+    def _extract_truncated_output(self, predecessor_output: str) -> str:
+        stripped_output = predecessor_output.strip()
+        if not stripped_output:
+            return ""
+
+        answer_only = self._extract_answer_only(stripped_output)
+        remainder = stripped_output[1:]
+        if not remainder.strip():
+            return answer_only
+
+        keep_char_count = max(1, int(len(remainder) * self.truncate_content_ratio))
+        truncated_remainder = remainder[:keep_char_count].rstrip()
+        if answer_only:
+            return f"{answer_only}{truncated_remainder}"
+        return truncated_remainder
 
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """

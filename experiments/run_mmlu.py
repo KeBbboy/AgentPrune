@@ -167,6 +167,10 @@ def parse_args():
                         help="During evaluation, only share the final conclusion paragraph for retained active temporal edges.")
     active_edge_share_group.add_argument('--share_active_temporal_analysis_only', action='store_true',
                         help="During evaluation, only share the analysis content before the final conclusion paragraph for retained active temporal edges.")
+    active_edge_share_group.add_argument('--share_active_all_answer_only', action='store_true',
+                        help="During evaluation, only share the first answer letter for all retained active spatial and temporal edges.")
+    active_edge_share_group.add_argument('--share_active_all_truncate', action='store_true',
+                        help="During evaluation, keep the answer letter and truncate the remaining active-edge message content by a fixed ratio.")
     parser.add_argument(
         '--active_edge_message_mode',
         type=str,
@@ -175,6 +179,8 @@ def parse_args():
             'full_output',
             'all_analysis_only',
             'all_conclusion_only',
+            'all_answer_only',
+            'all_truncate',
             'spatial_analysis_only',
             'spatial_conclusion_only',
             'temporal_analysis_only',
@@ -184,6 +190,13 @@ def parse_args():
             "High-level active-edge message-sharing mode for retained communication edges. "
             "'all_*' applies to both single-round spatial edges and cross-round temporal edges."
         ),
+    )
+    parser.add_argument(
+        '--truncate_content_ratio',
+        type=float,
+        default=0.75,
+        choices=[0.75, 0.5, 0.25],
+        help="Retained ratio of content after the answer letter when active-edge truncation mode is enabled.",
     )
     pruned_patch_group = parser.add_mutually_exclusive_group()
     pruned_patch_group.add_argument('--share_pruned_spatial_full_output_original_prompt', action='store_true',
@@ -255,6 +268,8 @@ def parse_args():
             or args.share_active_spatial_analysis_only
             or args.share_active_temporal_conclusion_only
             or args.share_active_temporal_analysis_only
+            or args.share_active_all_answer_only
+            or args.share_active_all_truncate
         ):
             parser.error(
                 "--active_edge_message_mode cannot be combined with the low-level --share_active_* flags."
@@ -263,6 +278,10 @@ def parse_args():
             args.share_active_all_analysis_only = True
         elif args.active_edge_message_mode == 'all_conclusion_only':
             args.share_active_all_conclusion_only = True
+        elif args.active_edge_message_mode == 'all_answer_only':
+            args.share_active_all_answer_only = True
+        elif args.active_edge_message_mode == 'all_truncate':
+            args.share_active_all_truncate = True
         elif args.active_edge_message_mode == 'spatial_analysis_only':
             args.share_active_spatial_analysis_only = True
         elif args.active_edge_message_mode == 'spatial_conclusion_only':
@@ -325,6 +344,16 @@ def parse_args():
     if args.share_active_all_analysis_only:
         args.share_active_spatial_analysis_only = True
         args.share_active_temporal_analysis_only = True
+    args.share_active_spatial_answer_only = False
+    args.share_active_temporal_answer_only = False
+    if args.share_active_all_answer_only:
+        args.share_active_spatial_answer_only = True
+        args.share_active_temporal_answer_only = True
+    args.share_active_spatial_truncate = False
+    args.share_active_temporal_truncate = False
+    if args.share_active_all_truncate:
+        args.share_active_spatial_truncate = True
+        args.share_active_temporal_truncate = True
     if args.share_pruned_all_conclusion_only:
         if (
             args.share_pruned_spatial_full_output_original_prompt
@@ -484,6 +513,11 @@ async def main():
                   share_active_spatial_analysis_only=args.share_active_spatial_analysis_only,
                   share_active_temporal_conclusion_only=args.share_active_temporal_conclusion_only,
                   share_active_temporal_analysis_only=args.share_active_temporal_analysis_only,
+                  share_active_spatial_answer_only=args.share_active_spatial_answer_only,
+                  share_active_temporal_answer_only=args.share_active_temporal_answer_only,
+                  share_active_spatial_truncate=args.share_active_spatial_truncate,
+                  share_active_temporal_truncate=args.share_active_temporal_truncate,
+                  truncate_content_ratio=args.truncate_content_ratio,
                   restore_pruned_edges_as_active_conclusion_only=args.restore_pruned_edges_as_active_conclusion_only,
                   restore_pruned_edges_as_active_analysis_only=args.restore_pruned_edges_as_active_analysis_only,
                   enable_pruned_delivery_audit=args.audit_pruned_delivery,
