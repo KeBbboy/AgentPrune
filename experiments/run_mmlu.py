@@ -167,6 +167,24 @@ def parse_args():
                         help="During evaluation, only share the final conclusion paragraph for retained active temporal edges.")
     active_edge_share_group.add_argument('--share_active_temporal_analysis_only', action='store_true',
                         help="During evaluation, only share the analysis content before the final conclusion paragraph for retained active temporal edges.")
+    parser.add_argument(
+        '--active_edge_message_mode',
+        type=str,
+        default='full_output',
+        choices=[
+            'full_output',
+            'all_analysis_only',
+            'all_conclusion_only',
+            'spatial_analysis_only',
+            'spatial_conclusion_only',
+            'temporal_analysis_only',
+            'temporal_conclusion_only',
+        ],
+        help=(
+            "High-level active-edge message-sharing mode for retained communication edges. "
+            "'all_*' applies to both single-round spatial edges and cross-round temporal edges."
+        ),
+    )
     pruned_patch_group = parser.add_mutually_exclusive_group()
     pruned_patch_group.add_argument('--share_pruned_spatial_full_output_original_prompt', action='store_true',
                         help="During evaluation, share the full outputs for pruned spatial edges using the original non-pruned prompt format.")
@@ -229,6 +247,30 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if args.active_edge_message_mode != 'full_output':
+        if (
+            args.share_active_all_conclusion_only
+            or args.share_active_all_analysis_only
+            or args.share_active_spatial_conclusion_only
+            or args.share_active_spatial_analysis_only
+            or args.share_active_temporal_conclusion_only
+            or args.share_active_temporal_analysis_only
+        ):
+            parser.error(
+                "--active_edge_message_mode cannot be combined with the low-level --share_active_* flags."
+            )
+        if args.active_edge_message_mode == 'all_analysis_only':
+            args.share_active_all_analysis_only = True
+        elif args.active_edge_message_mode == 'all_conclusion_only':
+            args.share_active_all_conclusion_only = True
+        elif args.active_edge_message_mode == 'spatial_analysis_only':
+            args.share_active_spatial_analysis_only = True
+        elif args.active_edge_message_mode == 'spatial_conclusion_only':
+            args.share_active_spatial_conclusion_only = True
+        elif args.active_edge_message_mode == 'temporal_analysis_only':
+            args.share_active_temporal_analysis_only = True
+        elif args.active_edge_message_mode == 'temporal_conclusion_only':
+            args.share_active_temporal_conclusion_only = True
     if args.share_pruned_all_full_output or args.share_pruned_all_full_output_original_prompt:
         if (
             args.share_pruned_spatial_full_output_original_prompt
