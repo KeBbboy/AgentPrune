@@ -1,6 +1,5 @@
 from typing import Union, Dict, Any, List
 import itertools
-import re
 
 from AgentPrune.prompt.prompt_set import PromptSet
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
@@ -85,6 +84,16 @@ class MMLUPromptSet(PromptSet):
     MMLU prompt set for the 4-option qestion answering.
     """
     @staticmethod
+    def _strict_answer_format() -> str:
+        return """
+You must solve the multiple-choice question and select exactly one option: A, B, C, or D.
+The first character of your response must be the final answer letter.
+The first line of your response must contain only that single uppercase letter.
+Do not put any words, punctuation, or spaces before the answer letter.
+If you include any explanation, put it after the first line.
+"""
+
+    @staticmethod
     def get_role():
         return next(roles)
 
@@ -104,11 +113,11 @@ class MMLUPromptSet(PromptSet):
             Your answer can refer to the answers of other agents provided to you.
             Your reply must be less than 100 words but include your answer and a brief step by step analysis of the question.
             The first line of your reply must contain only one letter(for example : A, B, C or D)
-        """
+        """ + MMLUPromptSet._strict_answer_format()
     
     @staticmethod
     def get_analyze_constraint(role):
-        return ROLE_DESCRIPTION[role] if role in ROLE_DESCRIPTION.keys() else ""+ """
+        base_constraint = """
 I will ask you a question and 4 answers enumerated as A, B, C and D.
 Only one answer out of the offered 4 is correct.
 Using the reasoning from other agents as additional advice with critical thinking, can you give an updated answer?
@@ -116,6 +125,8 @@ You are strictly prohibited from imitating the analysis process of other agents
 Your reply must be less than 100 words but include your answer and a brief step by step analysis of the question.
 The first line of your reply must contain only one letter(for example : A, B, C or D)
 """
+        role_prefix = ROLE_DESCRIPTION[role] + "\n" if role in ROLE_DESCRIPTION.keys() else ""
+        return role_prefix + base_constraint + MMLUPromptSet._strict_answer_format()
     
     @staticmethod
     def get_decision_constraint():
@@ -129,7 +140,7 @@ The first line of your reply must contain only one letter(for example : A, B, C 
         I will give you some other people's answers and analysis.
         Your reply must only contain one letter and cannot have any other characters.
         For example, your reply can be A.
-        """
+        """ + MMLUPromptSet._strict_answer_format()
     
     @staticmethod
     def get_format():
@@ -188,15 +199,6 @@ The first line of your reply must contain only one letter(for example : A, B, C 
                 answer = ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
-        if len(answer) == 0:
-            return answer
-
-        first_line = answer.strip().splitlines()[0].strip()
-        if first_line in {"A", "B", "C", "D"}:
-            return first_line
-
-        match = re.search(r"\b([ABCD])\b", answer.upper())
-        if match is not None:
-            return match.group(1)
-
-        return answer[0]
+        if len(answer) > 0:
+            answer = answer[0] # Try to format the answer by taking the first letter
+        return answer
