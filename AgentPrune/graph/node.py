@@ -200,11 +200,25 @@ class Node(ABC):
             patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
         elif patch_mode == "answer_only":
             patched_output = self._extract_answer_only(predecessor_output)
+        elif patch_mode == "answer_claim":
+            patched_output = self._extract_answer_and_claim(predecessor_output)
+        elif patch_mode == "answer_steps":
+            patched_output = self._extract_answer_and_steps(predecessor_output)
         elif patch_mode == "truncate":
             patched_output = self._extract_truncated_output(predecessor_output)
         else:
             patched_output = predecessor_output.strip()
         return patched_output
+
+    def _extract_xml_block(self, predecessor_output: str, tag: str) -> str:
+        block_match = re.search(
+            rf"<{tag}>\s*.*?\s*</{tag}>",
+            predecessor_output,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if block_match is None:
+            return ""
+        return block_match.group(0).strip()
 
     def _extract_answer_only(self, predecessor_output: str) -> str:
         stripped_output = predecessor_output.strip()
@@ -216,6 +230,32 @@ class Node(ABC):
             return xml_answer_match.group(1).upper()
 
         return stripped_output[0]
+
+    def _extract_answer_and_claim(self, predecessor_output: str) -> str:
+        stripped_output = predecessor_output.strip()
+        if not stripped_output:
+            return ""
+
+        claim_block = self._extract_xml_block(stripped_output, "claim")
+        answer_block = self._extract_xml_block(stripped_output, "answer")
+        blocks = [block for block in (claim_block, answer_block) if block]
+        if blocks:
+            return "\n".join(blocks)
+
+        return self._extract_answer_only(stripped_output)
+
+    def _extract_answer_and_steps(self, predecessor_output: str) -> str:
+        stripped_output = predecessor_output.strip()
+        if not stripped_output:
+            return ""
+
+        steps_block = self._extract_xml_block(stripped_output, "steps")
+        answer_block = self._extract_xml_block(stripped_output, "answer")
+        blocks = [block for block in (steps_block, answer_block) if block]
+        if blocks:
+            return "\n".join(blocks)
+
+        return self._extract_answer_only(stripped_output)
 
     def _extract_truncated_output(self, predecessor_output: str) -> str:
         stripped_output = predecessor_output.strip()

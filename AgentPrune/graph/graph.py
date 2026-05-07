@@ -69,6 +69,10 @@ class Graph(ABC):
                 share_active_temporal_analysis_only: bool = False,
                 share_active_spatial_answer_only: bool = False,
                 share_active_temporal_answer_only: bool = False,
+                share_active_spatial_answer_claim: bool = False,
+                share_active_temporal_answer_claim: bool = False,
+                share_active_spatial_answer_steps: bool = False,
+                share_active_temporal_answer_steps: bool = False,
                 share_active_spatial_truncate: bool = False,
                 share_active_temporal_truncate: bool = False,
                 truncate_content_ratio: float = 1.0,
@@ -140,6 +144,10 @@ class Graph(ABC):
         self.share_active_temporal_analysis_only = share_active_temporal_analysis_only
         self.share_active_spatial_answer_only = share_active_spatial_answer_only
         self.share_active_temporal_answer_only = share_active_temporal_answer_only
+        self.share_active_spatial_answer_claim = share_active_spatial_answer_claim
+        self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
+        self.share_active_spatial_answer_steps = share_active_spatial_answer_steps
+        self.share_active_temporal_answer_steps = share_active_temporal_answer_steps
         self.share_active_spatial_truncate = share_active_spatial_truncate
         self.share_active_temporal_truncate = share_active_temporal_truncate
         self.truncate_content_ratio = truncate_content_ratio
@@ -722,6 +730,10 @@ class Graph(ABC):
         if enabled:
             if self.share_active_spatial_answer_only:
                 active_edge_patch_mode = "answer_only"
+            elif self.share_active_spatial_answer_claim:
+                active_edge_patch_mode = "answer_claim"
+            elif self.share_active_spatial_answer_steps:
+                active_edge_patch_mode = "answer_steps"
             elif self.share_active_spatial_truncate:
                 active_edge_patch_mode = "truncate"
             elif self.share_active_spatial_conclusion_only:
@@ -732,6 +744,10 @@ class Graph(ABC):
         if enabled:
             if self.share_active_temporal_answer_only:
                 active_temporal_patch_mode = "answer_only"
+            elif self.share_active_temporal_answer_claim:
+                active_temporal_patch_mode = "answer_claim"
+            elif self.share_active_temporal_answer_steps:
+                active_temporal_patch_mode = "answer_steps"
             elif self.share_active_temporal_truncate:
                 active_temporal_patch_mode = "truncate"
             elif self.share_active_temporal_conclusion_only:

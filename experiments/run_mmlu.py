@@ -180,6 +180,8 @@ def parse_args():
             'all_analysis_only',
             'all_conclusion_only',
             'all_answer_only',
+            'all_answer_claim',
+            'all_answer_steps',
             'all_truncate',
             'spatial_analysis_only',
             'spatial_conclusion_only',
@@ -280,6 +282,10 @@ def parse_args():
             args.share_active_all_conclusion_only = True
         elif args.active_edge_message_mode == 'all_answer_only':
             args.share_active_all_answer_only = True
+        elif args.active_edge_message_mode == 'all_answer_claim':
+            args.share_active_all_answer_claim = True
+        elif args.active_edge_message_mode == 'all_answer_steps':
+            args.share_active_all_answer_steps = True
         elif args.active_edge_message_mode == 'all_truncate':
             args.share_active_all_truncate = True
         elif args.active_edge_message_mode == 'spatial_analysis_only':
@@ -346,9 +352,19 @@ def parse_args():
         args.share_active_temporal_analysis_only = True
     args.share_active_spatial_answer_only = False
     args.share_active_temporal_answer_only = False
+    args.share_active_spatial_answer_claim = False
+    args.share_active_temporal_answer_claim = False
+    args.share_active_spatial_answer_steps = False
+    args.share_active_temporal_answer_steps = False
     if args.share_active_all_answer_only:
         args.share_active_spatial_answer_only = True
         args.share_active_temporal_answer_only = True
+    if getattr(args, "share_active_all_answer_claim", False):
+        args.share_active_spatial_answer_claim = True
+        args.share_active_temporal_answer_claim = True
+    if getattr(args, "share_active_all_answer_steps", False):
+        args.share_active_spatial_answer_steps = True
+        args.share_active_temporal_answer_steps = True
     args.share_active_spatial_truncate = False
     args.share_active_temporal_truncate = False
     if args.share_active_all_truncate:
@@ -515,6 +531,10 @@ async def main():
                   share_active_temporal_analysis_only=args.share_active_temporal_analysis_only,
                   share_active_spatial_answer_only=args.share_active_spatial_answer_only,
                   share_active_temporal_answer_only=args.share_active_temporal_answer_only,
+                  share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
+                  share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
+                  share_active_spatial_answer_steps=args.share_active_spatial_answer_steps,
+                  share_active_temporal_answer_steps=args.share_active_temporal_answer_steps,
                   share_active_spatial_truncate=args.share_active_spatial_truncate,
                   share_active_temporal_truncate=args.share_active_temporal_truncate,
                   truncate_content_ratio=args.truncate_content_ratio,
