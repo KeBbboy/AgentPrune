@@ -3,6 +3,7 @@ from typing import List, Any, Optional,Dict
 from abc import ABC, abstractmethod
 import warnings
 import asyncio
+import re
 
 
 class Node(ABC):
@@ -209,6 +210,11 @@ class Node(ABC):
         stripped_output = predecessor_output.strip()
         if not stripped_output:
             return ""
+
+        xml_answer_match = re.search(r"<answer>\s*([ABCD])\s*</answer>", stripped_output, flags=re.IGNORECASE)
+        if xml_answer_match is not None:
+            return xml_answer_match.group(1).upper()
+
         return stripped_output[0]
 
     def _extract_truncated_output(self, predecessor_output: str) -> str:
@@ -217,7 +223,11 @@ class Node(ABC):
             return ""
 
         answer_only = self._extract_answer_only(stripped_output)
-        remainder = stripped_output[1:]
+        xml_answer_match = re.search(r"<answer>\s*[ABCD]\s*</answer>", stripped_output, flags=re.IGNORECASE)
+        if xml_answer_match is not None:
+            remainder = (stripped_output[:xml_answer_match.start()] + stripped_output[xml_answer_match.end():]).strip()
+        else:
+            remainder = stripped_output[1:]
         if not remainder.strip():
             return answer_only
 
