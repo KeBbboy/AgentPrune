@@ -133,7 +133,11 @@ async def main():
     
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     decision_method = args.decision_method
-    kwargs = get_kwargs(args.mode,len(agent_names))
+    kwargs = get_kwargs(
+        args.mode,
+        len(agent_names),
+        use_structured_output=args.active_edge_message_mode != 'full_output',
+    )
     graph = Graph(domain="humaneval",
                   llm_name=args.llm_name,
                   agent_names=agent_names,
@@ -230,7 +234,8 @@ async def main():
 
 
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star']],
-               N:int):
+               N:int,
+               use_structured_output: bool = False):
     initial_spatial_probability: float = 0.5
     fixed_spatial_masks:List[List[int]] = None
     initial_temporal_probability: float = 0.5
@@ -283,6 +288,10 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
         fixed_spatial_masks = generate_star_graph(N)
         fixed_temporal_masks = [[1 for i in range(N)] for j in range(N)]
     
+    if node_kwargs is None:
+        node_kwargs = [{} for _ in range(N)]
+    node_kwargs = [{**kwargs, 'use_structured_output': use_structured_output} for kwargs in node_kwargs]
+
     return {"initial_spatial_probability": initial_spatial_probability,
             "fixed_spatial_masks": fixed_spatial_masks,
             "initial_temporal_probability": initial_temporal_probability,

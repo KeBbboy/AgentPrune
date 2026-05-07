@@ -30,8 +30,9 @@ ROLE_DESCRIPTION = {
         "You are a programming expert. "
         "You will be given a function signature and its docstring by the user. "
         "You may be able to get the output results of other agents. They may have passed internal tests, but they may not be completely correct. "
-        "Write your full implementation (restate the function signature) inside the <answer> tag as a Python code block. "
-        "Keep your final response inside the required XML structure. "
+        "Write your full implementation (restate the function signature). "
+        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
+        "Do not include anything other than Python code blocks in your response. "
         "Do not change function names and input variable types in tasks.",
     "Test Analyst":
         "You are a test analyst. "
@@ -40,6 +41,46 @@ ROLE_DESCRIPTION = {
         "You need to provide additional special use cases, boundary conditions, etc. that should be paid attention to when writing code. "
         "You can point out any potential errors in the code."
         "I hope your reply will be more concise. Preferably within fifty words. Don’t list too many points.",
+    "Bug Fixer":
+        "You are a bug fixer."
+        "You will be given a function signature and its docstring by the user. "
+        "You need to provide modified and improved python code based on the current overall code design, algorithm framework, code implementation or test problems. "
+        "Write your full implementation (restate the function signature). "
+        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
+        "Do not include anything other than Python code blocks in your response "
+        "Do not change function names and input variable types in tasks",
+    "Normal Programmer":
+        "You are a programmer. "
+        "You will be given a function signature and its docstring by the user. "
+        "You can refer to the agents' outputs. "
+        "Write your full implementation (restate the function signature). "
+        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
+        "Do not include anything other than Python code blocks in your response. ",
+    "Stupid Programmer":
+        "You are a stupid programmer. "
+        "You will be given a function signature and its docstring by the user. "
+        "Give a code implementation full of errors. "
+        "Do not use comments for all errors. "
+        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
+        "Do not include anything other than Python code blocks in your response. ",
+}
+
+
+HUMANEVAL_STRUCTURED_CODE_ROLES = {
+    "Programming Expert",
+    "Bug Fixer",
+    "Normal Programmer",
+    "Stupid Programmer",
+}
+
+HUMANEVAL_STRUCTURED_ROLE_DESCRIPTION = {
+    "Programming Expert":
+        "You are a programming expert. "
+        "You will be given a function signature and its docstring by the user. "
+        "You may be able to get the output results of other agents. They may have passed internal tests, but they may not be completely correct. "
+        "Write your full implementation (restate the function signature) inside the <answer> tag as a Python code block. "
+        "Keep your final response inside the required XML structure. "
+        "Do not change function names and input variable types in tasks.",
     "Bug Fixer":
         "You are a bug fixer."
         "You will be given a function signature and its docstring by the user. "
@@ -60,14 +101,6 @@ ROLE_DESCRIPTION = {
         "Do not use comments for all errors. "
         "Put the intentionally flawed implementation inside the <answer> tag as a Python code block. "
         "Keep your final response inside the required XML structure. ",
-}
-
-
-HUMANEVAL_STRUCTURED_CODE_ROLES = {
-    "Programming Expert",
-    "Bug Fixer",
-    "Normal Programmer",
-    "Stupid Programmer",
 }
 
 HUMANEVAL_STRUCTURED_OUTPUT_CONSTRAINT = """
@@ -97,8 +130,11 @@ class HumanEvalPromptSet(PromptSet):
         return next(roles)
 
     @staticmethod
-    def get_constraint(role):
-        return ROLE_DESCRIPTION[role] + "\n" + HUMANEVAL_STRUCTURED_OUTPUT_CONSTRAINT
+    def get_constraint(role, use_structured_output: bool = True):
+        if use_structured_output:
+            role_instruction = HUMANEVAL_STRUCTURED_ROLE_DESCRIPTION.get(role, ROLE_DESCRIPTION[role])
+            return role_instruction + "\n" + HUMANEVAL_STRUCTURED_OUTPUT_CONSTRAINT
+        return ROLE_DESCRIPTION[role]
     
     @staticmethod
     def get_format():
