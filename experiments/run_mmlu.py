@@ -183,6 +183,7 @@ def parse_args():
             'all_answer_claim',
             'all_answer_steps',
             'all_answer_mixed_steps',
+            'all_answer_top_score_steps',
             'all_truncate',
             'spatial_analysis_only',
             'spatial_conclusion_only',
@@ -207,6 +208,15 @@ def parse_args():
         default=0.3,
         choices=[0.3, 0.7, 0.9],
         help="When active_edge_message_mode=all_answer_mixed_steps, the probability that a retained active edge shares answer+steps instead of answer only.",
+    )
+    parser.add_argument(
+        '--answer_steps_top_score_ratio',
+        type=float,
+        default=0.7,
+        help=(
+            "When active_edge_message_mode=all_answer_top_score_steps, the top retained active edges "
+            "ranked by learned score that share answer+steps instead of answer only."
+        ),
     )
     pruned_patch_group = parser.add_mutually_exclusive_group()
     pruned_patch_group.add_argument('--share_pruned_spatial_full_output_original_prompt', action='store_true',
@@ -296,6 +306,8 @@ def parse_args():
             args.share_active_all_answer_steps = True
         elif args.active_edge_message_mode == 'all_answer_mixed_steps':
             args.share_active_all_answer_mixed_steps = True
+        elif args.active_edge_message_mode == 'all_answer_top_score_steps':
+            args.share_active_all_answer_top_score_steps = True
         elif args.active_edge_message_mode == 'all_truncate':
             args.share_active_all_truncate = True
         elif args.active_edge_message_mode == 'spatial_analysis_only':
@@ -306,6 +318,8 @@ def parse_args():
             args.share_active_temporal_analysis_only = True
         elif args.active_edge_message_mode == 'temporal_conclusion_only':
             args.share_active_temporal_conclusion_only = True
+    if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
+        parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
     if args.share_pruned_all_full_output or args.share_pruned_all_full_output_original_prompt:
         if (
             args.share_pruned_spatial_full_output_original_prompt
@@ -368,6 +382,8 @@ def parse_args():
     args.share_active_temporal_answer_steps = False
     args.share_active_spatial_answer_steps_mixed = False
     args.share_active_temporal_answer_steps_mixed = False
+    args.share_active_spatial_answer_steps_top_score = False
+    args.share_active_temporal_answer_steps_top_score = False
     if args.share_active_all_answer_only:
         args.share_active_spatial_answer_only = True
         args.share_active_temporal_answer_only = True
@@ -380,6 +396,9 @@ def parse_args():
     if getattr(args, "share_active_all_answer_mixed_steps", False):
         args.share_active_spatial_answer_steps_mixed = True
         args.share_active_temporal_answer_steps_mixed = True
+    if getattr(args, "share_active_all_answer_top_score_steps", False):
+        args.share_active_spatial_answer_steps_top_score = True
+        args.share_active_temporal_answer_steps_top_score = True
     args.share_active_spatial_truncate = False
     args.share_active_temporal_truncate = False
     if args.share_active_all_truncate:
@@ -552,9 +571,12 @@ async def main():
                   share_active_temporal_answer_steps=args.share_active_temporal_answer_steps,
                   share_active_spatial_answer_steps_mixed=args.share_active_spatial_answer_steps_mixed,
                   share_active_temporal_answer_steps_mixed=args.share_active_temporal_answer_steps_mixed,
+                  share_active_spatial_answer_steps_top_score=args.share_active_spatial_answer_steps_top_score,
+                  share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
                   share_active_spatial_truncate=args.share_active_spatial_truncate,
                   share_active_temporal_truncate=args.share_active_temporal_truncate,
                   answer_steps_mixed_ratio=args.answer_steps_mixed_ratio,
+                  answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   truncate_content_ratio=args.truncate_content_ratio,
                   restore_pruned_edges_as_active_conclusion_only=args.restore_pruned_edges_as_active_conclusion_only,
                   restore_pruned_edges_as_active_analysis_only=args.restore_pruned_edges_as_active_analysis_only,

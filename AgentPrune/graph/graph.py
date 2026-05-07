@@ -76,7 +76,10 @@ class Graph(ABC):
                 share_active_temporal_answer_steps: bool = False,
                 share_active_spatial_answer_steps_mixed: bool = False,
                 share_active_temporal_answer_steps_mixed: bool = False,
+                share_active_spatial_answer_steps_top_score: bool = False,
+                share_active_temporal_answer_steps_top_score: bool = False,
                 answer_steps_mixed_ratio: float = 0.3,
+                answer_steps_top_score_ratio: float = 0.7,
                 share_active_spatial_truncate: bool = False,
                 share_active_temporal_truncate: bool = False,
                 truncate_content_ratio: float = 1.0,
@@ -154,7 +157,10 @@ class Graph(ABC):
         self.share_active_temporal_answer_steps = share_active_temporal_answer_steps
         self.share_active_spatial_answer_steps_mixed = share_active_spatial_answer_steps_mixed
         self.share_active_temporal_answer_steps_mixed = share_active_temporal_answer_steps_mixed
+        self.share_active_spatial_answer_steps_top_score = share_active_spatial_answer_steps_top_score
+        self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
         self.answer_steps_mixed_ratio = answer_steps_mixed_ratio
+        self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
         self.share_active_spatial_truncate = share_active_spatial_truncate
         self.share_active_temporal_truncate = share_active_temporal_truncate
         self.truncate_content_ratio = truncate_content_ratio
@@ -172,6 +178,8 @@ class Graph(ABC):
         self.nodes:Dict[str,Node] = {}
         self.potential_spatial_edges:List[List[str, str]] = []
         self.potential_temporal_edges:List[List[str,str]] = []
+        self.spatial_edge_index_map: Dict[tuple[str, str], int] = {}
+        self.temporal_edge_index_map: Dict[tuple[str, str], int] = {}
         self.node_kwargs = node_kwargs if node_kwargs is not None else [{} for _ in agent_names]
         self._token_encoder = None
         
@@ -289,6 +297,14 @@ class Graph(ABC):
             for node2_id in self.nodes.keys():
                 self.potential_spatial_edges.append([node1_id,node2_id])
                 self.potential_temporal_edges.append([node1_id,node2_id])
+        self.spatial_edge_index_map = {
+            (src_id, dst_id): edge_idx
+            for edge_idx, (src_id, dst_id) in enumerate(self.potential_spatial_edges)
+        }
+        self.temporal_edge_index_map = {
+            (src_id, dst_id): edge_idx
+            for edge_idx, (src_id, dst_id) in enumerate(self.potential_temporal_edges)
+        }
 
     def clear_spatial_connection(self):
         """
@@ -331,6 +347,42 @@ class Graph(ABC):
                 max(0, int(len(temporal_edges) * self.answer_steps_mixed_ratio + 0.5)),
             )
             for target_node_id, predecessor_id in random.sample(temporal_edges, selected_temporal_edge_count):
+                self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
+
+        if self.share_active_spatial_answer_steps_top_score:
+            spatial_edges_with_scores: List[tuple[float, str, str]] = []
+            for node in self.nodes.values():
+                for predecessor in node.spatial_predecessors:
+                    edge_idx = self.spatial_edge_index_map.get((predecessor.id, node.id))
+                    if edge_idx is None:
+                        continue
+                    score = float(torch.sigmoid(self.spatial_logits[edge_idx]).item())
+                    spatial_edges_with_scores.append((score, node.id, predecessor.id))
+
+            selected_spatial_edge_count = min(
+                len(spatial_edges_with_scores),
+                max(0, int(len(spatial_edges_with_scores) * self.answer_steps_top_score_ratio + 0.5)),
+            )
+            spatial_edges_with_scores.sort(key=lambda item: (-item[0], item[1], item[2]))
+            for _, target_node_id, predecessor_id in spatial_edges_with_scores[:selected_spatial_edge_count]:
+                self.nodes[target_node_id].active_spatial_patch_mode_overrides[predecessor_id] = "answer_steps"
+
+        if self.share_active_temporal_answer_steps_top_score:
+            temporal_edges_with_scores: List[tuple[float, str, str]] = []
+            for node in self.nodes.values():
+                for predecessor in node.temporal_predecessors:
+                    edge_idx = self.temporal_edge_index_map.get((predecessor.id, node.id))
+                    if edge_idx is None:
+                        continue
+                    score = float(torch.sigmoid(self.temporal_logits[edge_idx]).item())
+                    temporal_edges_with_scores.append((score, node.id, predecessor.id))
+
+            selected_temporal_edge_count = min(
+                len(temporal_edges_with_scores),
+                max(0, int(len(temporal_edges_with_scores) * self.answer_steps_top_score_ratio + 0.5)),
+            )
+            temporal_edges_with_scores.sort(key=lambda item: (-item[0], item[1], item[2]))
+            for _, target_node_id, predecessor_id in temporal_edges_with_scores[:selected_temporal_edge_count]:
                 self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
 
         self.decision_node.active_spatial_patch_mode_overrides = {}
@@ -775,6 +827,8 @@ class Graph(ABC):
                 active_edge_patch_mode = "answer_only"
             elif self.share_active_spatial_answer_steps_mixed:
                 active_edge_patch_mode = "answer_only"
+            elif self.share_active_spatial_answer_steps_top_score:
+                active_edge_patch_mode = "answer_only"
             elif self.share_active_spatial_answer_claim:
                 active_edge_patch_mode = "answer_claim"
             elif self.share_active_spatial_answer_steps:
@@ -790,6 +844,8 @@ class Graph(ABC):
             if self.share_active_temporal_answer_only:
                 active_temporal_patch_mode = "answer_only"
             elif self.share_active_temporal_answer_steps_mixed:
+                active_temporal_patch_mode = "answer_only"
+            elif self.share_active_temporal_answer_steps_top_score:
                 active_temporal_patch_mode = "answer_only"
             elif self.share_active_temporal_answer_claim:
                 active_temporal_patch_mode = "answer_claim"
