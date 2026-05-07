@@ -307,15 +307,31 @@ class Graph(ABC):
             node.active_spatial_patch_mode_overrides = {}
             node.active_temporal_patch_mode_overrides = {}
 
-            if self.share_active_spatial_answer_steps_mixed and node.spatial_predecessors:
+        if self.share_active_spatial_answer_steps_mixed:
+            spatial_edges: List[tuple[str, str]] = []
+            for node in self.nodes.values():
                 for predecessor in node.spatial_predecessors:
-                    if random.random() < self.answer_steps_mixed_ratio:
-                        node.active_spatial_patch_mode_overrides[predecessor.id] = "answer_steps"
+                    spatial_edges.append((node.id, predecessor.id))
 
-            if self.share_active_temporal_answer_steps_mixed and node.temporal_predecessors:
+            selected_spatial_edge_count = min(
+                len(spatial_edges),
+                max(0, int(len(spatial_edges) * self.answer_steps_mixed_ratio + 0.5)),
+            )
+            for target_node_id, predecessor_id in random.sample(spatial_edges, selected_spatial_edge_count):
+                self.nodes[target_node_id].active_spatial_patch_mode_overrides[predecessor_id] = "answer_steps"
+
+        if self.share_active_temporal_answer_steps_mixed:
+            temporal_edges: List[tuple[str, str]] = []
+            for node in self.nodes.values():
                 for predecessor in node.temporal_predecessors:
-                    if random.random() < self.answer_steps_mixed_ratio:
-                        node.active_temporal_patch_mode_overrides[predecessor.id] = "answer_steps"
+                    temporal_edges.append((node.id, predecessor.id))
+
+            selected_temporal_edge_count = min(
+                len(temporal_edges),
+                max(0, int(len(temporal_edges) * self.answer_steps_mixed_ratio + 0.5)),
+            )
+            for target_node_id, predecessor_id in random.sample(temporal_edges, selected_temporal_edge_count):
+                self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
 
         self.decision_node.active_spatial_patch_mode_overrides = {}
         self.decision_node.active_temporal_patch_mode_overrides = {}
