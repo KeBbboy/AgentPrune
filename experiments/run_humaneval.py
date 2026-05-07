@@ -9,7 +9,7 @@ import math
 from pathlib import Path
 import torch
 import copy
-from typing import List,Union,Literal
+from typing import List,Union,Literal, Dict, Any
 import random
 import re
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -43,6 +43,79 @@ def extract_humaneval_code(output: str) -> str:
     if answer_match is not None:
         return answer_match.group(1).strip()
     return output.strip()
+
+def print_agent_token_summary(graph: Graph):
+    print("Per-Agent Token Usage:")
+    for item in graph.get_agent_token_metrics():
+        print(
+            f"  {item['role']} ({item['id']}, {item['agent_name']}): "
+            f"input={item['prompt_tokens']}, output={item['completion_tokens']}, "
+            f"total={item['total_tokens']}, calls={item['calls']}"
+        )
+
+    print("Per-Role Token Usage:")
+    for item in graph.get_role_token_metrics():
+        print(
+            f"  {item['role']}: input={item['prompt_tokens']}, "
+            f"output={item['completion_tokens']}, total={item['total_tokens']}, "
+            f"calls={item['calls']}, agents={item['agents']}"
+        )
+
+def get_agent_token_snapshot(graph: Graph) -> Dict[str, Dict[str, Any]]:
+    return copy.deepcopy(graph.agent_token_stats)
+
+def get_phase_agent_token_metrics(
+    graph: Graph,
+    start_snapshot: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    phase_metrics: List[Dict[str, Any]] = []
+
+    for node_id, current_stats in graph.agent_token_stats.items():
+        previous_stats = start_snapshot.get(node_id, {})
+        prompt_tokens = current_stats["prompt_tokens"] - previous_stats.get("prompt_tokens", 0)
+        completion_tokens = current_stats["completion_tokens"] - previous_stats.get("completion_tokens", 0)
+        total_tokens = current_stats["total_tokens"] - previous_stats.get("total_tokens", 0)
+        calls = current_stats["calls"] - previous_stats.get("calls", 0)
+
+        if prompt_tokens == 0 and completion_tokens == 0 and total_tokens == 0 and calls == 0:
+            continue
+
+        phase_metrics.append({
+            "id": current_stats["id"],
+            "agent_name": current_stats["agent_name"],
+            "role": current_stats["role"],
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "calls": calls,
+        })
+
+    return sorted(
+        phase_metrics,
+        key=lambda item: (-item["total_tokens"], item["role"], item["id"]),
+    )
+
+def get_token_snapshot():
+    return PromptTokens.instance().value, CompletionTokens.instance().value
+
+def print_phase_token_summary(phase_name: str, prompt_used: float, completion_used: float):
+    total_used = prompt_used + completion_used
+    print(f"{phase_name} Prompt Tokens: {prompt_used}")
+    print(f"{phase_name} Completion Tokens: {completion_used}")
+    print(f"{phase_name} Total Tokens: {total_used}")
+
+def print_phase_agent_token_summary(phase_name: str, phase_metrics: List[Dict[str, Any]]):
+    print(f"{phase_name} Per-Agent Token Usage:")
+    if len(phase_metrics) == 0:
+        print("  No agent token usage recorded.")
+        return
+
+    for item in phase_metrics:
+        print(
+            f"  {item['role']} ({item['id']}, {item['agent_name']}): "
+            f"input={item['prompt_tokens']}, output={item['completion_tokens']}, "
+            f"total={item['total_tokens']}, calls={item['calls']}"
+        )
     
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on HumanEval")
@@ -158,9 +231,14 @@ async def main():
     dataset_limit = min(len(dataset), args.limit_questions) if args.limit_questions is not None else len(dataset)
     num_batches = int(math.ceil(dataset_limit / args.batch_size))
     total_solved, total_executed = (0, 0)
+    total_prompt_start, total_completion_start = get_token_snapshot()
+    total_agent_start = get_agent_token_snapshot(graph)
+    train_mode_enabled = args.optimized_spatial or args.optimized_temporal
     for i_batch in range(num_batches):
         print(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
+        batch_prompt_start, batch_completion_start = get_token_snapshot()
+        batch_agent_start = get_agent_token_snapshot(graph)
         answer_log_probs = []
         tests = []
         
@@ -173,6 +251,7 @@ async def main():
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_cost_state(graph)
             realized_graph.current_sample_index = i_batch * args.batch_size + i_record + 1
             task = record["prompt"]
             test = record["test"]
@@ -222,6 +301,12 @@ async def main():
         print(f"Batch time {time.time() - start_ts:.3f}")
         print(f"Accuracy: {accuracy}")
         print("utilities:", utilities)
+        batch_prompt_used = PromptTokens.instance().value - batch_prompt_start
+        batch_completion_used = CompletionTokens.instance().value - batch_completion_start
+        batch_agent_metrics = get_phase_agent_token_metrics(graph, batch_agent_start)
+        batch_phase_name = "Training Batch" if train_mode_enabled and i_batch < args.num_iterations else "Inference Batch"
+        print_phase_token_summary(batch_phase_name, batch_prompt_used, batch_completion_used)
+        print_phase_agent_token_summary(batch_phase_name, batch_agent_metrics)
 
         if (i_batch+1)%args.imp_per_iterations == 0 and i_batch < args.num_iterations and (args.optimized_spatial or args.optimized_temporal):
             spatial_masks, temporal_masks = graph.update_masks(args.pruning_rate)
@@ -230,6 +315,16 @@ async def main():
             args.optimized_temporal = False
             if args.freeze_after_training or args.active_edge_message_mode != 'full_output':
                 graph.set_eval_mode(True)
+
+    total_prompt_used = PromptTokens.instance().value - total_prompt_start
+    total_completion_used = CompletionTokens.instance().value - total_completion_start
+    total_agent_metrics = get_phase_agent_token_metrics(graph, total_agent_start)
+    print_phase_token_summary("Total", total_prompt_used, total_completion_used)
+    print_phase_agent_token_summary("Total", total_agent_metrics)
+    print(f"Prompt Tokens: {PromptTokens.instance().value}")
+    print(f"Completion Tokens: {CompletionTokens.instance().value}")
+    print(f"Total Tokens: {PromptTokens.instance().value + CompletionTokens.instance().value}")
+    print_agent_token_summary(graph)
 
 
 
