@@ -184,6 +184,7 @@ def parse_args():
             'all_answer_steps',
             'all_answer_mixed_steps',
             'all_answer_top_score_steps',
+            'spatial_answer_only_temporal_top_score_steps',
             'all_truncate',
             'spatial_analysis_only',
             'spatial_conclusion_only',
@@ -308,6 +309,9 @@ def parse_args():
             args.share_active_all_answer_mixed_steps = True
         elif args.active_edge_message_mode == 'all_answer_top_score_steps':
             args.share_active_all_answer_top_score_steps = True
+        elif args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps':
+            args.share_active_spatial_answer_only = True
+            args.share_active_temporal_answer_steps_top_score = True
         elif args.active_edge_message_mode == 'all_truncate':
             args.share_active_all_truncate = True
         elif args.active_edge_message_mode == 'spatial_analysis_only':
@@ -398,6 +402,9 @@ def parse_args():
         args.share_active_temporal_answer_steps_mixed = True
     if getattr(args, "share_active_all_answer_top_score_steps", False):
         args.share_active_spatial_answer_steps_top_score = True
+        args.share_active_temporal_answer_steps_top_score = True
+    if args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps':
+        args.share_active_spatial_answer_only = True
         args.share_active_temporal_answer_steps_top_score = True
     args.share_active_spatial_truncate = False
     args.share_active_temporal_truncate = False
