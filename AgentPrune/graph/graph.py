@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import asyncio
 import tiktoken
+import random
 
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
@@ -73,6 +74,9 @@ class Graph(ABC):
                 share_active_temporal_answer_claim: bool = False,
                 share_active_spatial_answer_steps: bool = False,
                 share_active_temporal_answer_steps: bool = False,
+                share_active_spatial_answer_steps_mixed: bool = False,
+                share_active_temporal_answer_steps_mixed: bool = False,
+                answer_steps_mixed_ratio: float = 0.3,
                 share_active_spatial_truncate: bool = False,
                 share_active_temporal_truncate: bool = False,
                 truncate_content_ratio: float = 1.0,
@@ -148,6 +152,9 @@ class Graph(ABC):
         self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
         self.share_active_spatial_answer_steps = share_active_spatial_answer_steps
         self.share_active_temporal_answer_steps = share_active_temporal_answer_steps
+        self.share_active_spatial_answer_steps_mixed = share_active_spatial_answer_steps_mixed
+        self.share_active_temporal_answer_steps_mixed = share_active_temporal_answer_steps_mixed
+        self.answer_steps_mixed_ratio = answer_steps_mixed_ratio
         self.share_active_spatial_truncate = share_active_spatial_truncate
         self.share_active_temporal_truncate = share_active_temporal_truncate
         self.truncate_content_ratio = truncate_content_ratio
@@ -294,6 +301,24 @@ class Graph(ABC):
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
         self.decision_node.pruned_spatial_predecessors = []
+
+    def refresh_active_edge_patch_mode_overrides(self) -> None:
+        for node in self.nodes.values():
+            node.active_spatial_patch_mode_overrides = {}
+            node.active_temporal_patch_mode_overrides = {}
+
+            if self.share_active_spatial_answer_steps_mixed and node.spatial_predecessors:
+                for predecessor in node.spatial_predecessors:
+                    if random.random() < self.answer_steps_mixed_ratio:
+                        node.active_spatial_patch_mode_overrides[predecessor.id] = "answer_steps"
+
+            if self.share_active_temporal_answer_steps_mixed and node.temporal_predecessors:
+                for predecessor in node.temporal_predecessors:
+                    if random.random() < self.answer_steps_mixed_ratio:
+                        node.active_temporal_patch_mode_overrides[predecessor.id] = "answer_steps"
+
+        self.decision_node.active_spatial_patch_mode_overrides = {}
+        self.decision_node.active_temporal_patch_mode_overrides = {}
 
     def _get_token_encoder(self):
         if self._token_encoder is not None:
@@ -542,6 +567,7 @@ class Graph(ABC):
                 self.clear_current_outputs()
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
+            self.refresh_active_edge_patch_mode_overrides()
             
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
@@ -598,6 +624,7 @@ class Graph(ABC):
                 self.clear_current_outputs()
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
+            self.refresh_active_edge_patch_mode_overrides()
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
             execution_index = 0
@@ -730,6 +757,8 @@ class Graph(ABC):
         if enabled:
             if self.share_active_spatial_answer_only:
                 active_edge_patch_mode = "answer_only"
+            elif self.share_active_spatial_answer_steps_mixed:
+                active_edge_patch_mode = "answer_only"
             elif self.share_active_spatial_answer_claim:
                 active_edge_patch_mode = "answer_claim"
             elif self.share_active_spatial_answer_steps:
@@ -743,6 +772,8 @@ class Graph(ABC):
         active_temporal_patch_mode = "none"
         if enabled:
             if self.share_active_temporal_answer_only:
+                active_temporal_patch_mode = "answer_only"
+            elif self.share_active_temporal_answer_steps_mixed:
                 active_temporal_patch_mode = "answer_only"
             elif self.share_active_temporal_answer_claim:
                 active_temporal_patch_mode = "answer_claim"
@@ -759,6 +790,8 @@ class Graph(ABC):
             node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
             node.active_edge_patch_mode = active_edge_patch_mode
             node.active_temporal_patch_mode = active_temporal_patch_mode
+            node.active_spatial_patch_mode_overrides = {}
+            node.active_temporal_patch_mode_overrides = {}
             node.truncate_content_ratio = self.truncate_content_ratio
             node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
             node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"
@@ -792,6 +825,8 @@ class Graph(ABC):
         self.decision_node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
         self.decision_node.active_edge_patch_mode = "none"
         self.decision_node.active_temporal_patch_mode = "none"
+        self.decision_node.active_spatial_patch_mode_overrides = {}
+        self.decision_node.active_temporal_patch_mode_overrides = {}
         self.decision_node.truncate_content_ratio = self.truncate_content_ratio
         self.decision_node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
         self.decision_node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"

@@ -182,6 +182,7 @@ def parse_args():
             'all_answer_only',
             'all_answer_claim',
             'all_answer_steps',
+            'all_answer_mixed_steps',
             'all_truncate',
             'spatial_analysis_only',
             'spatial_conclusion_only',
@@ -199,6 +200,13 @@ def parse_args():
         default=0.75,
         choices=[0.75, 0.5, 0.25],
         help="Retained ratio of content after the answer letter when active-edge truncation mode is enabled.",
+    )
+    parser.add_argument(
+        '--answer_steps_mixed_ratio',
+        type=float,
+        default=0.3,
+        choices=[0.3, 0.7, 0.9],
+        help="When active_edge_message_mode=all_answer_mixed_steps, the probability that a retained active edge shares answer+steps instead of answer only.",
     )
     pruned_patch_group = parser.add_mutually_exclusive_group()
     pruned_patch_group.add_argument('--share_pruned_spatial_full_output_original_prompt', action='store_true',
@@ -286,6 +294,8 @@ def parse_args():
             args.share_active_all_answer_claim = True
         elif args.active_edge_message_mode == 'all_answer_steps':
             args.share_active_all_answer_steps = True
+        elif args.active_edge_message_mode == 'all_answer_mixed_steps':
+            args.share_active_all_answer_mixed_steps = True
         elif args.active_edge_message_mode == 'all_truncate':
             args.share_active_all_truncate = True
         elif args.active_edge_message_mode == 'spatial_analysis_only':
@@ -356,6 +366,8 @@ def parse_args():
     args.share_active_temporal_answer_claim = False
     args.share_active_spatial_answer_steps = False
     args.share_active_temporal_answer_steps = False
+    args.share_active_spatial_answer_steps_mixed = False
+    args.share_active_temporal_answer_steps_mixed = False
     if args.share_active_all_answer_only:
         args.share_active_spatial_answer_only = True
         args.share_active_temporal_answer_only = True
@@ -365,6 +377,9 @@ def parse_args():
     if getattr(args, "share_active_all_answer_steps", False):
         args.share_active_spatial_answer_steps = True
         args.share_active_temporal_answer_steps = True
+    if getattr(args, "share_active_all_answer_mixed_steps", False):
+        args.share_active_spatial_answer_steps_mixed = True
+        args.share_active_temporal_answer_steps_mixed = True
     args.share_active_spatial_truncate = False
     args.share_active_temporal_truncate = False
     if args.share_active_all_truncate:
@@ -535,8 +550,11 @@ async def main():
                   share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
                   share_active_spatial_answer_steps=args.share_active_spatial_answer_steps,
                   share_active_temporal_answer_steps=args.share_active_temporal_answer_steps,
+                  share_active_spatial_answer_steps_mixed=args.share_active_spatial_answer_steps_mixed,
+                  share_active_temporal_answer_steps_mixed=args.share_active_temporal_answer_steps_mixed,
                   share_active_spatial_truncate=args.share_active_spatial_truncate,
                   share_active_temporal_truncate=args.share_active_temporal_truncate,
+                  answer_steps_mixed_ratio=args.answer_steps_mixed_ratio,
                   truncate_content_ratio=args.truncate_content_ratio,
                   restore_pruned_edges_as_active_conclusion_only=args.restore_pruned_edges_as_active_conclusion_only,
                   restore_pruned_edges_as_active_analysis_only=args.restore_pruned_edges_as_active_analysis_only,

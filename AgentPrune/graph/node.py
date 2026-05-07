@@ -72,6 +72,8 @@ class Node(ABC):
         self.pruned_temporal_patch_mode: str = "none"
         self.active_edge_patch_mode: str = "none"
         self.active_temporal_patch_mode: str = "none"
+        self.active_spatial_patch_mode_overrides: Dict[str, str] = {}
+        self.active_temporal_patch_mode_overrides: Dict[str, str] = {}
         self.truncate_content_ratio: float = 1.0
         self.pruned_edge_use_original_prompt: bool = False
         self.pruned_temporal_use_original_prompt: bool = False
@@ -210,6 +212,9 @@ class Node(ABC):
             patched_output = predecessor_output.strip()
         return patched_output
 
+    def _get_effective_patch_mode(self, predecessor_id: str, default_patch_mode: str, overrides: Dict[str, str]) -> str:
+        return overrides.get(predecessor_id, default_patch_mode)
+
     def _extract_xml_block(self, predecessor_output: str, tag: str) -> str:
         block_match = re.search(
             rf"<{tag}>\s*.*?\s*</{tag}>",
@@ -296,13 +301,19 @@ class Node(ABC):
                     )
                     if not predecessor_output:
                         continue
-                elif self.active_edge_patch_mode != "none":
-                    predecessor_output = self._extract_patched_output(
-                        predecessor_output,
+                else:
+                    active_patch_mode = self._get_effective_patch_mode(
+                        predecessor.id,
                         self.active_edge_patch_mode,
+                        self.active_spatial_patch_mode_overrides,
                     )
-                    if not predecessor_output:
-                        continue
+                    if active_patch_mode != "none":
+                        predecessor_output = self._extract_patched_output(
+                            predecessor_output,
+                            active_patch_mode,
+                        )
+                        if not predecessor_output:
+                            continue
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": predecessor_output,
@@ -383,13 +394,19 @@ class Node(ABC):
                     )
                     if not predecessor_output:
                         continue
-                elif self.active_temporal_patch_mode != "none":
-                    predecessor_output = self._extract_patched_output(
-                        predecessor_output,
+                else:
+                    active_patch_mode = self._get_effective_patch_mode(
+                        predecessor.id,
                         self.active_temporal_patch_mode,
+                        self.active_temporal_patch_mode_overrides,
                     )
-                    if not predecessor_output:
-                        continue
+                    if active_patch_mode != "none":
+                        predecessor_output = self._extract_patched_output(
+                            predecessor_output,
+                            active_patch_mode,
+                        )
+                        if not predecessor_output:
+                            continue
                 temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
 
         if self.pruned_temporal_predecessors is not None:
