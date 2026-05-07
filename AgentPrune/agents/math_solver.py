@@ -54,7 +54,8 @@ class MathSolver(Node):
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
         response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
-        if self.role == "Programming Expert":
+        stripped_response = response.strip()
+        if self.role == "Programming Expert" and stripped_response.startswith("```python") and stripped_response.endswith("```"):
             answer = execute_code_get_return(response.lstrip("```python\n").rstrip("\n```"))
             response += f"\nthe answer is {answer}"
         return response

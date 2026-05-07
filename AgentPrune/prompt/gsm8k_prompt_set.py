@@ -1,5 +1,6 @@
-from typing import Dict, Any
+from typing import Dict, Any, Union, List
 import itertools
+import re
 from AgentPrune.prompt.prompt_set import PromptSet
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
 from AgentPrune.prompt.common import get_combine_materials
@@ -14,24 +15,22 @@ ROLE_DESCRIPTION = {
         "You are a math expert. "
         "You will be given a math problem and hints from other agents. "
         "Give your own solving process step by step based on hints. "
-        "The last line of your output contains only the final result without any units, for example: The answer is 140\n"
+        "Place the final numeric result in the <answer> tag without any units or explanation. "
         "You will be given some examples you may refer to.",
     "Mathematical Analyst":
         "You are a mathematical analyst. "
         "You will be given a math problem, analysis and code from other agents. "
         "You need to first analyze the problem-solving process step by step, where the variables are represented by letters. "
         "Then you substitute the values into the analysis process to perform calculations and get the results."
-        "The last line of your output contains only the final result without any units, for example: The answer is 140\n"
+        "Place the final numeric result in the <answer> tag without any units or explanation. "
         "You will be given some examples you may refer to.",
     "Programming Expert":
         "You are a programming expert. "
         "You will be given a math problem, analysis and code from other agents. "
-        "Integrate step-by-step reasoning and Python code to solve math problems. "
-        "Analyze the question and write functions to solve the problem. "
-        "The function should not take any arguments and use the final result as the return value. "
-        "The last line of code calls the function you wrote and assigns the return value to the \(answer\) variable. "
-        "Use a Python code block to write your response. For example:\n```python\ndef fun():\n x = 10\n y = 20\n return x + y\nanswer = fun()\n```\n"
-        "Do not include anything other than Python code blocks in your response."
+        "Integrate step-by-step reasoning and precise calculations to solve math problems. "
+        "You may mention short Python-based calculation ideas inside the reasoning bullets when helpful, "
+        "but your final structured output must still follow the XML protocol exactly. "
+        "The <answer> tag must contain only the final numeric result without units or explanation. "
         "You will be given some examples you may refer to.",
     "Inspector":
         "You are an Inspector. "
@@ -39,7 +38,7 @@ ROLE_DESCRIPTION = {
         "Check whether the logic/calculation of the problem solving and analysis process is correct(if present). "
         "Check whether the code corresponds to the solution analysis(if present). "
         "Give your own solving process step by step based on hints. "
-        "The last line of your output contains only the final result without any units, for example: The answer is 140\n"
+        "Place the final numeric result in the <answer> tag without any units or explanation. "
         "You will be given some examples you may refer to.",
 }
 
@@ -167,6 +166,24 @@ answer = remaining_golf_balls()
 "Inspector":"""""",
 }
 
+
+GSM8K_XML_OUTPUT_CONSTRAINT = """
+CRITICAL OUTPUT FORMAT — you MUST respond with exactly these three XML blocks,
+in this order, with no text before, between, or after them:
+
+<claim>One concise sentence stating your core solving direction.</claim>
+<steps>
+- First key reasoning step
+- Second key reasoning step
+- Additional short steps as needed
+</steps>
+<answer>140</answer>
+
+The <answer> tag must contain ONLY the final numeric result, with no units,
+no explanation, and no extra punctuation except what is needed for the number itself.
+Do not output any text outside these three blocks.
+"""
+
 @PromptSetRegistry.register('gsm8k')
 class GSM8KPromptSet(PromptSet):
 
@@ -176,7 +193,7 @@ class GSM8KPromptSet(PromptSet):
 
     @staticmethod
     def get_constraint(role):
-        return ROLE_DESCRIPTION[role]
+        return ROLE_DESCRIPTION[role] + "\n" + GSM8K_XML_OUTPUT_CONSTRAINT
     
     @staticmethod
     def get_format():
@@ -185,7 +202,11 @@ class GSM8KPromptSet(PromptSet):
     @staticmethod
     def get_answer_prompt(question,role="Mathematical Analyst"):
         # Format the question for the AI assistant to answer
-        return f"{FEW_SHOT_DATA[role]}\n\nQ:{question}"
+        return (
+            f"{FEW_SHOT_DATA[role]}\n\nQ:{question}\n\n"
+            "For the actual question above, ignore the surface formatting of the examples and "
+            "follow the exact XML output format required by the system instruction."
+        )
 
     @staticmethod
     def get_decision_constraint():
@@ -219,6 +240,35 @@ The final result, based on the most reliable interpretation, is a profit of $70,
 
 The answer is 70000
 """
+
+    @staticmethod
+    def _extract_answer_content(answer: str) -> str:
+        answer_match = re.search(
+            r"<answer>\s*(.*?)\s*</answer>",
+            answer,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if answer_match is None:
+            return ""
+        return answer_match.group(1).strip()
+
+    def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
+        if isinstance(answer, list):
+            answer = answer[0] if len(answer) > 0 else ""
+        if not isinstance(answer, str):
+            raise Exception("Expected string")
+        if len(answer) == 0:
+            return answer
+
+        answer_content = self._extract_answer_content(answer)
+        if answer_content:
+            return answer_content
+
+        numeric_matches = re.findall(r"-?\d*\.?\d+", answer)
+        if numeric_matches:
+            return numeric_matches[-1]
+
+        return answer.strip()
     
     @staticmethod
     def get_react_prompt(question, solution, feedback):
@@ -373,4 +423,3 @@ f"6. Adhere to the constraints: {constraint}.\n"
     @staticmethod
     def get_combine_materials(materials: Dict[str, Any]) -> str:
         return get_combine_materials(materials)
-

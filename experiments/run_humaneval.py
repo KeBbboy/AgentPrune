@@ -11,6 +11,7 @@ import torch
 import copy
 from typing import List,Union,Literal
 import random
+import re
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -36,6 +37,12 @@ def dataloader(data_list, batch_size, i_batch):
 def load_config(config_path):
     with open(config_path, 'r',encoding='utf-8') as file:
         return yaml.safe_load(file)
+
+def extract_humaneval_code(output: str) -> str:
+    answer_match = re.search(r"<answer>\s*(.*?)\s*</answer>", output, flags=re.IGNORECASE | re.DOTALL)
+    if answer_match is not None:
+        return answer_match.group(1).strip()
+    return output.strip()
     
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on HumanEval")
@@ -66,6 +73,25 @@ def parse_args():
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
                         help="Random seed for Python, NumPy, and PyTorch. Default 42.")
+    parser.add_argument('--freeze_after_training', action='store_true',
+                        help="After the optimization batches finish, switch the graph to evaluation message-sharing mode for the remaining batches.")
+    parser.add_argument(
+        '--active_edge_message_mode',
+        type=str,
+        default='full_output',
+        choices=[
+            'full_output',
+            'all_answer_top_score_steps',
+            'spatial_answer_only_temporal_top_score_steps',
+        ],
+        help="Active-edge message-sharing mode applied after training batches finish.",
+    )
+    parser.add_argument(
+        '--answer_steps_top_score_ratio',
+        type=float,
+        default=0.7,
+        help="Fraction of retained active edges ranked by learned score that share answer+steps in top-score modes.",
+    )
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
     
@@ -74,6 +100,19 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
+        parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
+
+    args.share_active_spatial_answer_only = False
+    args.share_active_temporal_answer_only = False
+    args.share_active_spatial_answer_steps_top_score = False
+    args.share_active_temporal_answer_steps_top_score = False
+    if args.active_edge_message_mode == 'all_answer_top_score_steps':
+        args.share_active_spatial_answer_steps_top_score = True
+        args.share_active_temporal_answer_steps_top_score = True
+    elif args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps':
+        args.share_active_spatial_answer_only = True
+        args.share_active_temporal_answer_steps_top_score = True
 
     return args
 
@@ -103,7 +142,13 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
+                  share_active_spatial_answer_only=args.share_active_spatial_answer_only,
+                  share_active_temporal_answer_only=args.share_active_temporal_answer_only,
+                  share_active_spatial_answer_steps_top_score=args.share_active_spatial_answer_steps_top_score,
+                  share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
+                  answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
+    graph.set_eval_mode(False)
     optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
     
     dataset_limit = min(len(dataset), args.limit_questions) if args.limit_questions is not None else len(dataset)
@@ -139,7 +184,7 @@ async def main():
         for task, answer, log_prob, test in zip(current_batch, raw_answers, log_probs, tests):
             if not isinstance(answer,list):
                 raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
-            answer = answer[0].lstrip("```python\n").rstrip("\n```")
+            answer = extract_humaneval_code(answer[0]).lstrip("```python\n").rstrip("\n```")
             is_solved, _, _ = PyExecutor().execute(answer, [test], timeout=100)
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
@@ -179,6 +224,8 @@ async def main():
         if i_batch+1 == args.num_iterations:
             args.optimized_spatial = False
             args.optimized_temporal = False
+            if args.freeze_after_training or args.active_edge_message_mode != 'full_output':
+                graph.set_eval_mode(True)
 
 
 

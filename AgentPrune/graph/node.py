@@ -212,6 +212,16 @@ class Node(ABC):
             patched_output = predecessor_output.strip()
         return patched_output
 
+    def _extract_answer_tag_content(self, predecessor_output: str) -> str:
+        answer_match = re.search(
+            r"<answer>\s*(.*?)\s*</answer>",
+            predecessor_output,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if answer_match is None:
+            return ""
+        return answer_match.group(1).strip()
+
     def _get_effective_patch_mode(self, predecessor_id: str, default_patch_mode: str, overrides: Dict[str, str]) -> str:
         return overrides.get(predecessor_id, default_patch_mode)
 
@@ -230,9 +240,9 @@ class Node(ABC):
         if not stripped_output:
             return ""
 
-        xml_answer_match = re.search(r"<answer>\s*([ABCD])\s*</answer>", stripped_output, flags=re.IGNORECASE)
-        if xml_answer_match is not None:
-            return xml_answer_match.group(1).upper()
+        answer_content = self._extract_answer_tag_content(stripped_output)
+        if answer_content:
+            return answer_content
 
         return stripped_output[0]
 
@@ -268,7 +278,7 @@ class Node(ABC):
             return ""
 
         answer_only = self._extract_answer_only(stripped_output)
-        xml_answer_match = re.search(r"<answer>\s*[ABCD]\s*</answer>", stripped_output, flags=re.IGNORECASE)
+        xml_answer_match = re.search(r"<answer>\s*.*?\s*</answer>", stripped_output, flags=re.IGNORECASE | re.DOTALL)
         if xml_answer_match is not None:
             remainder = (stripped_output[:xml_answer_match.start()] + stripped_output[xml_answer_match.end():]).strip()
         else:

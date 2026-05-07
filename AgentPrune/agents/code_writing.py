@@ -22,21 +22,25 @@ class CodeWriting(Node):
         spatial_str = ""
         temporal_str = ""
         for id, info in spatial_info.items():
-            if info['output'].startswith("```python") and info['output'].endswith("```") and self.role != 'Normal Programmer' and self.role != 'Stupid Programmer':
-                output = info['output'].lstrip("```python\n").rstrip("\n```")
+            answer_payload = self._extract_answer_tag_content(info['output'])
+            candidate_output = answer_payload if answer_payload else info['output'].strip()
+            if candidate_output.startswith("```python") and candidate_output.endswith("```") and self.role != 'Normal Programmer' and self.role != 'Stupid Programmer':
+                output = candidate_output.lstrip("```python\n").rstrip("\n```")
                 is_solved, feedback, state = PyExecutor().execute(output, self.internal_tests, timeout=10)
                 if is_solved and len(self.internal_tests):
-                    return "is_solved", info['output']
-                spatial_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{info['output']}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
+                    return "is_solved", candidate_output
+                spatial_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{candidate_output}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
             else:
                 spatial_str += f"Agent {id} as a {info['role']} provides the following info: {info['output']}\n\n"
         for id, info in temporal_info.items():
-            if info['output'].startswith("```python") and info['output'].endswith("```") and self.role != 'Normal Programmer' and self.role != 'Stupid Programmer':
-                output = info['output'].lstrip("```python\n").rstrip("\n```")
+            answer_payload = self._extract_answer_tag_content(info['output'])
+            candidate_output = answer_payload if answer_payload else info['output'].strip()
+            if candidate_output.startswith("```python") and candidate_output.endswith("```") and self.role != 'Normal Programmer' and self.role != 'Stupid Programmer':
+                output = candidate_output.lstrip("```python\n").rstrip("\n```")
                 is_solved, feedback, state = PyExecutor().execute(output, self.internal_tests, timeout=10)
                 if is_solved and len(self.internal_tests):
-                    return "is_solved", info['output']
-                temporal_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{info['output']}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
+                    return "is_solved", candidate_output
+                temporal_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{candidate_output}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
             else:
                 temporal_str += f"Agent {id} as a {info['role']} provides the following info: {info['output']}\n\n"
         user_prompt = f"The task is:\n\n{raw_inputs['task']}\n"

@@ -1,5 +1,6 @@
-from typing import Dict, Any
+from typing import Dict, Any, Union, List
 import itertools
+import re
 from AgentPrune.prompt.prompt_set import PromptSet
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
 from AgentPrune.prompt.common import get_combine_materials
@@ -29,9 +30,8 @@ ROLE_DESCRIPTION = {
         "You are a programming expert. "
         "You will be given a function signature and its docstring by the user. "
         "You may be able to get the output results of other agents. They may have passed internal tests, but they may not be completely correct. "
-        "Write your full implementation (restate the function signature). "
-        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
-        "Do not include anything other than Python code blocks in your response. "
+        "Write your full implementation (restate the function signature) inside the <answer> tag as a Python code block. "
+        "Keep your final response inside the required XML structure. "
         "Do not change function names and input variable types in tasks.",
     "Test Analyst":
         "You are a test analyst. "
@@ -44,25 +44,49 @@ ROLE_DESCRIPTION = {
         "You are a bug fixer."
         "You will be given a function signature and its docstring by the user. "
         "You need to provide modified and improved python code based on the current overall code design, algorithm framework, code implementation or test problems. "
-        "Write your full implementation (restate the function signature). "
-        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
-        "Do not include anything other than Python code blocks in your response "
+        "Write your full implementation (restate the function signature) inside the <answer> tag as a Python code block. "
+        "Keep your final response inside the required XML structure. "
         "Do not change function names and input variable types in tasks",
     "Normal Programmer":
         "You are a programmer. "
         "You will be given a function signature and its docstring by the user. "
         "You can refer to the agents' outputs. "
-        "Write your full implementation (restate the function signature). "
-        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
-        "Do not include anything other than Python code blocks in your response. ",
+        "Write your full implementation (restate the function signature) inside the <answer> tag as a Python code block. "
+        "Keep your final response inside the required XML structure. ",
     "Stupid Programmer":
         "You are a stupid programmer. "
         "You will be given a function signature and its docstring by the user. "
         "Give a code implementation full of errors. "
         "Do not use comments for all errors. "
-        "Use a Python code block to write your response. For example:\n```python\nprint('Hello world!')\n```"
-        "Do not include anything other than Python code blocks in your response. ",
+        "Put the intentionally flawed implementation inside the <answer> tag as a Python code block. "
+        "Keep your final response inside the required XML structure. ",
 }
+
+
+HUMANEVAL_STRUCTURED_CODE_ROLES = {
+    "Programming Expert",
+    "Bug Fixer",
+    "Normal Programmer",
+    "Stupid Programmer",
+}
+
+HUMANEVAL_STRUCTURED_OUTPUT_CONSTRAINT = """
+CRITICAL OUTPUT FORMAT — you MUST respond with exactly these three XML blocks,
+in this order, with no text before, between, or after them:
+
+<claim>One concise sentence stating your implementation direction.</claim>
+<steps>
+- First key implementation or debugging step
+- Second key implementation or debugging step
+- Additional short steps as needed
+</steps>
+<answer>Place the final deliverable here.</answer>
+
+For coding roles, the <answer> tag must contain exactly one fenced Python code block
+with the full final implementation.
+For non-coding roles, the <answer> tag should contain the most actionable short conclusion.
+Do not output any text outside these three blocks.
+"""
 
 
 @PromptSetRegistry.register('humaneval')
@@ -74,7 +98,7 @@ class HumanEvalPromptSet(PromptSet):
 
     @staticmethod
     def get_constraint(role):
-        return ROLE_DESCRIPTION[role]
+        return ROLE_DESCRIPTION[role] + "\n" + HUMANEVAL_STRUCTURED_OUTPUT_CONSTRAINT
     
     @staticmethod
     def get_format():
@@ -83,7 +107,10 @@ class HumanEvalPromptSet(PromptSet):
     @staticmethod
     def get_answer_prompt(question):
         # Format the question for the AI assistant to answer
-        return f"{question}"
+        return (
+            f"{question}\n\n"
+            "For your final response to this task, follow the exact XML output format required by the system instruction."
+        )
 
     @staticmethod
     def get_react_prompt(question, solution, feedback):
@@ -258,3 +285,28 @@ f"6. Adhere to the constraints: {constraint}.\n"
     @staticmethod
     def get_decision_few_shot():
         return ""
+
+    @staticmethod
+    def _extract_answer_content(answer: str) -> str:
+        answer_match = re.search(
+            r"<answer>\s*(.*?)\s*</answer>",
+            answer,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if answer_match is None:
+            return ""
+        return answer_match.group(1).strip()
+
+    def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
+        if isinstance(answer, list):
+            answer = answer[0] if len(answer) > 0 else ""
+        if not isinstance(answer, str):
+            raise Exception("Expected string")
+        if len(answer) == 0:
+            return answer
+
+        answer_content = self._extract_answer_content(answer)
+        if answer_content:
+            return answer_content
+
+        return answer.strip()

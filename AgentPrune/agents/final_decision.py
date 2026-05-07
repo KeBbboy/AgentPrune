@@ -36,11 +36,13 @@ class FinalWriteCode(Node):
         system_prompt = f"{self.role}.\n {self.constraint}"
         spatial_str = ""
         for id, info in spatial_info.items():
-            if info['output'].startswith("```python") and info['output'].endswith("```"):  # is python code
+            answer_payload = self._extract_answer_tag_content(info['output'])
+            candidate_output = answer_payload if answer_payload else info['output'].strip()
+            if candidate_output.startswith("```python") and candidate_output.endswith("```"):  # is python code
                 self.internal_tests = self.extract_example(raw_inputs)
-                output = info['output'].lstrip("```python\n").rstrip("\n```")
+                output = candidate_output.lstrip("```python\n").rstrip("\n```")
                 is_solved, feedback, state = PyExecutor().execute(output, self.internal_tests, timeout=10)
-                spatial_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{info['output']}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
+                spatial_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{candidate_output}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
             else:
                 spatial_str += f"Agent {id} as a {info['role']} provides the following info: {info['output']}\n\n"
         user_prompt = f"The task is:\n\n{raw_inputs['task']}.\n At the same time, the outputs and feedbacks of other agents are as follows:\n\n{spatial_str}\n\n"
