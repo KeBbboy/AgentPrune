@@ -828,7 +828,7 @@ class Graph(ABC):
             elif self.share_active_spatial_answer_steps_mixed:
                 active_edge_patch_mode = "answer_only"
             elif self.share_active_spatial_answer_steps_top_score:
-                active_edge_patch_mode = "answer_only"
+                active_edge_patch_mode = "answer_claim"
             elif self.share_active_spatial_answer_claim:
                 active_edge_patch_mode = "answer_claim"
             elif self.share_active_spatial_answer_steps:
@@ -846,7 +846,7 @@ class Graph(ABC):
             elif self.share_active_temporal_answer_steps_mixed:
                 active_temporal_patch_mode = "answer_only"
             elif self.share_active_temporal_answer_steps_top_score:
-                active_temporal_patch_mode = "answer_only"
+                active_temporal_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
                 active_temporal_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_steps:
