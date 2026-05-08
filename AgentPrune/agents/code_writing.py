@@ -3,6 +3,7 @@ from typing import List,Any,Dict
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
 from AgentPrune.llm.llm_registry import LLMRegistry
+from AgentPrune.llm.gpt_chat import set_active_usage_recorder, reset_active_usage_recorder
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
 from AgentPrune.tools.coding.python_executor import PyExecutor
 
@@ -72,6 +73,7 @@ class CodeWriting(Node):
         self.internal_tests = self.extract_example(input)
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        self.set_last_input_messages(message)
         response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         return response
 
@@ -85,5 +87,12 @@ class CodeWriting(Node):
         if system_prompt == "is_solved":
             return user_prompt
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-        response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
+        self.set_last_input_messages(message)
+        usage_recorder = {"prompt_tokens": None, "completion_tokens": None}
+        usage_token = set_active_usage_recorder(usage_recorder)
+        try:
+            response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
+        finally:
+            reset_active_usage_recorder(usage_token)
+        self.last_llm_usage = usage_recorder
         return response

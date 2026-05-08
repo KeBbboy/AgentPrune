@@ -231,14 +231,18 @@ async def main():
     dataset_limit = min(len(dataset), args.limit_questions) if args.limit_questions is not None else len(dataset)
     num_batches = int(math.ceil(dataset_limit / args.batch_size))
     total_solved, total_executed = (0, 0)
-    total_prompt_start, total_completion_start = get_token_snapshot()
-    total_agent_start = get_agent_token_snapshot(graph)
     train_mode_enabled = args.optimized_spatial or args.optimized_temporal
+    training_batch_limit = min(num_batches, args.num_iterations) if train_mode_enabled else 0
+    no_training_mode = training_batch_limit == 0
+    train_prompt_start, train_completion_start = get_token_snapshot()
+    train_agent_start = get_agent_token_snapshot(graph)
+    inference_prompt_start = train_prompt_start if no_training_mode else None
+    inference_completion_start = train_completion_start if no_training_mode else None
+    inference_agent_start = train_agent_start if no_training_mode else None
+    training_phase_closed = no_training_mode
     for i_batch in range(num_batches):
         print(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
-        batch_prompt_start, batch_completion_start = get_token_snapshot()
-        batch_agent_start = get_agent_token_snapshot(graph)
         answer_log_probs = []
         tests = []
         
@@ -301,12 +305,6 @@ async def main():
         print(f"Batch time {time.time() - start_ts:.3f}")
         print(f"Accuracy: {accuracy}")
         print("utilities:", utilities)
-        batch_prompt_used = PromptTokens.instance().value - batch_prompt_start
-        batch_completion_used = CompletionTokens.instance().value - batch_completion_start
-        batch_agent_metrics = get_phase_agent_token_metrics(graph, batch_agent_start)
-        batch_phase_name = "Training Batch" if train_mode_enabled and i_batch < args.num_iterations else "Inference Batch"
-        print_phase_token_summary(batch_phase_name, batch_prompt_used, batch_completion_used)
-        print_phase_agent_token_summary(batch_phase_name, batch_agent_metrics)
 
         if (i_batch+1)%args.imp_per_iterations == 0 and i_batch < args.num_iterations and (args.optimized_spatial or args.optimized_temporal):
             spatial_masks, temporal_masks = graph.update_masks(args.pruning_rate)
@@ -315,12 +313,35 @@ async def main():
             args.optimized_temporal = False
             if args.freeze_after_training or args.active_edge_message_mode != 'full_output':
                 graph.set_eval_mode(True)
+        if (not training_phase_closed) and (i_batch + 1 == training_batch_limit):
+            train_prompt_used = PromptTokens.instance().value - train_prompt_start
+            train_completion_used = CompletionTokens.instance().value - train_completion_start
+            train_agent_metrics = get_phase_agent_token_metrics(graph, train_agent_start)
+            if training_batch_limit > 0:
+                print_phase_token_summary("Training", train_prompt_used, train_completion_used)
+                print_phase_agent_token_summary("Training", train_agent_metrics)
+            else:
+                print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
+                print_phase_token_summary("Training", 0.0, 0.0)
+                print_phase_agent_token_summary("Training", [])
+            inference_prompt_start, inference_completion_start = get_token_snapshot()
+            inference_agent_start = get_agent_token_snapshot(graph)
+            training_phase_closed = True
 
-    total_prompt_used = PromptTokens.instance().value - total_prompt_start
-    total_completion_used = CompletionTokens.instance().value - total_completion_start
-    total_agent_metrics = get_phase_agent_token_metrics(graph, total_agent_start)
-    print_phase_token_summary("Total", total_prompt_used, total_completion_used)
-    print_phase_agent_token_summary("Total", total_agent_metrics)
+    if no_training_mode:
+        print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
+        print_phase_token_summary("Training", 0.0, 0.0)
+        print_phase_agent_token_summary("Training", [])
+
+    if inference_prompt_start is None or inference_completion_start is None or inference_agent_start is None:
+        inference_prompt_start, inference_completion_start = get_token_snapshot()
+        inference_agent_start = get_agent_token_snapshot(graph)
+
+    inference_prompt_used = PromptTokens.instance().value - inference_prompt_start
+    inference_completion_used = CompletionTokens.instance().value - inference_completion_start
+    inference_agent_metrics = get_phase_agent_token_metrics(graph, inference_agent_start)
+    print_phase_token_summary("Inference", inference_prompt_used, inference_completion_used)
+    print_phase_agent_token_summary("Inference", inference_agent_metrics)
     print(f"Prompt Tokens: {PromptTokens.instance().value}")
     print(f"Completion Tokens: {CompletionTokens.instance().value}")
     print(f"Total Tokens: {PromptTokens.instance().value + CompletionTokens.instance().value}")

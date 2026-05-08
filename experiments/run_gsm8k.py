@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 import torch
 import copy
-from typing import List,Union,Literal
+from typing import List,Union,Literal, Dict, Any
 import random
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
@@ -19,6 +19,79 @@ from AgentPrune.tools.reader.readers import JSONLReader
 from AgentPrune.utils.globals import Time
 from AgentPrune.utils.globals import Cost, PromptTokens, CompletionTokens
 from dataset.gsm8k_dataset import gsm_data_process, gsm_get_predict
+
+def print_agent_token_summary(graph: Graph):
+    print("Per-Agent Token Usage:")
+    for item in graph.get_agent_token_metrics():
+        print(
+            f"  {item['role']} ({item['id']}, {item['agent_name']}): "
+            f"input={item['prompt_tokens']}, output={item['completion_tokens']}, "
+            f"total={item['total_tokens']}, calls={item['calls']}"
+        )
+
+    print("Per-Role Token Usage:")
+    for item in graph.get_role_token_metrics():
+        print(
+            f"  {item['role']}: input={item['prompt_tokens']}, "
+            f"output={item['completion_tokens']}, total={item['total_tokens']}, "
+            f"calls={item['calls']}, agents={item['agents']}"
+        )
+
+def get_agent_token_snapshot(graph: Graph) -> Dict[str, Dict[str, Any]]:
+    return copy.deepcopy(graph.agent_token_stats)
+
+def get_phase_agent_token_metrics(
+    graph: Graph,
+    start_snapshot: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    phase_metrics: List[Dict[str, Any]] = []
+
+    for node_id, current_stats in graph.agent_token_stats.items():
+        previous_stats = start_snapshot.get(node_id, {})
+        prompt_tokens = current_stats["prompt_tokens"] - previous_stats.get("prompt_tokens", 0)
+        completion_tokens = current_stats["completion_tokens"] - previous_stats.get("completion_tokens", 0)
+        total_tokens = current_stats["total_tokens"] - previous_stats.get("total_tokens", 0)
+        calls = current_stats["calls"] - previous_stats.get("calls", 0)
+
+        if prompt_tokens == 0 and completion_tokens == 0 and total_tokens == 0 and calls == 0:
+            continue
+
+        phase_metrics.append({
+            "id": current_stats["id"],
+            "agent_name": current_stats["agent_name"],
+            "role": current_stats["role"],
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "calls": calls,
+        })
+
+    return sorted(
+        phase_metrics,
+        key=lambda item: (-item["total_tokens"], item["role"], item["id"]),
+    )
+
+def get_token_snapshot():
+    return PromptTokens.instance().value, CompletionTokens.instance().value
+
+def print_phase_token_summary(phase_name: str, prompt_used: float, completion_used: float):
+    total_used = prompt_used + completion_used
+    print(f"{phase_name} Prompt Tokens: {prompt_used}")
+    print(f"{phase_name} Completion Tokens: {completion_used}")
+    print(f"{phase_name} Total Tokens: {total_used}")
+
+def print_phase_agent_token_summary(phase_name: str, phase_metrics: List[Dict[str, Any]]):
+    print(f"{phase_name} Per-Agent Token Usage:")
+    if len(phase_metrics) == 0:
+        print("  No agent token usage recorded.")
+        return
+
+    for item in phase_metrics:
+        print(
+            f"  {item['role']} ({item['id']}, {item['agent_name']}): "
+            f"input={item['prompt_tokens']}, output={item['completion_tokens']}, "
+            f"total={item['total_tokens']}, calls={item['calls']}"
+        )
 
 def load_result(result_file):
     if not result_file.exists():
@@ -129,6 +202,15 @@ async def main():
     
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
+    train_mode_enabled = args.optimized_spatial or args.optimized_temporal
+    training_batch_limit = min(num_batches, args.num_iterations) if train_mode_enabled else 0
+    no_training_mode = training_batch_limit == 0
+    train_prompt_start, train_completion_start = get_token_snapshot()
+    train_agent_start = get_agent_token_snapshot(graph)
+    inference_prompt_start = train_prompt_start if no_training_mode else None
+    inference_completion_start = train_completion_start if no_training_mode else None
+    inference_agent_start = train_agent_start if no_training_mode else None
+    training_phase_closed = no_training_mode
     
     for i_batch in range(num_batches):
         print(f"Batch {i_batch}",80*'-')
@@ -145,6 +227,7 @@ async def main():
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_cost_state(graph)
             task = record["task"]
             step = record["step"]
             answer = record["answer"]
@@ -201,6 +284,39 @@ async def main():
             args.optimized_temporal = False
             if args.freeze_after_training or args.active_edge_message_mode != 'full_output':
                 graph.set_eval_mode(True)
+        if (not training_phase_closed) and (i_batch + 1 == training_batch_limit):
+            train_prompt_used = PromptTokens.instance().value - train_prompt_start
+            train_completion_used = CompletionTokens.instance().value - train_completion_start
+            train_agent_metrics = get_phase_agent_token_metrics(graph, train_agent_start)
+            if training_batch_limit > 0:
+                print_phase_token_summary("Training", train_prompt_used, train_completion_used)
+                print_phase_agent_token_summary("Training", train_agent_metrics)
+            else:
+                print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
+                print_phase_token_summary("Training", 0.0, 0.0)
+                print_phase_agent_token_summary("Training", [])
+            inference_prompt_start, inference_completion_start = get_token_snapshot()
+            inference_agent_start = get_agent_token_snapshot(graph)
+            training_phase_closed = True
+
+    if no_training_mode:
+        print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
+        print_phase_token_summary("Training", 0.0, 0.0)
+        print_phase_agent_token_summary("Training", [])
+
+    if inference_prompt_start is None or inference_completion_start is None or inference_agent_start is None:
+        inference_prompt_start, inference_completion_start = get_token_snapshot()
+        inference_agent_start = get_agent_token_snapshot(graph)
+
+    inference_prompt_used = PromptTokens.instance().value - inference_prompt_start
+    inference_completion_used = CompletionTokens.instance().value - inference_completion_start
+    inference_agent_metrics = get_phase_agent_token_metrics(graph, inference_agent_start)
+    print_phase_token_summary("Inference", inference_prompt_used, inference_completion_used)
+    print_phase_agent_token_summary("Inference", inference_agent_metrics)
+    print(f"Prompt Tokens: {PromptTokens.instance().value}")
+    print(f"Completion Tokens: {CompletionTokens.instance().value}")
+    print(f"Total Tokens: {PromptTokens.instance().value + CompletionTokens.instance().value}")
+    print_agent_token_summary(graph)
 
 
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star']]
