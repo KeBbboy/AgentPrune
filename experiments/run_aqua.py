@@ -31,6 +31,7 @@ from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
 def should_use_structured_aqua_output(active_edge_message_mode: str) -> bool:
     return active_edge_message_mode in {
+        'full_output_xml',
         'all_answer_claim',
         'all_answer_steps',
         'all_answer_mixed_steps',
@@ -98,6 +99,7 @@ def parse_args():
         default='full_output',
         choices=[
             'full_output',
+            'full_output_xml',
             'all_analysis_only',
             'all_conclusion_only',
             'all_answer_only',
