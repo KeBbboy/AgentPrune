@@ -109,15 +109,14 @@ in this order, with no text before, between, or after them:
 
 <claim>One concise sentence stating your implementation direction.</claim>
 <steps>
-- First key implementation or debugging step
-- Second key implementation or debugging step
-- Additional short steps as needed
+- One key implementation or debugging step
 </steps>
 <answer>Place the final deliverable here.</answer>
 
 For coding roles, the <answer> tag must contain exactly one fenced Python code block
 with the full final implementation.
 For non-coding roles, the <answer> tag should contain the most actionable short conclusion.
+Keep <steps> brief: use 1-2 short bullet points only.
 Do not output any text outside these three blocks.
 """
 
