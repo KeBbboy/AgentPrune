@@ -15,13 +15,44 @@ ROLE_DESCRIPTION = {
         "You are a math expert. "
         "You will be given a math problem and hints from other agents. "
         "Give your own solving process step by step based on hints. "
-        "Place the final numeric result in the <answer> tag without any units or explanation. "
+        "State the final numeric result clearly without any units or explanation. "
         "You will be given some examples you may refer to.",
     "Mathematical Analyst":
         "You are a mathematical analyst. "
         "You will be given a math problem, analysis and code from other agents. "
         "You need to first analyze the problem-solving process step by step, where the variables are represented by letters. "
         "Then you substitute the values into the analysis process to perform calculations and get the results."
+        "State the final numeric result clearly without any units or explanation. "
+        "You will be given some examples you may refer to.",
+    "Programming Expert":
+        "You are a programming expert. "
+        "You will be given a math problem, analysis and code from other agents. "
+        "Integrate step-by-step reasoning and precise calculations to solve math problems. "
+        "You may mention short Python-based calculation ideas when helpful. "
+        "State the final numeric result clearly without units or explanation. "
+        "You will be given some examples you may refer to.",
+    "Inspector":
+        "You are an Inspector. "
+        "You will be given a math problem, analysis and code from other agents. "
+        "Check whether the logic/calculation of the problem solving and analysis process is correct(if present). "
+        "Check whether the code corresponds to the solution analysis(if present). "
+        "Give your own solving process step by step based on hints. "
+        "State the final numeric result clearly without any units or explanation. "
+        "You will be given some examples you may refer to.",
+}
+
+STRUCTURED_ROLE_DESCRIPTION = {
+    "Math Solver":
+        "You are a math expert. "
+        "You will be given a math problem and hints from other agents. "
+        "Give your own solving process step by step based on hints. "
+        "Place the final numeric result in the <answer> tag without any units or explanation. "
+        "You will be given some examples you may refer to.",
+    "Mathematical Analyst":
+        "You are a mathematical analyst. "
+        "You will be given a math problem, analysis and code from other agents. "
+        "You need to first analyze the problem-solving process step by step, where the variables are represented by letters. "
+        "Then you substitute the values into the analysis process to perform calculations and get the results. "
         "Place the final numeric result in the <answer> tag without any units or explanation. "
         "You will be given some examples you may refer to.",
     "Programming Expert":
@@ -192,21 +223,29 @@ class GSM8KPromptSet(PromptSet):
         return next(roles)
 
     @staticmethod
-    def get_constraint(role):
-        return ROLE_DESCRIPTION[role] + "\n" + GSM8K_XML_OUTPUT_CONSTRAINT
+    def get_constraint(role, use_structured_output: bool = False):
+        if use_structured_output:
+            return STRUCTURED_ROLE_DESCRIPTION[role] + "\n" + GSM8K_XML_OUTPUT_CONSTRAINT
+        return (
+            ROLE_DESCRIPTION[role]
+            + "\n"
+            + "Your reply must include a brief step-by-step solution and end with a final line in the form: The answer is 140"
+        )
     
     @staticmethod
     def get_format():
         return "natural language"
 
     @staticmethod
-    def get_answer_prompt(question,role="Mathematical Analyst"):
+    def get_answer_prompt(question, role="Mathematical Analyst", use_structured_output: bool = False):
         # Format the question for the AI assistant to answer
-        return (
-            f"{FEW_SHOT_DATA[role]}\n\nQ:{question}\n\n"
-            "For the actual question above, ignore the surface formatting of the examples and "
-            "follow the exact XML output format required by the system instruction."
-        )
+        prompt = f"{FEW_SHOT_DATA[role]}\n\nQ:{question}\n\n"
+        if use_structured_output:
+            prompt += (
+                "For the actual question above, ignore the surface formatting of the examples and "
+                "follow the exact XML output format required by the system instruction."
+            )
+        return prompt
 
     @staticmethod
     def get_decision_constraint():

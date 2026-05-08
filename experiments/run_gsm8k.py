@@ -108,6 +108,14 @@ def dataloader(data_list, batch_size, i_batch):
 def load_config(config_path):
     with open(config_path, 'r',encoding='utf-8') as file:
         return yaml.safe_load(file)
+
+
+def should_use_structured_gsm8k_output(active_edge_message_mode: str) -> bool:
+    return active_edge_message_mode in {
+        'full_output_xml',
+        'all_answer_top_score_steps',
+        'spatial_answer_only_temporal_top_score_steps',
+    }
     
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on gsm8k")
@@ -138,6 +146,7 @@ def parse_args():
         default='full_output',
         choices=[
             'full_output',
+            'full_output_xml',
             'all_answer_top_score_steps',
             'spatial_answer_only_temporal_top_score_steps',
         ],
@@ -184,7 +193,11 @@ async def main():
     
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     decision_method = args.decision_method
-    kwargs = get_kwargs(args.mode,len(agent_names))
+    kwargs = get_kwargs(
+        args.mode,
+        len(agent_names),
+        use_structured_output=should_use_structured_gsm8k_output(args.active_edge_message_mode),
+    )
     graph = Graph(domain="gsm8k",
                   llm_name=args.llm_name,
                   agent_names=agent_names,
@@ -320,7 +333,8 @@ async def main():
 
 
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star']]
-               ,N:int):
+               ,N:int,
+               use_structured_output: bool = False):
     initial_spatial_probability: float = 0.5
     fixed_spatial_masks:List[List[int]] = None
     initial_temporal_probability: float = 0.5
@@ -373,6 +387,10 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
         fixed_spatial_masks = generate_star_graph(N)
         fixed_temporal_masks = [[1 for i in range(N)] for j in range(N)]
     
+    if node_kwargs is None:
+        node_kwargs = [{} for _ in range(N)]
+    node_kwargs = [{**kwargs, 'use_structured_output': use_structured_output} for kwargs in node_kwargs]
+
     return {"initial_spatial_probability": initial_spatial_probability,
             "fixed_spatial_masks": fixed_spatial_masks,
             "initial_temporal_probability": initial_temporal_probability,
