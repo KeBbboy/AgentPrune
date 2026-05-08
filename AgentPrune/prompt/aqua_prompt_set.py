@@ -29,13 +29,12 @@ in this order, with no text before, between, or after them:
 
 <claim>One sentence stating your core position.</claim>
 <steps>
-- First key reasoning point
-- Second key reasoning point
-- Additional points as needed (no upper limit, but each should be one short bullet)
+- One key reasoning point only
 </steps>
 <answer>A</answer>
 
 The <answer> tag must contain ONLY a single letter from {A, B, C, D, E}.
+The <steps> tag must contain exactly one short bullet point.
 Do not include explanations inside <answer>.
 Do not output any text outside these three blocks.
 """
