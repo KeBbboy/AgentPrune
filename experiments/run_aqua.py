@@ -29,6 +29,16 @@ from experiments.run_mmlu import (
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
 
+def should_use_structured_aqua_output(active_edge_message_mode: str) -> bool:
+    return active_edge_message_mode in {
+        'all_answer_claim',
+        'all_answer_steps',
+        'all_answer_mixed_steps',
+        'all_answer_top_score_steps',
+        'spatial_answer_only_temporal_top_score_steps',
+    }
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune experiments on AQuA")
 
@@ -199,6 +209,7 @@ async def main():
     kwargs = get_kwargs(
         args.mode,
         len(agent_names),
+        use_structured_output=should_use_structured_aqua_output(args.active_edge_message_mode),
         share_special_roles_conclusion_only=args.share_special_roles_conclusion_only,
         share_special_roles_analysis_only=args.share_special_roles_analysis_only,
     )
