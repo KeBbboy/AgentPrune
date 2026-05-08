@@ -154,10 +154,15 @@ def parse_args():
         default='full_output',
         choices=[
             'full_output',
+            'full_output_xml',
             'all_answer_top_score_steps',
             'spatial_answer_only_temporal_top_score_steps',
         ],
-        help="Active-edge message-sharing mode applied after training batches finish.",
+        help=(
+            "Active-edge message-sharing mode applied after training batches finish. "
+            "'full_output_xml' keeps full message passing while switching intermediate "
+            "agent outputs to structured XML."
+        ),
     )
     parser.add_argument(
         '--answer_steps_top_score_ratio',
