@@ -22,6 +22,7 @@ class AnalyzeAgent(Node):
         role:str = None,
         domain: str = "",
         llm_name: str = "",
+        use_structured_output: bool = False,
         share_special_roles_conclusion_only: bool = False,
         share_special_roles_analysis_only: bool = False,
     ):
@@ -29,7 +30,10 @@ class AnalyzeAgent(Node):
         self.llm = LLMRegistry.get(llm_name)
         self.prompt_set = PromptSetRegistry.get(domain)
         self.role = self.prompt_set.get_role() if role is None else role
-        self.constraint = self.prompt_set.get_analyze_constraint(self.role)
+        try:
+            self.constraint = self.prompt_set.get_analyze_constraint(self.role, use_structured_output)
+        except TypeError:
+            self.constraint = self.prompt_set.get_analyze_constraint(self.role)
         self.wiki_summary = ""
         self.share_special_roles_conclusion_only = share_special_roles_conclusion_only
         self.share_special_roles_analysis_only = share_special_roles_analysis_only

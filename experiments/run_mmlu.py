@@ -109,6 +109,16 @@ def restore_all_edges_for_evaluation(graph: Graph) -> None:
     graph.temporal_masks.data.fill_(1)
 
 
+def should_use_structured_mmlu_output(active_edge_message_mode: str) -> bool:
+    return active_edge_message_mode in {
+        'all_answer_claim',
+        'all_answer_steps',
+        'all_answer_mixed_steps',
+        'all_answer_top_score_steps',
+        'spatial_answer_only_temporal_top_score_steps',
+    }
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Process some parameters.")
@@ -535,6 +545,7 @@ async def main():
     kwargs = get_kwargs(
         mode,
         len(agent_names),
+        use_structured_output=should_use_structured_mmlu_output(args.active_edge_message_mode),
         share_special_roles_conclusion_only=args.share_special_roles_conclusion_only,
         share_special_roles_analysis_only=args.share_special_roles_analysis_only,
     )
@@ -683,6 +694,7 @@ async def main():
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star'],Literal['Mesh'],
                           Literal['FakeFullConnected'],Literal['FakeRandom'],Literal['FakeChain'],Literal['FakeStar'],Literal['FakeMesh'],Literal['FakeAGRandom'],Literal['FakeAGFull']],
                N:int,
+               use_structured_output: bool = False,
                share_special_roles_conclusion_only: bool = False,
                share_special_roles_analysis_only: bool = False):
     initial_spatial_probability: float = 0.5
@@ -760,6 +772,10 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
         if node_kwargs is None:
             node_kwargs = [{} for _ in range(N)]
         node_kwargs = [{**kwargs, 'share_special_roles_analysis_only': True} for kwargs in node_kwargs]
+
+    if node_kwargs is None:
+        node_kwargs = [{} for _ in range(N)]
+    node_kwargs = [{**kwargs, 'use_structured_output': use_structured_output} for kwargs in node_kwargs]
         
     return {"initial_spatial_probability": initial_spatial_probability,
             "fixed_spatial_masks": fixed_spatial_masks,

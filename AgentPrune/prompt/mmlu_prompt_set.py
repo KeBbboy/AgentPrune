@@ -98,7 +98,6 @@ Do not include explanations inside <answer>.
 Do not output any text outside these three blocks.
 """
 
-
 @PromptSetRegistry.register('mmlu')
 class MMLUPromptSet(PromptSet):
     """
@@ -137,15 +136,20 @@ If you include any explanation, put it after the first line.
         """ + MMLUPromptSet._strict_answer_format()
     
     @staticmethod
-    def get_analyze_constraint(role):
+    def get_analyze_constraint(role, use_structured_output: bool = False):
         role_instruction = ROLE_DESCRIPTION.get(role, "")
         generic_instruction = """
 I will ask you a question and 4 answers enumerated as A, B, C and D.
 Only one answer out of the offered 4 is correct.
 Using the reasoning from other agents as additional advice with critical thinking, can you give an updated answer?
-You are strictly prohibited from imitating the analysis process of other agents.
+You are strictly prohibited from imitating the analysis process of other agents
+Your reply must be less than 100 words but include your answer and a brief step by step analysis of the question.
+The first line of your reply must contain only one letter(for example : A, B, C or D)
 """
-        return f"{role_instruction}\n{generic_instruction}\n{XML_ANALYZE_FORMAT_CONSTRAINT}"
+        if use_structured_output:
+            return f"{role_instruction}\n{generic_instruction}\n{XML_ANALYZE_FORMAT_CONSTRAINT}"
+        role_prefix = f"{role_instruction}\n" if role_instruction else ""
+        return role_prefix + generic_instruction + MMLUPromptSet._strict_answer_format()
     
     @staticmethod
     def get_decision_constraint():

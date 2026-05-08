@@ -12,12 +12,22 @@ def find_strings_between_pluses(text):
 
 @AgentRegistry.register('AnalyzeAgentAG')
 class AnalyzeAgentAG(NodeAutoGen):
-    def __init__(self, id: str | None =None, role:str = None,  domain: str = "", llm_name: str = "",):
+    def __init__(
+        self,
+        id: str | None =None,
+        role:str = None,
+        domain: str = "",
+        llm_name: str = "",
+        use_structured_output: bool = False,
+    ):
         super().__init__(id, "AnalyzeAgentAG" ,domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
         self.prompt_set = PromptSetRegistry.get(domain)
         self.role = self.prompt_set.get_role() if role is None else role
-        self.constraint = self.prompt_set.get_analyze_constraint(self.role)
+        try:
+            self.constraint = self.prompt_set.get_analyze_constraint(self.role, use_structured_output)
+        except TypeError:
+            self.constraint = self.prompt_set.get_analyze_constraint(self.role)
         
     async def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict], **kwargs)->List[Any]:
         """ To be overriden by the descendant class """
