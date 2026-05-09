@@ -159,6 +159,7 @@ def parse_args():
             'full_output',
             'full_output_xml',
             'spatial_answer_only_temporal_top_score_steps',
+            'temporal_answer_claim_spatial_top_score_steps',
         ],
         help="High-level active-edge message-sharing mode for retained communication edges.",
     )
@@ -184,6 +185,9 @@ def parse_args():
     )
     args.share_active_temporal_answer_steps_top_score = (
         args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+    )
+    args.share_active_temporal_answer_claim = (
+        args.active_edge_message_mode == 'temporal_answer_claim_spatial_top_score_steps'
     )
 
     return args
@@ -216,6 +220,7 @@ async def main():
                   optimized_temporal=args.optimized_temporal,
                   share_active_spatial_answer_only=args.share_active_spatial_answer_only,
                   share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
+                  share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
                   answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
     download()
