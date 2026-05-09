@@ -109,7 +109,7 @@ def freeze_graph_for_evaluation(graph: Graph) -> None:
 def should_use_structured_mmlu_output(active_edge_message_mode: str) -> bool:
     return active_edge_message_mode in {
         'full_output_xml',
-        'spatial_answer_only_temporal_top_score_steps',
+        'spatial_answer_claim_temporal_top_score_steps',
         'temporal_answer_claim_spatial_top_score_steps',
     }
 
@@ -159,7 +159,7 @@ def parse_args():
         choices=[
             'full_output',
             'full_output_xml',
-            'spatial_answer_only_temporal_top_score_steps',
+            'spatial_answer_claim_temporal_top_score_steps',
             'temporal_answer_claim_spatial_top_score_steps',
         ],
         help="High-level active-edge message-sharing mode for retained communication edges.",
@@ -168,7 +168,7 @@ def parse_args():
         '--answer_steps_top_score_ratio',
         type=float,
         default=0.7,
-        help="Top ratio of temporal active edges ranked by score that share answer+steps.",
+        help="Top ratio of selected active edges ranked by score that share answer+steps.",
     )
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
@@ -182,10 +182,10 @@ def parse_args():
     if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
         parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
     args.share_active_spatial_answer_only = (
-        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
     )
     args.share_active_temporal_answer_steps_top_score = (
-        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
     )
     args.share_active_temporal_answer_claim = (
         args.active_edge_message_mode == 'temporal_answer_claim_spatial_top_score_steps'

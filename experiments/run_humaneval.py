@@ -153,11 +153,11 @@ def parse_args():
     parser.add_argument(
         '--active_edge_message_mode',
         type=str,
-        default='spatial_answer_only_temporal_top_score_steps',
+        default='spatial_answer_claim_temporal_top_score_steps',
         choices=[
             'full_output',
             'full_output_xml',
-            'spatial_answer_only_temporal_top_score_steps',
+            'spatial_answer_claim_temporal_top_score_steps',
         ],
         help="Active-edge message-sharing mode applied after training batches finish.",
     )
@@ -176,10 +176,10 @@ def parse_args():
         parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
 
     args.share_active_spatial_answer_only = (
-        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
     )
     args.share_active_temporal_answer_steps_top_score = (
-        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
     )
 
     return args
@@ -206,7 +206,7 @@ async def main():
         len(agent_names),
         use_structured_output=args.active_edge_message_mode in {
             'full_output_xml',
-            'spatial_answer_only_temporal_top_score_steps',
+            'spatial_answer_claim_temporal_top_score_steps',
         },
     )
     graph = Graph(domain="humaneval",
