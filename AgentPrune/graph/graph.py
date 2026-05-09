@@ -47,6 +47,7 @@ class Graph(ABC):
                 node_kwargs:List[Dict] = None,
                 share_active_spatial_answer_only: bool = False,
                 share_active_temporal_answer_steps_top_score: bool = False,
+                share_active_temporal_answer_claim: bool = False,
                 answer_steps_top_score_ratio: float = 0.7,
                 ):
         
@@ -69,6 +70,7 @@ class Graph(ABC):
         self.optimized_temporal = optimized_temporal
         self.share_active_spatial_answer_only = share_active_spatial_answer_only
         self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
+        self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
         self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
@@ -233,6 +235,25 @@ class Graph(ABC):
             temporal_edges_with_scores.sort(key=lambda item: (-item[0], item[1], item[2]))
             for _, target_node_id, predecessor_id in temporal_edges_with_scores[:selected_temporal_edge_count]:
                 self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
+
+        if self.share_active_temporal_answer_claim:
+            # 新模式：top-score 的空间边通过 override 机制设为 answer_steps
+            spatial_edges_with_scores: List[tuple[float, str, str]] = []
+            for node in self.nodes.values():
+                for predecessor in node.spatial_predecessors:
+                    edge_idx = self.spatial_edge_index_map.get((predecessor.id, node.id))
+                    if edge_idx is None:
+                        continue
+                    score = float(torch.sigmoid(self.spatial_logits[edge_idx]).item())
+                    spatial_edges_with_scores.append((score, node.id, predecessor.id))
+
+            selected_spatial_edge_count = min(
+                len(spatial_edges_with_scores),
+                max(0, int(len(spatial_edges_with_scores) * self.answer_steps_top_score_ratio + 0.5)),
+            )
+            spatial_edges_with_scores.sort(key=lambda item: (-item[0], item[1], item[2]))
+            for _, target_node_id, predecessor_id in spatial_edges_with_scores[:selected_spatial_edge_count]:
+                self.nodes[target_node_id].active_spatial_patch_mode_overrides[predecessor_id] = "answer_steps"
 
         self.decision_node.active_spatial_patch_mode_overrides = {}
         self.decision_node.active_temporal_patch_mode_overrides = {}
@@ -558,10 +579,16 @@ class Graph(ABC):
         if enabled:
             if self.share_active_spatial_answer_only:
                 active_edge_patch_mode = "answer_claim"
+            elif self.share_active_temporal_answer_claim:
+                # 新模式：空间边默认使用 answer_claim，top-score 通过 override 设为 answer_steps
+                active_edge_patch_mode = "answer_claim"
         active_temporal_patch_mode = "none"
         if enabled:
             if self.share_active_temporal_answer_steps_top_score:
                 active_temporal_patch_mode = "answer_steps"
+            elif self.share_active_temporal_answer_claim:
+                # 新模式：时间边默认使用 answer_claim
+                active_temporal_patch_mode = "answer_claim"
         for node in self.nodes.values():
             node.active_edge_patch_mode = active_edge_patch_mode
             node.active_temporal_patch_mode = active_temporal_patch_mode
