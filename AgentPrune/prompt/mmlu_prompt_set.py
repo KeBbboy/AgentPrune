@@ -147,6 +147,11 @@ Your reply must be less than 100 words but include your answer and a brief step 
 The first line of your reply must contain only one letter(for example : A, B, C or D)
 """
         if use_structured_output:
+            if role == "Knowlegable Expert":
+                role_instruction = """
+You are a knowlegable expert in question answering.
+Identify the key entities and facts needed to solve the problem, but keep them inside the required XML blocks.
+"""
             xml_instruction = """
 I will ask you a question and 4 answers enumerated as A, B, C and D.
 Only one answer out of the offered 4 is correct.
