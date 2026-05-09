@@ -58,11 +58,9 @@ class Node(ABC):
         self.spatial_successors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []
-        self.inputs: List[Any] = []
         self.outputs: List[Any] = []
-        self.raw_inputs: List[Any] = []
         self.role = ""
-        self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}
+        self.last_memory: Dict[str,List[Any]] = {'outputs':[]}
         self.conversation_history : List[Dict] = [] # chat history of the whole conversation
         self.last_input_messages: Optional[List[Dict[str, Any]]] = None
         self.last_llm_usage: Optional[Dict[str, int]] = None
@@ -125,20 +123,13 @@ class Node(ABC):
         self.temporal_successors: List[Node] = []
     
     def update_memory(self):
-        self.last_memory['inputs'] = self.inputs
         self.last_memory['outputs'] = self.outputs
-        self.last_memory['raw_inputs'] = self.raw_inputs
 
     def _extract_patched_output(self, predecessor_output: Any, patch_mode: str) -> str:
         if not isinstance(predecessor_output, str):
             predecessor_output = str(predecessor_output)
-        parts = predecessor_output.rsplit("\n\n", 1)
         if patch_mode == "full":
             patched_output = predecessor_output.strip()
-        elif patch_mode == "tail":
-            patched_output = parts[-1].strip()
-        elif patch_mode == "body":
-            patched_output = parts[0].strip() if len(parts) == 2 else predecessor_output.strip()
         elif patch_mode == "answer_only":
             patched_output = self._extract_answer_only(predecessor_output)
         elif patch_mode == "answer_claim":

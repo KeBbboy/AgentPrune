@@ -154,7 +154,7 @@ def parse_args():
     parser.add_argument(
         '--active_edge_message_mode',
         type=str,
-        default='spatial_answer_only_temporal_top_score_steps',
+        default='full_output',
         choices=[
             'full_output',
             'full_output_xml',
@@ -276,9 +276,7 @@ async def main():
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star'],Literal['Mesh'],
                           Literal['FakeFullConnected'],Literal['FakeRandom'],Literal['FakeChain'],Literal['FakeStar'],Literal['FakeMesh'],Literal['FakeAGRandom'],Literal['FakeAGFull']],
                N:int,
-               use_structured_output: bool = False,
-               share_special_roles_conclusion_only: bool = False,
-               share_special_roles_analysis_only: bool = False):
+               use_structured_output: bool = False):
     initial_spatial_probability: float = 0.5
     fixed_spatial_masks:List[List[int]] = None
     initial_temporal_probability: float = 0.5
@@ -344,16 +342,6 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
         node_kwargs = [{'role':'Fake'} if i % 2 == N % 2 else {'role':'Normal'} for i in range(N)]
     elif 'Fake' in mode and 'AG' in mode:
         node_kwargs = [{'role':'Fake'} if i % 2 == N % 2 else {'role':None} for i in range(N)]
-
-    if share_special_roles_conclusion_only:
-        if node_kwargs is None:
-            node_kwargs = [{} for _ in range(N)]
-        node_kwargs = [{**kwargs, 'share_special_roles_conclusion_only': True} for kwargs in node_kwargs]
-
-    if share_special_roles_analysis_only:
-        if node_kwargs is None:
-            node_kwargs = [{} for _ in range(N)]
-        node_kwargs = [{**kwargs, 'share_special_roles_analysis_only': True} for kwargs in node_kwargs]
 
     if node_kwargs is None:
         node_kwargs = [{} for _ in range(N)]
