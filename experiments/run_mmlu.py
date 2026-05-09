@@ -191,6 +191,9 @@ def parse_args():
     args.share_active_temporal_answer_steps_top_score = (
         args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
     )
+    args.share_active_temporal_answer_claim = (
+        args.active_edge_message_mode == 'temporal_answer_claim_spatial_top_score_steps'
+    )
     # 新模式：空间边传 steps+answer，时间边传全量 XML
     args.share_spatial_steps_temporal_full_xml = (
         args.active_edge_message_mode == 'spatial_steps_temporal_full_xml'
@@ -230,6 +233,7 @@ async def main():
                   optimized_temporal=args.optimized_temporal,
                   share_active_spatial_answer_only=args.share_active_spatial_answer_only,
                   share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
+                  share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
                   share_spatial_steps_temporal_full_xml=args.share_spatial_steps_temporal_full_xml,
                   share_spatial_claim_temporal_full_xml=args.share_spatial_claim_temporal_full_xml,
                   answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
