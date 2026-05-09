@@ -45,10 +45,6 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
-                share_active_spatial_answer_claim: bool = False,
-                share_active_temporal_answer_steps_top_score: bool = False,
-                share_active_temporal_answer_claim: bool = False,
-                answer_steps_top_score_ratio: float = 0.7,
                 ):
         
         if fixed_spatial_masks is None:
@@ -68,10 +64,6 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
-        self.share_active_spatial_answer_claim = share_active_spatial_answer_claim
-        self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
-        self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
-        self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -212,51 +204,6 @@ class Graph(ABC):
             self.nodes[node_id].spatial_successors = []
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
-
-    def refresh_active_edge_patch_mode_overrides(self) -> None:
-        for node in self.nodes.values():
-            node.active_spatial_patch_mode_overrides = {}
-            node.active_temporal_patch_mode_overrides = {}
-
-        if self.share_active_temporal_answer_steps_top_score:
-            temporal_edges_with_scores: List[tuple[float, str, str]] = []
-            for node in self.nodes.values():
-                for predecessor in node.temporal_predecessors:
-                    edge_idx = self.temporal_edge_index_map.get((predecessor.id, node.id))
-                    if edge_idx is None:
-                        continue
-                    score = float(torch.sigmoid(self.temporal_logits[edge_idx]).item())
-                    temporal_edges_with_scores.append((score, node.id, predecessor.id))
-
-            selected_temporal_edge_count = min(
-                len(temporal_edges_with_scores),
-                max(0, int(len(temporal_edges_with_scores) * self.answer_steps_top_score_ratio + 0.5)),
-            )
-            temporal_edges_with_scores.sort(key=lambda item: (-item[0], item[1], item[2]))
-            for _, target_node_id, predecessor_id in temporal_edges_with_scores[:selected_temporal_edge_count]:
-                self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
-
-        if self.share_active_temporal_answer_claim:
-            # 新模式：top-score 的空间边通过 override 机制设为 answer_steps
-            spatial_edges_with_scores: List[tuple[float, str, str]] = []
-            for node in self.nodes.values():
-                for predecessor in node.spatial_predecessors:
-                    edge_idx = self.spatial_edge_index_map.get((predecessor.id, node.id))
-                    if edge_idx is None:
-                        continue
-                    score = float(torch.sigmoid(self.spatial_logits[edge_idx]).item())
-                    spatial_edges_with_scores.append((score, node.id, predecessor.id))
-
-            selected_spatial_edge_count = min(
-                len(spatial_edges_with_scores),
-                max(0, int(len(spatial_edges_with_scores) * self.answer_steps_top_score_ratio + 0.5)),
-            )
-            spatial_edges_with_scores.sort(key=lambda item: (-item[0], item[1], item[2]))
-            for _, target_node_id, predecessor_id in spatial_edges_with_scores[:selected_spatial_edge_count]:
-                self.nodes[target_node_id].active_spatial_patch_mode_overrides[predecessor_id] = "answer_steps"
-
-        self.decision_node.active_spatial_patch_mode_overrides = {}
-        self.decision_node.active_temporal_patch_mode_overrides = {}
 
     def _get_token_encoder(self):
         if self._token_encoder is not None:
@@ -468,7 +415,6 @@ class Graph(ABC):
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
-            self.refresh_active_edge_patch_mode_overrides()
             
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
@@ -523,7 +469,6 @@ class Graph(ABC):
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
-            self.refresh_active_edge_patch_mode_overrides()
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
             execution_index = 0
@@ -575,30 +520,6 @@ class Graph(ABC):
             node.update_memory()
 
     def set_eval_mode(self, enabled: bool):
-        active_edge_patch_mode = "none"
-        if enabled:
-            if self.share_active_spatial_answer_claim:
-                active_edge_patch_mode = "answer_claim"
-            elif self.share_active_temporal_answer_claim:
-                # 新模式：空间边默认使用 answer_claim，top-score 通过 override 设为 answer_steps
-                active_edge_patch_mode = "answer_claim"
-        active_temporal_patch_mode = "none"
-        if enabled:
-            if self.share_active_temporal_answer_steps_top_score:
-                # 默认时间边传 claim，top 70% 通过 override 传 steps
-                active_temporal_patch_mode = "answer_claim"
-            elif self.share_active_temporal_answer_claim:
-                # 新模式：时间边默认使用 answer_claim
-                active_temporal_patch_mode = "answer_claim"
-        for node in self.nodes.values():
-            node.active_edge_patch_mode = active_edge_patch_mode
-            node.active_temporal_patch_mode = active_temporal_patch_mode
-            node.active_spatial_patch_mode_overrides = {}
-            node.active_temporal_patch_mode_overrides = {}
-        self.decision_node.active_edge_patch_mode = "none"
-        self.decision_node.active_temporal_patch_mode = "none"
-        self.decision_node.active_spatial_patch_mode_overrides = {}
-        self.decision_node.active_temporal_patch_mode_overrides = {}
         self.enable_edge_cost_recording = not enabled
 
     def check_cycle(self, new_node, target_nodes):
