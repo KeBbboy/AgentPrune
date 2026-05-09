@@ -585,7 +585,8 @@ class Graph(ABC):
         active_temporal_patch_mode = "none"
         if enabled:
             if self.share_active_temporal_answer_steps_top_score:
-                active_temporal_patch_mode = "answer_steps"
+                # 默认时间边传 claim，top 70% 通过 override 传 steps
+                active_temporal_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
                 # 新模式：时间边默认使用 answer_claim
                 active_temporal_patch_mode = "answer_claim"
