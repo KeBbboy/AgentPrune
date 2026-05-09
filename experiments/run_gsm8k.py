@@ -166,7 +166,7 @@ def parse_args():
     if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
         parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
 
-    args.share_active_spatial_answer_only = (
+    args.share_active_spatial_answer_claim = (
         args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
     )
     args.share_active_temporal_answer_steps_top_score = (
@@ -198,7 +198,7 @@ async def main():
                   decision_method=decision_method,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
-                  share_active_spatial_answer_only=args.share_active_spatial_answer_only,
+                  share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
                   share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
                   answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
