@@ -48,6 +48,8 @@ class Graph(ABC):
                 share_active_spatial_answer_only: bool = False,
                 share_active_temporal_answer_steps_top_score: bool = False,
                 share_active_temporal_answer_claim: bool = False,
+                share_temporal_steps_spatial_full_xml: bool = False,
+                share_temporal_claim_spatial_full_xml: bool = False,
                 answer_steps_top_score_ratio: float = 0.7,
                 ):
         
@@ -71,6 +73,8 @@ class Graph(ABC):
         self.share_active_spatial_answer_only = share_active_spatial_answer_only
         self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
         self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
+        self.share_temporal_steps_spatial_full_xml = share_temporal_steps_spatial_full_xml
+        self.share_temporal_claim_spatial_full_xml = share_temporal_claim_spatial_full_xml
         self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
@@ -582,12 +586,21 @@ class Graph(ABC):
             elif self.share_active_temporal_answer_claim:
                 # 新模式：空间边默认使用 answer_claim，top-score 通过 override 设为 answer_steps
                 active_edge_patch_mode = "answer_claim"
+            elif self.share_temporal_steps_spatial_full_xml or self.share_temporal_claim_spatial_full_xml:
+                # 新模式：空间边传全量 XML
+                active_edge_patch_mode = "full"
         active_temporal_patch_mode = "none"
         if enabled:
             if self.share_active_temporal_answer_steps_top_score:
                 active_temporal_patch_mode = "answer_steps"
             elif self.share_active_temporal_answer_claim:
                 # 新模式：时间边默认使用 answer_claim
+                active_temporal_patch_mode = "answer_claim"
+            elif self.share_temporal_steps_spatial_full_xml:
+                # 新模式：时间边传 steps+answer
+                active_temporal_patch_mode = "answer_steps"
+            elif self.share_temporal_claim_spatial_full_xml:
+                # 新模式：时间边传 claim+answer
                 active_temporal_patch_mode = "answer_claim"
         for node in self.nodes.values():
             node.active_edge_patch_mode = active_edge_patch_mode
