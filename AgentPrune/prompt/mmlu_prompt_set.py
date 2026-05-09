@@ -147,7 +147,14 @@ Your reply must be less than 100 words but include your answer and a brief step 
 The first line of your reply must contain only one letter(for example : A, B, C or D)
 """
         if use_structured_output:
-            return f"{role_instruction}\n{generic_instruction}\n{XML_ANALYZE_FORMAT_CONSTRAINT}"
+            xml_instruction = """
+I will ask you a question and 4 answers enumerated as A, B, C and D.
+Only one answer out of the offered 4 is correct.
+Using the reasoning from other agents as additional advice with critical thinking, can you give an updated answer?
+You are strictly prohibited from imitating the analysis process of other agents.
+Keep your reasoning concise and put the final answer letter only inside the <answer> tag.
+"""
+            return f"{role_instruction}\n{xml_instruction}\n{XML_ANALYZE_FORMAT_CONSTRAINT}"
         role_prefix = f"{role_instruction}\n" if role_instruction else ""
         return role_prefix + generic_instruction + MMLUPromptSet._strict_answer_format()
     
@@ -225,7 +232,7 @@ The first line of your reply must contain only one letter(for example : A, B, C 
         if len(answer) == 0:
             return answer
 
-        xml_answer_match = re.search(r"<answer>\s*([ABCD])\s*</answer>", answer, flags=re.IGNORECASE)
+        xml_answer_match = re.search(r"<answer>\s*([ABCD])\b[^<]*</answer>", answer, flags=re.IGNORECASE)
         if xml_answer_match is not None:
             return xml_answer_match.group(1).upper()
 
