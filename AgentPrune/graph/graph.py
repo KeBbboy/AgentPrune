@@ -557,11 +557,11 @@ class Graph(ABC):
         active_edge_patch_mode = "none"
         if enabled:
             if self.share_active_spatial_answer_only:
-                active_edge_patch_mode = "answer_only"
+                active_edge_patch_mode = "answer_claim"
         active_temporal_patch_mode = "none"
         if enabled:
             if self.share_active_temporal_answer_steps_top_score:
-                active_temporal_patch_mode = "answer_claim"
+                active_temporal_patch_mode = "answer_steps"
         for node in self.nodes.values():
             node.active_edge_patch_mode = active_edge_patch_mode
             node.active_temporal_patch_mode = active_temporal_patch_mode
