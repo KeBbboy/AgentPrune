@@ -110,6 +110,7 @@ def should_use_structured_mmlu_output(active_edge_message_mode: str) -> bool:
     return active_edge_message_mode in {
         'full_output_xml',
         'spatial_answer_claim_temporal_top_score_steps',
+        'spatial_temporal_random_answer_claim_steps',
         'temporal_answer_claim_spatial_top_score_steps',
         'spatial_temporal_answer_claim',
         'spatial_temporal_answer_steps',
@@ -162,6 +163,7 @@ def parse_args():
             'full_output',
             'full_output_xml',
             'spatial_answer_claim_temporal_top_score_steps',
+            'spatial_temporal_random_answer_claim_steps',
             'temporal_answer_claim_spatial_top_score_steps',
             'spatial_temporal_answer_claim',
             'spatial_temporal_answer_steps',
@@ -172,7 +174,7 @@ def parse_args():
         '--answer_steps_top_score_ratio',
         type=float,
         default=0.7,
-        help="Top ratio of selected active edges ranked by score that share answer+steps.",
+        help="Fraction of retained active edges that share answer+steps in top-score and random modes.",
     )
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
@@ -189,6 +191,7 @@ def parse_args():
         args.active_edge_message_mode in {
             'spatial_answer_claim_temporal_top_score_steps',
             'spatial_temporal_answer_claim',
+            'spatial_temporal_random_answer_claim_steps',
         }
     )
     args.share_active_spatial_answer_steps = (
@@ -197,10 +200,14 @@ def parse_args():
     args.share_active_temporal_answer_steps_top_score = (
         args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
     )
+    args.share_active_random_answer_steps = (
+        args.active_edge_message_mode == 'spatial_temporal_random_answer_claim_steps'
+    )
     args.share_active_temporal_answer_claim = (
         args.active_edge_message_mode in {
             'temporal_answer_claim_spatial_top_score_steps',
             'spatial_temporal_answer_claim',
+            'spatial_temporal_random_answer_claim_steps',
         }
     )
     args.share_active_temporal_answer_steps = (
@@ -238,6 +245,7 @@ async def main():
                   share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
                   share_active_spatial_answer_steps=args.share_active_spatial_answer_steps,
                   share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
+                  share_active_random_answer_steps=args.share_active_random_answer_steps,
                   share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
                   share_active_temporal_answer_steps=args.share_active_temporal_answer_steps,
                   answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,

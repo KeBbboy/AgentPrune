@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import asyncio
 import tiktoken
+import random
 
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
@@ -48,6 +49,7 @@ class Graph(ABC):
                 share_active_spatial_answer_claim: bool = False,
                 share_active_spatial_answer_steps: bool = False,
                 share_active_temporal_answer_steps_top_score: bool = False,
+                share_active_random_answer_steps: bool = False,
                 share_active_temporal_answer_claim: bool = False,
                 share_active_temporal_answer_steps: bool = False,
                 answer_steps_top_score_ratio: float = 0.7,
@@ -73,6 +75,7 @@ class Graph(ABC):
         self.share_active_spatial_answer_claim = share_active_spatial_answer_claim
         self.share_active_spatial_answer_steps = share_active_spatial_answer_steps
         self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
+        self.share_active_random_answer_steps = share_active_random_answer_steps
         self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
         self.share_active_temporal_answer_steps = share_active_temporal_answer_steps
         self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
@@ -222,6 +225,24 @@ class Graph(ABC):
             node.active_spatial_patch_mode_overrides = {}
             node.active_temporal_patch_mode_overrides = {}
 
+        if self.share_active_random_answer_steps:
+            active_spatial_edges: List[tuple[str, str]] = []
+            active_temporal_edges: List[tuple[str, str]] = []
+            for node in self.nodes.values():
+                active_spatial_edges.extend(
+                    (node.id, predecessor.id)
+                    for predecessor in node.spatial_predecessors
+                )
+                active_temporal_edges.extend(
+                    (node.id, predecessor.id)
+                    for predecessor in node.temporal_predecessors
+                )
+
+            for target_node_id, predecessor_id in self._sample_active_edges(active_spatial_edges):
+                self.nodes[target_node_id].active_spatial_patch_mode_overrides[predecessor_id] = "answer_steps"
+            for target_node_id, predecessor_id in self._sample_active_edges(active_temporal_edges):
+                self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
+
         if self.share_active_temporal_answer_steps_top_score:
             temporal_edges_with_scores: List[tuple[float, str, str]] = []
             for node in self.nodes.values():
@@ -260,6 +281,17 @@ class Graph(ABC):
 
         self.decision_node.active_spatial_patch_mode_overrides = {}
         self.decision_node.active_temporal_patch_mode_overrides = {}
+
+    def _sample_active_edges(self, edges: List[tuple[str, str]]) -> List[tuple[str, str]]:
+        selected_edge_count = min(
+            len(edges),
+            max(0, int(len(edges) * self.answer_steps_top_score_ratio + 0.5)),
+        )
+        if selected_edge_count == 0:
+            return []
+        shuffled_edges = list(edges)
+        random.shuffle(shuffled_edges)
+        return shuffled_edges[:selected_edge_count]
 
     def _get_token_encoder(self):
         if self._token_encoder is not None:
@@ -582,6 +614,8 @@ class Graph(ABC):
         if enabled:
             if self.share_active_spatial_answer_steps:
                 active_edge_patch_mode = "answer_steps"
+            elif self.share_active_random_answer_steps:
+                active_edge_patch_mode = "answer_claim"
             elif self.share_active_spatial_answer_claim:
                 active_edge_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
@@ -590,6 +624,8 @@ class Graph(ABC):
         if enabled:
             if self.share_active_temporal_answer_steps:
                 active_temporal_patch_mode = "answer_steps"
+            elif self.share_active_random_answer_steps:
+                active_temporal_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_steps_top_score:
                 active_temporal_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
