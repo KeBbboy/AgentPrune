@@ -46,8 +46,10 @@ class Graph(ABC):
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
                 share_active_spatial_answer_claim: bool = False,
+                share_active_spatial_answer_steps: bool = False,
                 share_active_temporal_answer_steps_top_score: bool = False,
                 share_active_temporal_answer_claim: bool = False,
+                share_active_temporal_answer_steps: bool = False,
                 answer_steps_top_score_ratio: float = 0.7,
                 ):
         
@@ -69,8 +71,10 @@ class Graph(ABC):
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
         self.share_active_spatial_answer_claim = share_active_spatial_answer_claim
+        self.share_active_spatial_answer_steps = share_active_spatial_answer_steps
         self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
         self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
+        self.share_active_temporal_answer_steps = share_active_temporal_answer_steps
         self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
@@ -236,8 +240,7 @@ class Graph(ABC):
             for _, target_node_id, predecessor_id in temporal_edges_with_scores[:selected_temporal_edge_count]:
                 self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
 
-        if self.share_active_temporal_answer_claim:
-            # 新模式：top-score 的空间边通过 override 机制设为 answer_steps
+        if self.share_active_temporal_answer_claim and not self.share_active_spatial_answer_claim:
             spatial_edges_with_scores: List[tuple[float, str, str]] = []
             for node in self.nodes.values():
                 for predecessor in node.spatial_predecessors:
@@ -577,18 +580,19 @@ class Graph(ABC):
     def set_eval_mode(self, enabled: bool):
         active_edge_patch_mode = "none"
         if enabled:
-            if self.share_active_spatial_answer_claim:
+            if self.share_active_spatial_answer_steps:
+                active_edge_patch_mode = "answer_steps"
+            elif self.share_active_spatial_answer_claim:
                 active_edge_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
-                # 新模式：空间边默认使用 answer_claim，top-score 通过 override 设为 answer_steps
                 active_edge_patch_mode = "answer_claim"
         active_temporal_patch_mode = "none"
         if enabled:
-            if self.share_active_temporal_answer_steps_top_score:
-                # 默认时间边传 claim，top 70% 通过 override 传 steps
+            if self.share_active_temporal_answer_steps:
+                active_temporal_patch_mode = "answer_steps"
+            elif self.share_active_temporal_answer_steps_top_score:
                 active_temporal_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
-                # 新模式：时间边默认使用 answer_claim
                 active_temporal_patch_mode = "answer_claim"
         for node in self.nodes.values():
             node.active_edge_patch_mode = active_edge_patch_mode

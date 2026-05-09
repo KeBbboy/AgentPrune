@@ -111,6 +111,8 @@ def should_use_structured_mmlu_output(active_edge_message_mode: str) -> bool:
         'full_output_xml',
         'spatial_answer_claim_temporal_top_score_steps',
         'temporal_answer_claim_spatial_top_score_steps',
+        'spatial_temporal_answer_claim',
+        'spatial_temporal_answer_steps',
     }
 
 
@@ -161,6 +163,8 @@ def parse_args():
             'full_output_xml',
             'spatial_answer_claim_temporal_top_score_steps',
             'temporal_answer_claim_spatial_top_score_steps',
+            'spatial_temporal_answer_claim',
+            'spatial_temporal_answer_steps',
         ],
         help="High-level active-edge message-sharing mode for retained communication edges.",
     )
@@ -182,13 +186,25 @@ def parse_args():
     if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
         parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
     args.share_active_spatial_answer_claim = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
+        args.active_edge_message_mode in {
+            'spatial_answer_claim_temporal_top_score_steps',
+            'spatial_temporal_answer_claim',
+        }
+    )
+    args.share_active_spatial_answer_steps = (
+        args.active_edge_message_mode == 'spatial_temporal_answer_steps'
     )
     args.share_active_temporal_answer_steps_top_score = (
         args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
     )
     args.share_active_temporal_answer_claim = (
-        args.active_edge_message_mode == 'temporal_answer_claim_spatial_top_score_steps'
+        args.active_edge_message_mode in {
+            'temporal_answer_claim_spatial_top_score_steps',
+            'spatial_temporal_answer_claim',
+        }
+    )
+    args.share_active_temporal_answer_steps = (
+        args.active_edge_message_mode == 'spatial_temporal_answer_steps'
     )
 
     return args
@@ -220,8 +236,10 @@ async def main():
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
                   share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
+                  share_active_spatial_answer_steps=args.share_active_spatial_answer_steps,
                   share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
                   share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
+                  share_active_temporal_answer_steps=args.share_active_temporal_answer_steps,
                   answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
     download()
