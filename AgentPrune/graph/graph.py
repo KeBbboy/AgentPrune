@@ -45,7 +45,7 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
-                share_active_spatial_answer_only: bool = False,
+                share_active_spatial_answer_claim: bool = False,
                 share_active_temporal_answer_steps_top_score: bool = False,
                 share_active_temporal_answer_claim: bool = False,
                 answer_steps_top_score_ratio: float = 0.7,
@@ -68,7 +68,7 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
-        self.share_active_spatial_answer_only = share_active_spatial_answer_only
+        self.share_active_spatial_answer_claim = share_active_spatial_answer_claim
         self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
         self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
         self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
@@ -577,7 +577,7 @@ class Graph(ABC):
     def set_eval_mode(self, enabled: bool):
         active_edge_patch_mode = "none"
         if enabled:
-            if self.share_active_spatial_answer_only:
+            if self.share_active_spatial_answer_claim:
                 active_edge_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
                 # 新模式：空间边默认使用 answer_claim，top-score 通过 override 设为 answer_steps
@@ -585,7 +585,8 @@ class Graph(ABC):
         active_temporal_patch_mode = "none"
         if enabled:
             if self.share_active_temporal_answer_steps_top_score:
-                active_temporal_patch_mode = "answer_steps"
+                # 默认时间边传 claim，top 70% 通过 override 传 steps
+                active_temporal_patch_mode = "answer_claim"
             elif self.share_active_temporal_answer_claim:
                 # 新模式：时间边默认使用 answer_claim
                 active_temporal_patch_mode = "answer_claim"
