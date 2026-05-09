@@ -146,23 +146,20 @@ def parse_args():
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
                         help="Random seed for Python, NumPy, and PyTorch. Default 42.")
-    parser.add_argument('--freeze_after_training', action='store_true',
+    parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After the optimization batches finish, switch the graph to evaluation message-sharing mode for the remaining batches.")
+    parser.add_argument('--optimized_spatial',action='store_true')
+    parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument(
         '--active_edge_message_mode',
         type=str,
-        default='full_output',
+        default='spatial_answer_only_temporal_top_score_steps',
         choices=[
             'full_output',
             'full_output_xml',
-            'all_answer_top_score_steps',
             'spatial_answer_only_temporal_top_score_steps',
         ],
-        help=(
-            "Active-edge message-sharing mode applied after training batches finish. "
-            "'full_output_xml' keeps full message passing while switching intermediate "
-            "agent outputs to structured XML."
-        ),
+        help="Active-edge message-sharing mode applied after training batches finish.",
     )
     parser.add_argument(
         '--answer_steps_top_score_ratio',
@@ -170,9 +167,6 @@ def parse_args():
         default=0.7,
         help="Fraction of retained active edges ranked by learned score that share answer+steps in top-score modes.",
     )
-    parser.add_argument('--optimized_spatial',action='store_true')
-    parser.add_argument('--optimized_temporal',action='store_true')
-    
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -181,16 +175,12 @@ def parse_args():
     if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
         parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
 
-    args.share_active_spatial_answer_only = False
-    args.share_active_temporal_answer_only = False
-    args.share_active_spatial_answer_steps_top_score = False
-    args.share_active_temporal_answer_steps_top_score = False
-    if args.active_edge_message_mode == 'all_answer_top_score_steps':
-        args.share_active_spatial_answer_steps_top_score = True
-        args.share_active_temporal_answer_steps_top_score = True
-    elif args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps':
-        args.share_active_spatial_answer_only = True
-        args.share_active_temporal_answer_steps_top_score = True
+    args.share_active_spatial_answer_only = (
+        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+    )
+    args.share_active_temporal_answer_steps_top_score = (
+        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+    )
 
     return args
 
@@ -214,7 +204,10 @@ async def main():
     kwargs = get_kwargs(
         args.mode,
         len(agent_names),
-        use_structured_output=args.active_edge_message_mode != 'full_output',
+        use_structured_output=args.active_edge_message_mode in {
+            'full_output_xml',
+            'spatial_answer_only_temporal_top_score_steps',
+        },
     )
     graph = Graph(domain="humaneval",
                   llm_name=args.llm_name,
@@ -225,8 +218,6 @@ async def main():
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
                   share_active_spatial_answer_only=args.share_active_spatial_answer_only,
-                  share_active_temporal_answer_only=args.share_active_temporal_answer_only,
-                  share_active_spatial_answer_steps_top_score=args.share_active_spatial_answer_steps_top_score,
                   share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
                   answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
@@ -316,8 +307,7 @@ async def main():
         if i_batch+1 == args.num_iterations:
             args.optimized_spatial = False
             args.optimized_temporal = False
-            if args.freeze_after_training or args.active_edge_message_mode != 'full_output':
-                graph.set_eval_mode(True)
+            graph.set_eval_mode(True)
         if (not training_phase_closed) and (i_batch + 1 == training_batch_limit):
             train_prompt_used = PromptTokens.instance().value - train_prompt_start
             train_completion_used = CompletionTokens.instance().value - train_completion_start

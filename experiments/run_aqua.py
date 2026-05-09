@@ -23,7 +23,6 @@ from experiments.run_mmlu import (
     print_phase_token_summary,
     print_phase_agent_token_summary,
     freeze_graph_for_evaluation,
-    restore_all_edges_for_evaluation,
     get_kwargs,
 )
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
@@ -32,10 +31,6 @@ from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 def should_use_structured_aqua_output(active_edge_message_mode: str) -> bool:
     return active_edge_message_mode in {
         'full_output_xml',
-        'all_answer_claim',
-        'all_answer_steps',
-        'all_answer_mixed_steps',
-        'all_answer_top_score_steps',
         'spatial_answer_only_temporal_top_score_steps',
     }
 
@@ -85,50 +80,18 @@ def parse_args():
                         help="Random seed for Python, NumPy, and PyTorch.")
     parser.add_argument('--optimized_spatial', action='store_true')
     parser.add_argument('--optimized_temporal', action='store_true')
-    parser.add_argument('--freeze_after_training', action='store_true',
+    parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation.")
-    parser.add_argument('--restore_all_edges_for_eval', action='store_true',
-                        help="Before evaluation, restore all masks to 1.")
-    parser.add_argument('--share_special_roles_conclusion_only', action='store_true',
-                        help="Only share final conclusion for selected roles in analyze prompts.")
-    parser.add_argument('--share_special_roles_analysis_only', action='store_true',
-                        help="Only share analysis-only content for selected roles in analyze prompts.")
     parser.add_argument(
         '--active_edge_message_mode',
         type=str,
-        default='full_output',
+        default='spatial_answer_only_temporal_top_score_steps',
         choices=[
             'full_output',
             'full_output_xml',
-            'all_analysis_only',
-            'all_conclusion_only',
-            'all_answer_only',
-            'all_answer_claim',
-            'all_answer_steps',
-            'all_answer_mixed_steps',
-            'all_answer_top_score_steps',
             'spatial_answer_only_temporal_top_score_steps',
-            'all_truncate',
-            'spatial_analysis_only',
-            'spatial_conclusion_only',
-            'temporal_analysis_only',
-            'temporal_conclusion_only',
         ],
         help="High-level active-edge message-sharing mode.",
-    )
-    parser.add_argument(
-        '--truncate_content_ratio',
-        type=float,
-        default=0.75,
-        choices=[0.75, 0.5, 0.25],
-        help="Retained ratio of content after the answer letter in truncation mode.",
-    )
-    parser.add_argument(
-        '--answer_steps_mixed_ratio',
-        type=float,
-        default=0.3,
-        choices=[0.3, 0.7, 0.9],
-        help="When active_edge_message_mode=all_answer_mixed_steps, ratio of active edges that share answer+steps.",
     )
     parser.add_argument(
         '--answer_steps_top_score_ratio',
@@ -143,58 +106,12 @@ def parse_args():
     if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
         parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
 
-    args.share_active_spatial_conclusion_only = False
-    args.share_active_temporal_conclusion_only = False
-    args.share_active_spatial_analysis_only = False
-    args.share_active_temporal_analysis_only = False
-    args.share_active_spatial_answer_only = False
-    args.share_active_temporal_answer_only = False
-    args.share_active_spatial_answer_claim = False
-    args.share_active_temporal_answer_claim = False
-    args.share_active_spatial_answer_steps = False
-    args.share_active_temporal_answer_steps = False
-    args.share_active_spatial_answer_steps_mixed = False
-    args.share_active_temporal_answer_steps_mixed = False
-    args.share_active_spatial_answer_steps_top_score = False
-    args.share_active_temporal_answer_steps_top_score = False
-    args.share_active_spatial_truncate = False
-    args.share_active_temporal_truncate = False
-
-    if args.active_edge_message_mode == 'all_analysis_only':
-        args.share_active_spatial_analysis_only = True
-        args.share_active_temporal_analysis_only = True
-    elif args.active_edge_message_mode == 'all_conclusion_only':
-        args.share_active_spatial_conclusion_only = True
-        args.share_active_temporal_conclusion_only = True
-    elif args.active_edge_message_mode == 'all_answer_only':
-        args.share_active_spatial_answer_only = True
-        args.share_active_temporal_answer_only = True
-    elif args.active_edge_message_mode == 'all_answer_claim':
-        args.share_active_spatial_answer_claim = True
-        args.share_active_temporal_answer_claim = True
-    elif args.active_edge_message_mode == 'all_answer_steps':
-        args.share_active_spatial_answer_steps = True
-        args.share_active_temporal_answer_steps = True
-    elif args.active_edge_message_mode == 'all_answer_mixed_steps':
-        args.share_active_spatial_answer_steps_mixed = True
-        args.share_active_temporal_answer_steps_mixed = True
-    elif args.active_edge_message_mode == 'all_answer_top_score_steps':
-        args.share_active_spatial_answer_steps_top_score = True
-        args.share_active_temporal_answer_steps_top_score = True
-    elif args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps':
-        args.share_active_spatial_answer_only = True
-        args.share_active_temporal_answer_steps_top_score = True
-    elif args.active_edge_message_mode == 'all_truncate':
-        args.share_active_spatial_truncate = True
-        args.share_active_temporal_truncate = True
-    elif args.active_edge_message_mode == 'spatial_analysis_only':
-        args.share_active_spatial_analysis_only = True
-    elif args.active_edge_message_mode == 'spatial_conclusion_only':
-        args.share_active_spatial_conclusion_only = True
-    elif args.active_edge_message_mode == 'temporal_analysis_only':
-        args.share_active_temporal_analysis_only = True
-    elif args.active_edge_message_mode == 'temporal_conclusion_only':
-        args.share_active_temporal_conclusion_only = True
+    args.share_active_spatial_answer_only = (
+        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+    )
+    args.share_active_temporal_answer_steps_top_score = (
+        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+    )
 
     return args
 
@@ -212,8 +129,6 @@ async def main():
         args.mode,
         len(agent_names),
         use_structured_output=should_use_structured_aqua_output(args.active_edge_message_mode),
-        share_special_roles_conclusion_only=args.share_special_roles_conclusion_only,
-        share_special_roles_analysis_only=args.share_special_roles_analysis_only,
     )
 
     graph = Graph(
@@ -225,25 +140,9 @@ async def main():
         llm_temperature=args.temperature,
         optimized_spatial=args.optimized_spatial,
         optimized_temporal=args.optimized_temporal,
-        share_active_spatial_conclusion_only=args.share_active_spatial_conclusion_only,
-        share_active_spatial_analysis_only=args.share_active_spatial_analysis_only,
-        share_active_temporal_conclusion_only=args.share_active_temporal_conclusion_only,
-        share_active_temporal_analysis_only=args.share_active_temporal_analysis_only,
         share_active_spatial_answer_only=args.share_active_spatial_answer_only,
-        share_active_temporal_answer_only=args.share_active_temporal_answer_only,
-        share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
-        share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
-        share_active_spatial_answer_steps=args.share_active_spatial_answer_steps,
-        share_active_temporal_answer_steps=args.share_active_temporal_answer_steps,
-        share_active_spatial_answer_steps_mixed=args.share_active_spatial_answer_steps_mixed,
-        share_active_temporal_answer_steps_mixed=args.share_active_temporal_answer_steps_mixed,
-        share_active_spatial_answer_steps_top_score=args.share_active_spatial_answer_steps_top_score,
         share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
-        share_active_spatial_truncate=args.share_active_spatial_truncate,
-        share_active_temporal_truncate=args.share_active_temporal_truncate,
-        answer_steps_mixed_ratio=args.answer_steps_mixed_ratio,
         answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
-        truncate_content_ratio=args.truncate_content_ratio,
         **kwargs,
     )
 
@@ -281,10 +180,6 @@ async def main():
     if args.freeze_after_training:
         freeze_graph_for_evaluation(graph)
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
-
-    if args.restore_all_edges_for_eval:
-        restore_all_edges_for_evaluation(graph)
-        print("Evaluation graph restored: all spatial and temporal masks set to 1 before evaluation.")
 
     graph.set_eval_mode(True)
     eval_agent_start = get_agent_token_snapshot(graph)

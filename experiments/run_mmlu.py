@@ -104,18 +104,11 @@ def freeze_graph_for_evaluation(graph: Graph) -> None:
     graph.temporal_logits.requires_grad_(False)
 
 
-def restore_all_edges_for_evaluation(graph: Graph) -> None:
-    graph.spatial_masks.data.fill_(1)
-    graph.temporal_masks.data.fill_(1)
 
 
 def should_use_structured_mmlu_output(active_edge_message_mode: str) -> bool:
     return active_edge_message_mode in {
         'full_output_xml',
-        'all_answer_claim',
-        'all_answer_steps',
-        'all_answer_mixed_steps',
-        'all_answer_top_score_steps',
         'spatial_answer_only_temporal_top_score_steps',
     }
 
@@ -156,82 +149,29 @@ def parse_args():
                         help="Maximum number of validation questions to evaluate.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
-    parser.add_argument('--freeze_after_training', action='store_true',
+    parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
-    parser.add_argument('--restore_all_edges_for_eval', action='store_true',
-                        help="Before evaluation, restore all spatial and temporal masks to 1 so every edge is treated as active.")
-    trim_group = parser.add_mutually_exclusive_group()
-    trim_group.add_argument('--share_special_roles_conclusion_only', action='store_true',
-                        help="Only share the final conclusion paragraph for Critic, Mathematician, Psychologist, and Historian outputs.")
-    trim_group.add_argument('--share_special_roles_analysis_only', action='store_true',
-                        help="Only share the analysis content before the final conclusion paragraph for Critic, Mathematician, Psychologist, and Historian outputs.")
     parser.add_argument(
         '--active_edge_message_mode',
         type=str,
-        default='full_output',
+        default='spatial_answer_only_temporal_top_score_steps',
         choices=[
             'full_output',
             'full_output_xml',
-            'all_analysis_only',
-            'all_conclusion_only',
-            'all_answer_only',
-            'all_answer_claim',
-            'all_answer_steps',
-            'all_answer_mixed_steps',
-            'all_answer_top_score_steps',
             'spatial_answer_only_temporal_top_score_steps',
-            'all_truncate',
-            'spatial_analysis_only',
-            'spatial_conclusion_only',
-            'temporal_analysis_only',
-            'temporal_conclusion_only',
         ],
-        help=(
-            "High-level active-edge message-sharing mode for retained communication edges. "
-            "'all_*' applies to both single-round spatial edges and cross-round temporal edges."
-        ),
-    )
-    parser.add_argument(
-        '--truncate_content_ratio',
-        type=float,
-        default=0.75,
-        choices=[0.75, 0.5, 0.25],
-        help="Retained ratio of content after the answer letter when active-edge truncation mode is enabled.",
-    )
-    parser.add_argument(
-        '--answer_steps_mixed_ratio',
-        type=float,
-        default=0.3,
-        choices=[0.3, 0.7, 0.9],
-        help="When active_edge_message_mode=all_answer_mixed_steps, the probability that a retained active edge shares answer+steps instead of answer only.",
+        help="High-level active-edge message-sharing mode for retained communication edges.",
     )
     parser.add_argument(
         '--answer_steps_top_score_ratio',
         type=float,
         default=0.7,
-        help=(
-            "When active_edge_message_mode=all_answer_top_score_steps, the top retained active edges "
-            "ranked by learned score that share answer+steps instead of answer only."
-        ),
+        help="Top ratio of temporal active edges ranked by score that share answer+steps.",
     )
-    pruned_patch_group = parser.add_mutually_exclusive_group()
-    pruned_patch_group.add_argument('--restore_pruned_spatial_edges_as_active_full_output_original_prompt', action='store_true',
-                        help="During evaluation, restore pruned spatial edges as active dependencies and share full outputs using the original non-pruned prompt format.")
-    pruned_temporal_patch_group = parser.add_mutually_exclusive_group()
-    pruned_temporal_patch_group.add_argument('--restore_pruned_temporal_edges_as_active_full_output_original_prompt', action='store_true',
-                        help="During evaluation, restore pruned temporal edges as active dependencies and share full outputs using the original non-pruned prompt format.")
-    parser.add_argument('--replace_high_cost_edges', action='store_true',
-                        help="After training, replace the highest-cost kept spatial edges with the lowest-cost pruned spatial edges for evaluation.")
-    parser.add_argument('--num_replaced_edges', type=int, default=2,
-                        help="Number of kept spatial edges to remove and pruned spatial edges to add back in replacement mode.")
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
                         help="Random seed for Python, NumPy, and PyTorch. Default 42.")
-    parser.add_argument('--audit_pruned_delivery', action='store_true',
-                        help="Audit which pruned-edge messages were delivered versus dropped during evaluation.")
-    parser.add_argument('--audit_pruned_delivery_json', type=str, default='',
-                        help="Optional JSON output path for pruned-edge delivery audit results.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -239,71 +179,12 @@ def parse_args():
         parser.error("The number of agent names must match the number of agent counts.")
     if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
         parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
-    args.share_active_spatial_answer_only = False
-    args.share_active_temporal_answer_only = False
-    args.share_active_spatial_answer_claim = False
-    args.share_active_temporal_answer_claim = False
-    args.share_active_spatial_answer_steps = False
-    args.share_active_temporal_answer_steps = False
-    args.share_active_spatial_answer_steps_mixed = False
-    args.share_active_temporal_answer_steps_mixed = False
-    args.share_active_spatial_answer_steps_top_score = False
-    args.share_active_temporal_answer_steps_top_score = False
-    args.share_active_spatial_conclusion_only = False
-    args.share_active_temporal_conclusion_only = False
-    args.share_active_spatial_analysis_only = False
-    args.share_active_temporal_analysis_only = False
-    args.share_active_spatial_truncate = False
-    args.share_active_temporal_truncate = False
-
-    if args.active_edge_message_mode == 'all_conclusion_only':
-        args.share_active_spatial_conclusion_only = True
-        args.share_active_temporal_conclusion_only = True
-    elif args.active_edge_message_mode == 'all_analysis_only':
-        args.share_active_spatial_analysis_only = True
-        args.share_active_temporal_analysis_only = True
-    elif args.active_edge_message_mode == 'all_answer_only':
-        args.share_active_spatial_answer_only = True
-        args.share_active_temporal_answer_only = True
-    elif args.active_edge_message_mode == 'all_answer_claim':
-        args.share_active_spatial_answer_claim = True
-        args.share_active_temporal_answer_claim = True
-    elif args.active_edge_message_mode == 'all_answer_steps':
-        args.share_active_spatial_answer_steps = True
-        args.share_active_temporal_answer_steps = True
-    elif args.active_edge_message_mode == 'all_answer_mixed_steps':
-        args.share_active_spatial_answer_steps_mixed = True
-        args.share_active_temporal_answer_steps_mixed = True
-    elif args.active_edge_message_mode == 'all_answer_top_score_steps':
-        args.share_active_spatial_answer_steps_top_score = True
-        args.share_active_temporal_answer_steps_top_score = True
-    elif args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps':
-        args.share_active_spatial_answer_only = True
-        args.share_active_temporal_answer_steps_top_score = True
-    elif args.active_edge_message_mode == 'all_truncate':
-        args.share_active_spatial_truncate = True
-        args.share_active_temporal_truncate = True
-
-    args.share_pruned_spatial_full_output = args.restore_pruned_spatial_edges_as_active_full_output_original_prompt
-    args.share_pruned_spatial_conclusion_only = False
-    args.share_pruned_spatial_analysis_only = False
-    args.share_pruned_spatial_full_output_original_prompt = False
-    args.share_pruned_spatial_full_output_original_prompt_no_residual = False
-    args.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt = False
-    args.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt = False
-
-    args.share_pruned_temporal_full_output = args.restore_pruned_temporal_edges_as_active_full_output_original_prompt
-    args.share_pruned_temporal_conclusion_only = False
-    args.share_pruned_temporal_analysis_only = False
-    args.share_pruned_full_output_original_prompt = False
-    args.share_pruned_temporal_full_output_original_prompt = False
-    args.share_pruned_temporal_conclusion_only_original_prompt = False
-    args.share_pruned_temporal_analysis_only_original_prompt = False
-    args.restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt = False
-    args.restore_pruned_temporal_edges_as_active_analysis_only_original_prompt = False
-
-    args.restore_pruned_edges_as_active_conclusion_only = False
-    args.restore_pruned_edges_as_active_analysis_only = False
+    args.share_active_spatial_answer_only = (
+        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+    )
+    args.share_active_temporal_answer_steps_top_score = (
+        args.active_edge_message_mode == 'spatial_answer_only_temporal_top_score_steps'
+    )
 
     return args
 
@@ -322,8 +203,6 @@ async def main():
         mode,
         len(agent_names),
         use_structured_output=should_use_structured_mmlu_output(args.active_edge_message_mode),
-        share_special_roles_conclusion_only=args.share_special_roles_conclusion_only,
-        share_special_roles_analysis_only=args.share_special_roles_analysis_only,
     )
     limit_questions = args.limit_questions
     
@@ -335,46 +214,9 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
-                  share_pruned_spatial_full_output=args.share_pruned_spatial_full_output,
-                  share_pruned_spatial_conclusion_only=args.share_pruned_spatial_conclusion_only,
-                  share_pruned_spatial_analysis_only=args.share_pruned_spatial_analysis_only,
-                  share_pruned_spatial_full_output_original_prompt=args.share_pruned_spatial_full_output_original_prompt,
-                  share_pruned_spatial_full_output_original_prompt_no_residual=args.share_pruned_spatial_full_output_original_prompt_no_residual,
-                  restore_pruned_spatial_edges_as_active_full_output_original_prompt=args.restore_pruned_spatial_edges_as_active_full_output_original_prompt,
-                  restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt=args.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt,
-                  restore_pruned_spatial_edges_as_active_analysis_only_original_prompt=args.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt,
-                  share_pruned_temporal_full_output=args.share_pruned_temporal_full_output,
-                  share_pruned_temporal_conclusion_only=args.share_pruned_temporal_conclusion_only,
-                  share_pruned_temporal_analysis_only=args.share_pruned_temporal_analysis_only,
-                  share_pruned_full_output_original_prompt=args.share_pruned_full_output_original_prompt,
-                  share_pruned_temporal_full_output_original_prompt=args.share_pruned_temporal_full_output_original_prompt,
-                  share_pruned_temporal_conclusion_only_original_prompt=args.share_pruned_temporal_conclusion_only_original_prompt,
-                  share_pruned_temporal_analysis_only_original_prompt=args.share_pruned_temporal_analysis_only_original_prompt,
-                  restore_pruned_temporal_edges_as_active_full_output_original_prompt=args.restore_pruned_temporal_edges_as_active_full_output_original_prompt,
-                  restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt=args.restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt,
-                  restore_pruned_temporal_edges_as_active_analysis_only_original_prompt=args.restore_pruned_temporal_edges_as_active_analysis_only_original_prompt,
-                  share_active_spatial_conclusion_only=args.share_active_spatial_conclusion_only,
-                  share_active_spatial_analysis_only=args.share_active_spatial_analysis_only,
-                  share_active_temporal_conclusion_only=args.share_active_temporal_conclusion_only,
-                  share_active_temporal_analysis_only=args.share_active_temporal_analysis_only,
                   share_active_spatial_answer_only=args.share_active_spatial_answer_only,
-                  share_active_temporal_answer_only=args.share_active_temporal_answer_only,
-                  share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
-                  share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
-                  share_active_spatial_answer_steps=args.share_active_spatial_answer_steps,
-                  share_active_temporal_answer_steps=args.share_active_temporal_answer_steps,
-                  share_active_spatial_answer_steps_mixed=args.share_active_spatial_answer_steps_mixed,
-                  share_active_temporal_answer_steps_mixed=args.share_active_temporal_answer_steps_mixed,
-                  share_active_spatial_answer_steps_top_score=args.share_active_spatial_answer_steps_top_score,
                   share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
-                  share_active_spatial_truncate=args.share_active_spatial_truncate,
-                  share_active_temporal_truncate=args.share_active_temporal_truncate,
-                  answer_steps_mixed_ratio=args.answer_steps_mixed_ratio,
                   answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
-                  truncate_content_ratio=args.truncate_content_ratio,
-                  restore_pruned_edges_as_active_conclusion_only=args.restore_pruned_edges_as_active_conclusion_only,
-                  restore_pruned_edges_as_active_analysis_only=args.restore_pruned_edges_as_active_analysis_only,
-                  enable_pruned_delivery_audit=args.audit_pruned_delivery,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
@@ -403,58 +245,22 @@ async def main():
         freeze_graph_for_evaluation(graph)
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
 
-    if args.restore_all_edges_for_eval:
-        restore_all_edges_for_evaluation(graph)
-        print("Evaluation graph restored: all spatial and temporal masks set to 1 before evaluation.")
-
     graph.set_eval_mode(True)
     eval_agent_start = get_agent_token_snapshot(graph)
 
-    if args.replace_high_cost_edges:
-        replacement_graph = copy.deepcopy(graph)
-        replacement_graph.share_cost_state(graph)
-        replacement_graph.set_eval_mode(True)
-        replacement_summary = replacement_graph.replace_high_cost_edges(args.num_replaced_edges)
-        print("Replacement Removed Edges:")
-        for edge in replacement_summary["removed_edges"]:
-            print(f"  {edge['src_role']}({edge['src_id']}) -> {edge['dst_role']}({edge['dst_id']}), "
-                  f"score={edge['score']:.4f}, token_cost={edge['token_cost']}, usage_count={edge['usage_count']}")
-        print("Replacement Added Edges:")
-        for edge in replacement_summary["added_edges"]:
-            print(f"  {edge['src_role']}({edge['src_id']}) -> {edge['dst_role']}({edge['dst_id']}), "
-                  f"score={edge['score']:.4f}, token_cost={edge['token_cost']}, usage_count={edge['usage_count']}")
-
-        eval_prompt_start, eval_completion_start = get_token_snapshot()
-        score = await evaluate(
-            graph=replacement_graph,
-            dataset=dataset_val,
-            num_rounds=args.num_rounds,
-            limit_questions=limit_questions,
-            eval_batch_size=args.batch_size,
-            audit_pruned_delivery=args.audit_pruned_delivery,
-            audit_output_path=args.audit_pruned_delivery_json or None,
-        )
-        eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
-        eval_completion_used = CompletionTokens.instance().value - eval_completion_start
-        print(f"Replacement Score: {score}")
-        print(f"Replacement Eval Prompt Tokens: {eval_prompt_used}")
-        print(f"Replacement Eval Completion Tokens: {eval_completion_used}")
-    else:
-        eval_prompt_start, eval_completion_start = get_token_snapshot()
-        score = await evaluate(
+    eval_prompt_start, eval_completion_start = get_token_snapshot()
+    score = await evaluate(
             graph=graph,
             dataset=dataset_val,
             num_rounds=args.num_rounds,
             limit_questions=limit_questions,
             eval_batch_size=args.batch_size,
-            audit_pruned_delivery=args.audit_pruned_delivery,
-            audit_output_path=args.audit_pruned_delivery_json or None,
         )
-        eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
-        eval_completion_used = CompletionTokens.instance().value - eval_completion_start
-        print(f"Baseline Score: {score}")
-        print(f"Baseline Eval Prompt Tokens: {eval_prompt_used}")
-        print(f"Baseline Eval Completion Tokens: {eval_completion_used}")
+    eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
+    eval_completion_used = CompletionTokens.instance().value - eval_completion_start
+    print(f"Baseline Score: {score}")
+    print(f"Baseline Eval Prompt Tokens: {eval_prompt_used}")
+    print(f"Baseline Eval Completion Tokens: {eval_completion_used}")
 
     eval_agent_metrics = get_phase_agent_token_metrics(graph, eval_agent_start)
     print_phase_token_summary("Inference", eval_prompt_used, eval_completion_used)

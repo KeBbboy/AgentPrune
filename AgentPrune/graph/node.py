@@ -56,10 +56,8 @@ class Node(ABC):
         self.llm_name:str = llm_name
         self.spatial_predecessors: List[Node] = []
         self.spatial_successors: List[Node] = []
-        self.pruned_spatial_predecessors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []
-        self.pruned_temporal_predecessors: List[Node] = []
         self.inputs: List[Any] = []
         self.outputs: List[Any] = []
         self.raw_inputs: List[Any] = []
@@ -68,24 +66,13 @@ class Node(ABC):
         self.conversation_history : List[Dict] = [] # chat history of the whole conversation
         self.last_input_messages: Optional[List[Dict[str, Any]]] = None
         self.last_llm_usage: Optional[Dict[str, int]] = None
-        self.pruned_edge_patch_mode: str = "none"
-        self.pruned_temporal_patch_mode: str = "none"
         self.active_edge_patch_mode: str = "none"
         self.active_temporal_patch_mode: str = "none"
         self.active_spatial_patch_mode_overrides: Dict[str, str] = {}
         self.active_temporal_patch_mode_overrides: Dict[str, str] = {}
-        self.truncate_content_ratio: float = 1.0
-        self.pruned_edge_use_original_prompt: bool = False
-        self.pruned_temporal_use_original_prompt: bool = False
-        self.restored_edge_patch_mode: str = "none"
-        self.restored_temporal_patch_mode: str = "none"
-        self.restored_spatial_predecessor_ids: set[str] = set()
-        self.restored_temporal_predecessor_ids: set[str] = set()
-        self.enable_pruned_delivery_audit: bool = False
         self.runtime_sample_index: Optional[int] = None
         self.runtime_round_index: Optional[int] = None
         self.runtime_execution_index: Optional[int] = None
-        self.transmission_audit_events: List[Dict[str, Any]] = []
 
     @property
     def node_name(self):
@@ -98,50 +85,6 @@ class Node(ABC):
         self.runtime_sample_index = None
         self.runtime_round_index = None
         self.runtime_execution_index = None
-        self.transmission_audit_events = []
-
-    def _record_pruned_delivery_event(
-        self,
-        *,
-        predecessor: 'Node',
-        edge_type: str,
-        source_output_state: str,
-        source_output_available: bool,
-        delivered: bool,
-        failure_reason: Optional[str] = None,
-        patch_mode: str = "none",
-        original_prompt_format: bool = False,
-        delivered_output: Optional[Any] = None,
-    ) -> None:
-        if not self.enable_pruned_delivery_audit:
-            return
-        delivered_text = ""
-        if delivered and delivered_output is not None:
-            delivered_text = delivered_output if isinstance(delivered_output, str) else str(delivered_output)
-        self.transmission_audit_events.append({
-            "sample_index": self.runtime_sample_index,
-            "round_index": self.runtime_round_index,
-            "round_number": (self.runtime_round_index + 1) if self.runtime_round_index is not None else None,
-            "round_label": (
-                f"round_{self.runtime_round_index + 1}"
-                if self.runtime_round_index is not None else None
-            ),
-            "target_execution_index": self.runtime_execution_index,
-            "target_id": self.id,
-            "target_role": self.role,
-            "source_id": predecessor.id,
-            "source_role": predecessor.role,
-            "source_execution_index": getattr(predecessor, "runtime_execution_index", None),
-            "edge_type": edge_type,
-            "source_output_state": source_output_state,
-            "source_output_available": source_output_available,
-            "delivered": delivered,
-            "failure_reason": failure_reason,
-            "patch_mode": patch_mode,
-            "original_prompt_format": original_prompt_format,
-            "delivered_char_len": len(delivered_text),
-            "delivered_word_len": len(delivered_text.split()) if delivered_text else 0,
-        })
     
     def add_predecessor(self, operation: 'Node', st='spatial'):
         if st == 'spatial' and operation not in self.spatial_predecessors:
@@ -178,12 +121,8 @@ class Node(ABC):
     def clear_connections(self):
         self.spatial_predecessors: List[Node] = []
         self.spatial_successors: List[Node] = []
-        self.pruned_spatial_predecessors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []
-        self.pruned_temporal_predecessors: List[Node] = []
-        self.restored_spatial_predecessor_ids = set()
-        self.restored_temporal_predecessor_ids = set()
     
     def update_memory(self):
         self.last_memory['inputs'] = self.inputs
@@ -206,8 +145,6 @@ class Node(ABC):
             patched_output = self._extract_answer_and_claim(predecessor_output)
         elif patch_mode == "answer_steps":
             patched_output = self._extract_answer_and_steps(predecessor_output)
-        elif patch_mode == "truncate":
-            patched_output = self._extract_truncated_output(predecessor_output)
         else:
             patched_output = predecessor_output.strip()
         return patched_output
@@ -272,26 +209,6 @@ class Node(ABC):
 
         return self._extract_answer_only(stripped_output)
 
-    def _extract_truncated_output(self, predecessor_output: str) -> str:
-        stripped_output = predecessor_output.strip()
-        if not stripped_output:
-            return ""
-
-        answer_only = self._extract_answer_only(stripped_output)
-        xml_answer_match = re.search(r"<answer>\s*.*?\s*</answer>", stripped_output, flags=re.IGNORECASE | re.DOTALL)
-        if xml_answer_match is not None:
-            remainder = (stripped_output[:xml_answer_match.start()] + stripped_output[xml_answer_match.end():]).strip()
-        else:
-            remainder = stripped_output[1:]
-        if not remainder.strip():
-            return answer_only
-
-        keep_char_count = max(1, int(len(remainder) * self.truncate_content_ratio))
-        truncated_remainder = remainder[:keep_char_count].rstrip()
-        if answer_only:
-            return f"{answer_only}{truncated_remainder}"
-        return truncated_remainder
-
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
         spatial_info = {}
@@ -304,84 +221,22 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                if predecessor.id in self.restored_spatial_predecessor_ids:
+                active_patch_mode = self._get_effective_patch_mode(
+                    predecessor.id,
+                    self.active_edge_patch_mode,
+                    self.active_spatial_patch_mode_overrides,
+                )
+                if active_patch_mode != "none":
                     predecessor_output = self._extract_patched_output(
                         predecessor_output,
-                        self.restored_edge_patch_mode,
+                        active_patch_mode,
                     )
                     if not predecessor_output:
                         continue
-                else:
-                    active_patch_mode = self._get_effective_patch_mode(
-                        predecessor.id,
-                        self.active_edge_patch_mode,
-                        self.active_spatial_patch_mode_overrides,
-                    )
-                    if active_patch_mode != "none":
-                        predecessor_output = self._extract_patched_output(
-                            predecessor_output,
-                            active_patch_mode,
-                        )
-                        if not predecessor_output:
-                            continue
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": predecessor_output,
                     "message_type": "full",
-                }
-
-        if self.pruned_spatial_predecessors is not None:
-            for predecessor in self.pruned_spatial_predecessors:
-                predecessor_outputs = predecessor.outputs
-                if isinstance(predecessor_outputs, list) and len(predecessor_outputs):
-                    predecessor_output = predecessor_outputs[-1]
-                    source_output_state = "nonempty_list"
-                elif isinstance(predecessor_outputs, list) and len(predecessor_outputs) == 0:
-                    self._record_pruned_delivery_event(
-                        predecessor=predecessor,
-                        edge_type="spatial",
-                        source_output_state="empty_list",
-                        source_output_available=False,
-                        delivered=False,
-                        failure_reason="source_current_round_output_unavailable",
-                        patch_mode=self.pruned_edge_patch_mode,
-                        original_prompt_format=self.pruned_edge_use_original_prompt,
-                    )
-                    continue
-                else:
-                    predecessor_output = predecessor_outputs
-                    source_output_state = "scalar_or_other"
-                patched_output = self._extract_patched_output(
-                    predecessor_output,
-                    self.pruned_edge_patch_mode,
-                )
-                if not patched_output:
-                    self._record_pruned_delivery_event(
-                        predecessor=predecessor,
-                        edge_type="spatial",
-                        source_output_state=source_output_state,
-                        source_output_available=True,
-                        delivered=False,
-                        failure_reason="patched_output_empty_after_extraction",
-                        patch_mode=self.pruned_edge_patch_mode,
-                        original_prompt_format=self.pruned_edge_use_original_prompt,
-                    )
-                    continue
-                self._record_pruned_delivery_event(
-                    predecessor=predecessor,
-                    edge_type="spatial",
-                    source_output_state=source_output_state,
-                    source_output_available=True,
-                    delivered=True,
-                    patch_mode=self.pruned_edge_patch_mode,
-                    original_prompt_format=self.pruned_edge_use_original_prompt,
-                    delivered_output=patched_output,
-                )
-                spatial_info[predecessor.id] = {
-                    "role": predecessor.role,
-                    "output": patched_output,
-                    "message_type": "full" if self.pruned_edge_use_original_prompt else "pruned_patch",
-                    "patch_mode": self.pruned_edge_patch_mode,
                 }
 
         return spatial_info
@@ -397,82 +252,20 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                if predecessor.id in self.restored_temporal_predecessor_ids:
+                active_patch_mode = self._get_effective_patch_mode(
+                    predecessor.id,
+                    self.active_temporal_patch_mode,
+                    self.active_temporal_patch_mode_overrides,
+                )
+                if active_patch_mode != "none":
                     predecessor_output = self._extract_patched_output(
                         predecessor_output,
-                        self.restored_temporal_patch_mode,
+                        active_patch_mode,
                     )
                     if not predecessor_output:
                         continue
-                else:
-                    active_patch_mode = self._get_effective_patch_mode(
-                        predecessor.id,
-                        self.active_temporal_patch_mode,
-                        self.active_temporal_patch_mode_overrides,
-                    )
-                    if active_patch_mode != "none":
-                        predecessor_output = self._extract_patched_output(
-                            predecessor_output,
-                            active_patch_mode,
-                        )
-                        if not predecessor_output:
-                            continue
                 temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
 
-        if self.pruned_temporal_predecessors is not None:
-            for predecessor in self.pruned_temporal_predecessors:
-                predecessor_outputs = predecessor.last_memory['outputs']
-                if isinstance(predecessor_outputs, list) and len(predecessor_outputs):
-                    predecessor_output = predecessor_outputs[-1]
-                    source_output_state = "nonempty_list"
-                elif isinstance(predecessor_outputs, list) and len(predecessor_outputs)==0:
-                    self._record_pruned_delivery_event(
-                        predecessor=predecessor,
-                        edge_type="temporal",
-                        source_output_state="empty_list",
-                        source_output_available=False,
-                        delivered=False,
-                        failure_reason="source_previous_round_output_unavailable",
-                        patch_mode=self.pruned_temporal_patch_mode,
-                        original_prompt_format=self.pruned_temporal_use_original_prompt,
-                    )
-                    continue
-                else:
-                    predecessor_output = predecessor_outputs
-                    source_output_state = "scalar_or_other"
-                patched_output = self._extract_patched_output(
-                    predecessor_output,
-                    self.pruned_temporal_patch_mode,
-                )
-                if not patched_output:
-                    self._record_pruned_delivery_event(
-                        predecessor=predecessor,
-                        edge_type="temporal",
-                        source_output_state=source_output_state,
-                        source_output_available=True,
-                        delivered=False,
-                        failure_reason="patched_output_empty_after_extraction",
-                        patch_mode=self.pruned_temporal_patch_mode,
-                        original_prompt_format=self.pruned_temporal_use_original_prompt,
-                    )
-                    continue
-                self._record_pruned_delivery_event(
-                    predecessor=predecessor,
-                    edge_type="temporal",
-                    source_output_state=source_output_state,
-                    source_output_available=True,
-                    delivered=True,
-                    patch_mode=self.pruned_temporal_patch_mode,
-                    original_prompt_format=self.pruned_temporal_use_original_prompt,
-                    delivered_output=patched_output,
-                )
-                temporal_info[predecessor.id] = {
-                    "role": predecessor.role,
-                    "output": patched_output,
-                    "message_type": "full" if self.pruned_temporal_use_original_prompt else "pruned_patch",
-                    "patch_mode": self.pruned_temporal_patch_mode,
-                }
-        
         return temporal_info
     
     def execute(self, input:Any, **kwargs):

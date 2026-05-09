@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import asyncio
 import tiktoken
-import random
 
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
@@ -46,46 +45,9 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
-                share_pruned_spatial_full_output: bool = False,
-                share_pruned_spatial_conclusion_only: bool = False,
-                share_pruned_spatial_analysis_only: bool = False,
-                share_pruned_spatial_full_output_original_prompt: bool = False,
-                share_pruned_spatial_full_output_original_prompt_no_residual: bool = False,
-                restore_pruned_spatial_edges_as_active_full_output_original_prompt: bool = False,
-                restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt: bool = False,
-                restore_pruned_spatial_edges_as_active_analysis_only_original_prompt: bool = False,
-                share_pruned_temporal_full_output: bool = False,
-                share_pruned_temporal_conclusion_only: bool = False,
-                share_pruned_temporal_analysis_only: bool = False,
-                share_pruned_full_output_original_prompt: bool = False,
-                share_pruned_temporal_full_output_original_prompt: bool = False,
-                share_pruned_temporal_conclusion_only_original_prompt: bool = False,
-                share_pruned_temporal_analysis_only_original_prompt: bool = False,
-                restore_pruned_temporal_edges_as_active_full_output_original_prompt: bool = False,
-                restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt: bool = False,
-                restore_pruned_temporal_edges_as_active_analysis_only_original_prompt: bool = False,
-                share_active_spatial_conclusion_only: bool = False,
-                share_active_spatial_analysis_only: bool = False,
-                share_active_temporal_conclusion_only: bool = False,
-                share_active_temporal_analysis_only: bool = False,
                 share_active_spatial_answer_only: bool = False,
-                share_active_temporal_answer_only: bool = False,
-                share_active_spatial_answer_claim: bool = False,
-                share_active_temporal_answer_claim: bool = False,
-                share_active_spatial_answer_steps: bool = False,
-                share_active_temporal_answer_steps: bool = False,
-                share_active_spatial_answer_steps_mixed: bool = False,
-                share_active_temporal_answer_steps_mixed: bool = False,
-                share_active_spatial_answer_steps_top_score: bool = False,
                 share_active_temporal_answer_steps_top_score: bool = False,
-                answer_steps_mixed_ratio: float = 0.3,
                 answer_steps_top_score_ratio: float = 0.7,
-                share_active_spatial_truncate: bool = False,
-                share_active_temporal_truncate: bool = False,
-                truncate_content_ratio: float = 1.0,
-                restore_pruned_edges_as_active_conclusion_only: bool = False,
-                restore_pruned_edges_as_active_analysis_only: bool = False,
-                enable_pruned_delivery_audit: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -105,73 +67,9 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
-        self.share_pruned_spatial_full_output = share_pruned_spatial_full_output
-        self.share_pruned_spatial_conclusion_only = share_pruned_spatial_conclusion_only
-        self.share_pruned_spatial_analysis_only = share_pruned_spatial_analysis_only
-        self.share_pruned_spatial_full_output_original_prompt = (
-            share_pruned_spatial_full_output_original_prompt
-        )
-        self.share_pruned_spatial_full_output_original_prompt_no_residual = (
-            share_pruned_spatial_full_output_original_prompt_no_residual
-        )
-        self.restore_pruned_spatial_edges_as_active_full_output_original_prompt = (
-            restore_pruned_spatial_edges_as_active_full_output_original_prompt
-        )
-        self.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt = (
-            restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt
-        )
-        self.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt = (
-            restore_pruned_spatial_edges_as_active_analysis_only_original_prompt
-        )
-        self.share_pruned_temporal_full_output = share_pruned_temporal_full_output
-        self.share_pruned_temporal_conclusion_only = share_pruned_temporal_conclusion_only
-        self.share_pruned_temporal_analysis_only = share_pruned_temporal_analysis_only
-        self.share_pruned_full_output_original_prompt = share_pruned_full_output_original_prompt
-        self.share_pruned_temporal_full_output_original_prompt = (
-            share_pruned_temporal_full_output_original_prompt
-        )
-        self.share_pruned_temporal_conclusion_only_original_prompt = (
-            share_pruned_temporal_conclusion_only_original_prompt
-        )
-        self.share_pruned_temporal_analysis_only_original_prompt = (
-            share_pruned_temporal_analysis_only_original_prompt
-        )
-        self.restore_pruned_temporal_edges_as_active_full_output_original_prompt = (
-            restore_pruned_temporal_edges_as_active_full_output_original_prompt
-        )
-        self.restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt = (
-            restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt
-        )
-        self.restore_pruned_temporal_edges_as_active_analysis_only_original_prompt = (
-            restore_pruned_temporal_edges_as_active_analysis_only_original_prompt
-        )
-        self.share_active_spatial_conclusion_only = share_active_spatial_conclusion_only
-        self.share_active_spatial_analysis_only = share_active_spatial_analysis_only
-        self.share_active_temporal_conclusion_only = share_active_temporal_conclusion_only
-        self.share_active_temporal_analysis_only = share_active_temporal_analysis_only
         self.share_active_spatial_answer_only = share_active_spatial_answer_only
-        self.share_active_temporal_answer_only = share_active_temporal_answer_only
-        self.share_active_spatial_answer_claim = share_active_spatial_answer_claim
-        self.share_active_temporal_answer_claim = share_active_temporal_answer_claim
-        self.share_active_spatial_answer_steps = share_active_spatial_answer_steps
-        self.share_active_temporal_answer_steps = share_active_temporal_answer_steps
-        self.share_active_spatial_answer_steps_mixed = share_active_spatial_answer_steps_mixed
-        self.share_active_temporal_answer_steps_mixed = share_active_temporal_answer_steps_mixed
-        self.share_active_spatial_answer_steps_top_score = share_active_spatial_answer_steps_top_score
         self.share_active_temporal_answer_steps_top_score = share_active_temporal_answer_steps_top_score
-        self.answer_steps_mixed_ratio = answer_steps_mixed_ratio
         self.answer_steps_top_score_ratio = answer_steps_top_score_ratio
-        self.share_active_spatial_truncate = share_active_spatial_truncate
-        self.share_active_temporal_truncate = share_active_temporal_truncate
-        self.truncate_content_ratio = truncate_content_ratio
-        self.restore_pruned_edges_as_active_conclusion_only = restore_pruned_edges_as_active_conclusion_only
-        self.restore_pruned_edges_as_active_analysis_only = restore_pruned_edges_as_active_analysis_only
-        self.enable_pruned_delivery_audit = enable_pruned_delivery_audit
-        self.enable_pruned_edge_tail_patch = False
-        self.enable_pruned_temporal_patch = False
-        self.restore_pruned_spatial_edges_in_original_prompt = False
-        self.restore_pruned_temporal_edges_in_original_prompt = False
-        self.clear_residual_outputs_before_round = False
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -184,9 +82,6 @@ class Graph(ABC):
         self._token_encoder = None
         
         self.init_nodes() # add nodes to the self.nodes
-        for node in self.nodes.values():
-            node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
-        self.decision_node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
         self.spatial_edge_token_totals: Dict[tuple[str, str], int] = {
             (src_id, dst_id): 0
@@ -313,59 +208,13 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].spatial_predecessors = []
             self.nodes[node_id].spatial_successors = []
-            self.nodes[node_id].pruned_spatial_predecessors = []
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
-        self.decision_node.pruned_spatial_predecessors = []
 
     def refresh_active_edge_patch_mode_overrides(self) -> None:
         for node in self.nodes.values():
             node.active_spatial_patch_mode_overrides = {}
             node.active_temporal_patch_mode_overrides = {}
-
-        if self.share_active_spatial_answer_steps_mixed:
-            spatial_edges: List[tuple[str, str]] = []
-            for node in self.nodes.values():
-                for predecessor in node.spatial_predecessors:
-                    spatial_edges.append((node.id, predecessor.id))
-
-            selected_spatial_edge_count = min(
-                len(spatial_edges),
-                max(0, int(len(spatial_edges) * self.answer_steps_mixed_ratio + 0.5)),
-            )
-            for target_node_id, predecessor_id in random.sample(spatial_edges, selected_spatial_edge_count):
-                self.nodes[target_node_id].active_spatial_patch_mode_overrides[predecessor_id] = "answer_steps"
-
-        if self.share_active_temporal_answer_steps_mixed:
-            temporal_edges: List[tuple[str, str]] = []
-            for node in self.nodes.values():
-                for predecessor in node.temporal_predecessors:
-                    temporal_edges.append((node.id, predecessor.id))
-
-            selected_temporal_edge_count = min(
-                len(temporal_edges),
-                max(0, int(len(temporal_edges) * self.answer_steps_mixed_ratio + 0.5)),
-            )
-            for target_node_id, predecessor_id in random.sample(temporal_edges, selected_temporal_edge_count):
-                self.nodes[target_node_id].active_temporal_patch_mode_overrides[predecessor_id] = "answer_steps"
-
-        if self.share_active_spatial_answer_steps_top_score:
-            spatial_edges_with_scores: List[tuple[float, str, str]] = []
-            for node in self.nodes.values():
-                for predecessor in node.spatial_predecessors:
-                    edge_idx = self.spatial_edge_index_map.get((predecessor.id, node.id))
-                    if edge_idx is None:
-                        continue
-                    score = float(torch.sigmoid(self.spatial_logits[edge_idx]).item())
-                    spatial_edges_with_scores.append((score, node.id, predecessor.id))
-
-            selected_spatial_edge_count = min(
-                len(spatial_edges_with_scores),
-                max(0, int(len(spatial_edges_with_scores) * self.answer_steps_top_score_ratio + 0.5)),
-            )
-            spatial_edges_with_scores.sort(key=lambda item: (-item[0], item[1], item[2]))
-            for _, target_node_id, predecessor_id in spatial_edges_with_scores[:selected_spatial_edge_count]:
-                self.nodes[target_node_id].active_spatial_patch_mode_overrides[predecessor_id] = "answer_steps"
 
         if self.share_active_temporal_answer_steps_top_score:
             temporal_edges_with_scores: List[tuple[float, str, str]] = []
@@ -522,26 +371,11 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].temporal_predecessors = []
             self.nodes[node_id].temporal_successors = []
-            self.nodes[node_id].pruned_temporal_predecessors = []
 
     def reset_runtime_audit(self):
         for node in self.nodes.values():
             node.reset_runtime_audit()
-            node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
         self.decision_node.reset_runtime_audit()
-        self.decision_node.enable_pruned_delivery_audit = self.enable_pruned_delivery_audit
-
-    def clear_current_outputs(self):
-        for node in self.nodes.values():
-            node.outputs = []
-        self.decision_node.outputs = []
-
-    def get_pruned_delivery_audit_events(self) -> List[Dict[str, Any]]:
-        events: List[Dict[str, Any]] = []
-        for node in self.nodes.values():
-            events.extend(node.transmission_audit_events)
-        events.extend(self.decision_node.transmission_audit_events)
-        return events
 
     def connect_decision_node(self, last_node_id: str = None):
         for node_id in self.nodes.keys():
@@ -558,16 +392,6 @@ class Graph(ABC):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
-                if (
-                    self.restore_pruned_spatial_edges_in_original_prompt
-                    and self.initial_spatial_masks[edge_idx] == 1.0
-                    and out_node.id != in_node.id
-                    and not self.check_cycle(in_node, {out_node})
-                ):
-                    out_node.add_successor(in_node,'spatial')
-                    in_node.restored_spatial_predecessor_ids.add(out_node.id)
-                elif self.enable_pruned_edge_tail_patch and out_node.id != in_node.id:
-                    in_node.pruned_spatial_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_spatial==False:
                 if not self.check_cycle(in_node, {out_node}):
@@ -594,16 +418,6 @@ class Graph(ABC):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
-                if (
-                    self.restore_pruned_temporal_edges_in_original_prompt
-                    and self.initial_temporal_masks[edge_idx] == 1.0
-                    and out_node.id != in_node.id
-                    and not self.check_cycle(in_node, {out_node})
-                ):
-                    out_node.add_successor(in_node,'temporal')
-                    in_node.restored_temporal_predecessor_ids.add(out_node.id)
-                elif self.enable_pruned_temporal_patch and out_node.id != in_node.id:
-                    in_node.pruned_temporal_predecessors.append(out_node)
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
@@ -631,8 +445,6 @@ class Graph(ABC):
         self.reset_runtime_audit()
         log_probs = 0
         for round in range(num_rounds):
-            if self.clear_residual_outputs_before_round and round > 0:
-                self.clear_current_outputs()
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
             self.refresh_active_edge_patch_mode_overrides()
@@ -688,8 +500,6 @@ class Graph(ABC):
         self.reset_runtime_audit()
         log_probs = 0
         for round in range(num_rounds):
-            if self.clear_residual_outputs_before_round and round > 0:
-                self.clear_current_outputs()
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
             self.refresh_active_edge_patch_mode_overrides()
@@ -744,244 +554,25 @@ class Graph(ABC):
             node.update_memory()
 
     def set_eval_mode(self, enabled: bool):
-        restore_original_prompt_edges = enabled and (
-            self.restore_pruned_spatial_edges_as_active_full_output_original_prompt
-            or
-            self.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt
-            or self.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt
-            or
-            self.restore_pruned_edges_as_active_conclusion_only
-            or self.restore_pruned_edges_as_active_analysis_only
-        )
-        restore_temporal_original_prompt_edges = enabled and (
-            self.restore_pruned_temporal_edges_as_active_full_output_original_prompt
-            or
-            self.restore_pruned_edges_as_active_conclusion_only
-            or self.restore_pruned_edges_as_active_analysis_only
-            or self.restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt
-            or self.restore_pruned_temporal_edges_as_active_analysis_only_original_prompt
-        )
-        self.restore_pruned_spatial_edges_in_original_prompt = restore_original_prompt_edges
-        self.restore_pruned_temporal_edges_in_original_prompt = restore_temporal_original_prompt_edges
-        self.clear_residual_outputs_before_round = enabled and (
-            self.share_pruned_spatial_full_output_original_prompt_no_residual
-        )
-        self.enable_pruned_edge_tail_patch = (
-            (
-                self.share_pruned_spatial_full_output
-                or self.share_pruned_spatial_conclusion_only
-                or self.share_pruned_spatial_analysis_only
-            )
-            and enabled
-        )
-        self.enable_pruned_temporal_patch = (
-            (
-                self.share_pruned_temporal_full_output
-                or self.share_pruned_temporal_conclusion_only
-                or self.share_pruned_temporal_analysis_only
-            ) and enabled
-        )
-        pruned_edge_patch_mode = "none"
-        if enabled:
-            if self.share_pruned_spatial_full_output:
-                pruned_edge_patch_mode = "full"
-            elif self.share_pruned_spatial_full_output_original_prompt:
-                pruned_edge_patch_mode = "full"
-            elif self.share_pruned_spatial_full_output_original_prompt_no_residual:
-                pruned_edge_patch_mode = "full"
-            elif self.restore_pruned_spatial_edges_as_active_full_output_original_prompt:
-                pruned_edge_patch_mode = "full"
-            elif self.share_pruned_spatial_conclusion_only:
-                pruned_edge_patch_mode = "tail"
-            elif self.restore_pruned_spatial_edges_as_active_conclusion_only_original_prompt:
-                pruned_edge_patch_mode = "tail"
-            elif self.restore_pruned_edges_as_active_conclusion_only:
-                pruned_edge_patch_mode = "tail"
-            elif self.share_pruned_spatial_analysis_only:
-                pruned_edge_patch_mode = "body"
-            elif self.restore_pruned_spatial_edges_as_active_analysis_only_original_prompt:
-                pruned_edge_patch_mode = "body"
-            elif self.restore_pruned_edges_as_active_analysis_only:
-                pruned_edge_patch_mode = "body"
-        pruned_temporal_patch_mode = "none"
-        if enabled:
-            if self.share_pruned_temporal_full_output:
-                pruned_temporal_patch_mode = "full"
-            elif self.restore_pruned_temporal_edges_as_active_full_output_original_prompt:
-                pruned_temporal_patch_mode = "full"
-            elif self.share_pruned_temporal_conclusion_only:
-                pruned_temporal_patch_mode = "tail"
-            elif self.restore_pruned_temporal_edges_as_active_conclusion_only_original_prompt:
-                pruned_temporal_patch_mode = "tail"
-            elif self.restore_pruned_edges_as_active_conclusion_only:
-                pruned_temporal_patch_mode = "tail"
-            elif self.share_pruned_temporal_analysis_only:
-                pruned_temporal_patch_mode = "body"
-            elif self.restore_pruned_temporal_edges_as_active_analysis_only_original_prompt:
-                pruned_temporal_patch_mode = "body"
-            elif self.restore_pruned_edges_as_active_analysis_only:
-                pruned_temporal_patch_mode = "body"
         active_edge_patch_mode = "none"
         if enabled:
             if self.share_active_spatial_answer_only:
                 active_edge_patch_mode = "answer_only"
-            elif self.share_active_spatial_answer_steps_mixed:
-                active_edge_patch_mode = "answer_only"
-            elif self.share_active_spatial_answer_steps_top_score:
-                active_edge_patch_mode = "answer_claim"
-            elif self.share_active_spatial_answer_claim:
-                active_edge_patch_mode = "answer_claim"
-            elif self.share_active_spatial_answer_steps:
-                active_edge_patch_mode = "answer_steps"
-            elif self.share_active_spatial_truncate:
-                active_edge_patch_mode = "truncate"
-            elif self.share_active_spatial_conclusion_only:
-                active_edge_patch_mode = "tail"
-            elif self.share_active_spatial_analysis_only:
-                active_edge_patch_mode = "body"
         active_temporal_patch_mode = "none"
         if enabled:
-            if self.share_active_temporal_answer_only:
-                active_temporal_patch_mode = "answer_only"
-            elif self.share_active_temporal_answer_steps_mixed:
-                active_temporal_patch_mode = "answer_only"
-            elif self.share_active_temporal_answer_steps_top_score:
+            if self.share_active_temporal_answer_steps_top_score:
                 active_temporal_patch_mode = "answer_claim"
-            elif self.share_active_temporal_answer_claim:
-                active_temporal_patch_mode = "answer_claim"
-            elif self.share_active_temporal_answer_steps:
-                active_temporal_patch_mode = "answer_steps"
-            elif self.share_active_temporal_truncate:
-                active_temporal_patch_mode = "truncate"
-            elif self.share_active_temporal_conclusion_only:
-                active_temporal_patch_mode = "tail"
-            elif self.share_active_temporal_analysis_only:
-                active_temporal_patch_mode = "body"
         for node in self.nodes.values():
-            node.pruned_edge_patch_mode = pruned_edge_patch_mode
-            node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
             node.active_edge_patch_mode = active_edge_patch_mode
             node.active_temporal_patch_mode = active_temporal_patch_mode
             node.active_spatial_patch_mode_overrides = {}
             node.active_temporal_patch_mode_overrides = {}
-            node.truncate_content_ratio = self.truncate_content_ratio
-            node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
-            node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"
-            node.pruned_edge_use_original_prompt = (
-                (self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full")
-                or (
-                    self.share_pruned_spatial_full_output_original_prompt
-                    and pruned_edge_patch_mode == "full"
-                )
-                or (
-                    self.share_pruned_spatial_full_output_original_prompt_no_residual
-                    and pruned_edge_patch_mode == "full"
-                )
-            )
-            node.pruned_temporal_use_original_prompt = (
-                (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
-                or (
-                    self.share_pruned_temporal_full_output_original_prompt
-                    and pruned_temporal_patch_mode == "full"
-                )
-                or (
-                    self.share_pruned_temporal_conclusion_only_original_prompt
-                    and pruned_temporal_patch_mode == "tail"
-                )
-                or (
-                    self.share_pruned_temporal_analysis_only_original_prompt
-                    and pruned_temporal_patch_mode == "body"
-                )
-            )
-        self.decision_node.pruned_edge_patch_mode = pruned_edge_patch_mode
-        self.decision_node.pruned_temporal_patch_mode = pruned_temporal_patch_mode
         self.decision_node.active_edge_patch_mode = "none"
         self.decision_node.active_temporal_patch_mode = "none"
         self.decision_node.active_spatial_patch_mode_overrides = {}
         self.decision_node.active_temporal_patch_mode_overrides = {}
-        self.decision_node.truncate_content_ratio = self.truncate_content_ratio
-        self.decision_node.restored_edge_patch_mode = pruned_edge_patch_mode if restore_original_prompt_edges else "none"
-        self.decision_node.restored_temporal_patch_mode = pruned_temporal_patch_mode if restore_temporal_original_prompt_edges else "none"
-        self.decision_node.pruned_edge_use_original_prompt = (
-            (self.share_pruned_full_output_original_prompt and pruned_edge_patch_mode == "full")
-            or (
-                self.share_pruned_spatial_full_output_original_prompt
-                and pruned_edge_patch_mode == "full"
-            )
-            or (
-                self.share_pruned_spatial_full_output_original_prompt_no_residual
-                and pruned_edge_patch_mode == "full"
-            )
-        )
-        self.decision_node.pruned_temporal_use_original_prompt = (
-            (self.share_pruned_full_output_original_prompt and pruned_temporal_patch_mode == "full")
-            or (
-                self.share_pruned_temporal_full_output_original_prompt
-                and pruned_temporal_patch_mode == "full"
-            )
-            or (
-                self.share_pruned_temporal_conclusion_only_original_prompt
-                and pruned_temporal_patch_mode == "tail"
-            )
-            or (
-                self.share_pruned_temporal_analysis_only_original_prompt
-                and pruned_temporal_patch_mode == "body"
-            )
-        )
         self.enable_edge_cost_recording = not enabled
 
-    def get_spatial_edge_metrics(self):
-        metrics = []
-        for edge_idx, (src_id, dst_id) in enumerate(self.potential_spatial_edges):
-            if src_id == dst_id:
-                continue
-            src_node = self.find_node(src_id)
-            dst_node = self.find_node(dst_id)
-            metrics.append({
-                "index": edge_idx,
-                "src_id": src_id,
-                "dst_id": dst_id,
-                "src_role": src_node.role,
-                "dst_role": dst_node.role,
-                "mask": int(self.spatial_masks[edge_idx].item()),
-                "score": float(torch.sigmoid(self.spatial_logits[edge_idx]).item()),
-                "token_cost": int(self.spatial_edge_token_totals.get((src_id, dst_id), 0)),
-                "usage_count": int(self.spatial_edge_usage_counts.get((src_id, dst_id), 0)),
-            })
-        return metrics
-
-    def replace_high_cost_edges(self, num_edges: int = 2):
-        kept_edges = []
-        deleted_edges = []
-        for metric in self.get_spatial_edge_metrics():
-            if metric["mask"] == 1:
-                kept_edges.append(metric)
-            else:
-                deleted_edges.append(metric)
-
-        kept_edges = sorted(
-            kept_edges,
-            key=lambda item: (-item["token_cost"], -item["score"], item["index"]),
-        )
-        deleted_edges = sorted(
-            deleted_edges,
-            key=lambda item: (item["token_cost"], -item["score"], item["index"]),
-        )
-
-        replace_count = min(num_edges, len(kept_edges), len(deleted_edges))
-        removed_edges = kept_edges[:replace_count]
-        added_edges = deleted_edges[:replace_count]
-
-        for edge in removed_edges:
-            self.spatial_masks[edge["index"]] = 0
-        for edge in added_edges:
-            self.spatial_masks[edge["index"]] = 1
-
-        return {
-            "removed_edges": removed_edges,
-            "added_edges": added_edges,
-        }
-    
     def check_cycle(self, new_node, target_nodes):
         if new_node in target_nodes:
             return True

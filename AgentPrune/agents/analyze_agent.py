@@ -9,8 +9,6 @@ from AgentPrune.llm.gpt_chat import set_active_usage_recorder, reset_active_usag
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
 from AgentPrune.tools.search.wiki import search_wiki_main
 
-TRIMMED_SOURCE_ROLES = {"Critic", "Mathematician", "Psychologist", "Historian"}
-
 def find_strings_between_pluses(text):
     return re.findall(r'\@(.*?)\@', text)
 
@@ -23,8 +21,6 @@ class AnalyzeAgent(Node):
         domain: str = "",
         llm_name: str = "",
         use_structured_output: bool = False,
-        share_special_roles_conclusion_only: bool = False,
-        share_special_roles_analysis_only: bool = False,
     ):
         super().__init__(id, "AnalyzeAgent" ,domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
@@ -35,26 +31,9 @@ class AnalyzeAgent(Node):
         except TypeError:
             self.constraint = self.prompt_set.get_analyze_constraint(self.role)
         self.wiki_summary = ""
-        self.share_special_roles_conclusion_only = share_special_roles_conclusion_only
-        self.share_special_roles_analysis_only = share_special_roles_analysis_only
 
     def _format_shared_output(self, info: Dict[str, str]) -> str:
-        output = info["output"]
-        if info["role"] not in TRIMMED_SOURCE_ROLES:
-            return output
-
-        parts = output.rsplit("\n\n", 1)
-        if self.share_special_roles_conclusion_only:
-            if len(parts) == 2 and parts[1].strip():
-                return parts[1].strip()
-            return output.strip()
-
-        if self.share_special_roles_analysis_only:
-            if len(parts) == 2 and parts[0].strip():
-                return parts[0].strip()
-            return output.strip()
-
-        return output.strip()
+        return info["output"]
         
     async def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict], **kwargs)->List[Any]:
         """ To be overriden by the descendant class """
