@@ -64,6 +64,8 @@ class Node(ABC):
         self.conversation_history : List[Dict] = [] # chat history of the whole conversation
         self.last_input_messages: Optional[List[Dict[str, Any]]] = None
         self.last_llm_usage: Optional[Dict[str, int]] = None
+        self.active_spatial_message_modes: Dict[str, str] = {}
+        self.active_temporal_message_modes: Dict[str, str] = {}
         self.runtime_sample_index: Optional[int] = None
         self.runtime_round_index: Optional[int] = None
         self.runtime_execution_index: Optional[int] = None
@@ -122,6 +124,8 @@ class Node(ABC):
         self.last_memory['outputs'] = self.outputs
 
     def _extract_answer_tag_content(self, predecessor_output: str) -> str:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
         answer_match = re.search(
             r"<answer>\s*(.*?)\s*</answer>",
             predecessor_output,
@@ -130,6 +134,20 @@ class Node(ABC):
         if answer_match is None:
             return ""
         return answer_match.group(1).strip()
+
+    def _extract_first_line_answer(self, predecessor_output: Any) -> str:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
+
+        answer_content = self._extract_answer_tag_content(predecessor_output)
+        if answer_content:
+            return answer_content
+
+        for line in predecessor_output.splitlines():
+            line = line.strip()
+            if line:
+                return line
+        return predecessor_output.strip()
 
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
@@ -143,10 +161,13 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
+                message_type = self.active_spatial_message_modes.get(predecessor.id, "full")
+                if message_type == "answer_only":
+                    predecessor_output = self._extract_first_line_answer(predecessor_output)
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": predecessor_output,
-                    "message_type": "full",
+                    "message_type": message_type,
                 }
 
         return spatial_info
@@ -162,7 +183,14 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
+                message_type = self.active_temporal_message_modes.get(predecessor.id, "full")
+                if message_type == "answer_only":
+                    predecessor_output = self._extract_first_line_answer(predecessor_output)
+                temporal_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": predecessor_output,
+                    "message_type": message_type,
+                }
 
         return temporal_info
     

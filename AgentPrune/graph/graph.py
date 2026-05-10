@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import asyncio
 import tiktoken
+import random
 
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
@@ -45,6 +46,8 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                edge_message_mode: str = "full_output",
+                full_output_edge_probability: float = 1.0,
                 ):
         
         if fixed_spatial_masks is None:
@@ -64,6 +67,8 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
+        self.edge_message_mode = edge_message_mode
+        self.full_output_edge_probability = full_output_edge_probability
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -204,6 +209,35 @@ class Graph(ABC):
             self.nodes[node_id].spatial_successors = []
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
+
+    def refresh_edge_message_modes(self):
+        for node in self.nodes.values():
+            node.active_spatial_message_modes = {}
+            node.active_temporal_message_modes = {}
+        self.decision_node.active_spatial_message_modes = {}
+        self.decision_node.active_temporal_message_modes = {}
+
+        if self.edge_message_mode == "full_output":
+            return
+
+        if self.edge_message_mode != "random_full_rest_answer":
+            raise ValueError(f"Unsupported edge_message_mode: {self.edge_message_mode}")
+
+        def choose_message_type() -> str:
+            if random.random() < self.full_output_edge_probability:
+                return "full"
+            return "answer_only"
+
+        for node in self.nodes.values():
+            for predecessor in node.spatial_predecessors:
+                node.active_spatial_message_modes[predecessor.id] = choose_message_type()
+            for predecessor in node.temporal_predecessors:
+                node.active_temporal_message_modes[predecessor.id] = choose_message_type()
+
+        for predecessor in self.decision_node.spatial_predecessors:
+            self.decision_node.active_spatial_message_modes[predecessor.id] = choose_message_type()
+        for predecessor in self.decision_node.temporal_predecessors:
+            self.decision_node.active_temporal_message_modes[predecessor.id] = choose_message_type()
 
     def _get_token_encoder(self):
         if self._token_encoder is not None:
@@ -415,6 +449,7 @@ class Graph(ABC):
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
+            self.refresh_edge_message_modes()
             
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
@@ -451,6 +486,7 @@ class Graph(ABC):
             self.connect_decision_node()
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
+        self.refresh_edge_message_modes()
         self.decision_node.execute(inputs, temperature=self.llm_temperature)
         self._log_node_output(self.decision_node, phase="final-decision")
         final_answers = self.decision_node.outputs
@@ -469,6 +505,7 @@ class Graph(ABC):
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
             log_probs += self.construct_temporal_connection(round)
+            self.refresh_edge_message_modes()
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
             execution_index = 0
@@ -508,6 +545,7 @@ class Graph(ABC):
             self.connect_decision_node()
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
+        self.refresh_edge_message_modes()
         await self.decision_node.async_execute(input, temperature=self.llm_temperature)
         self._log_node_output(self.decision_node, phase="final-decision")
         final_answers = self.decision_node.outputs

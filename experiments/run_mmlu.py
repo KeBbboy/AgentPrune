@@ -143,6 +143,19 @@ def parse_args():
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
+    parser.add_argument(
+        '--edge_message_mode',
+        type=str,
+        default='full_output',
+        choices=['full_output', 'random_full_rest_answer'],
+        help="Message mode for active graph edges. random_full_rest_answer sends full output on sampled edges and only the first-line answer on the rest.",
+    )
+    parser.add_argument(
+        '--full_output_edge_probability',
+        type=float,
+        default=1.0,
+        help="Per-edge probability of sending full output when --edge_message_mode=random_full_rest_answer.",
+    )
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
@@ -152,6 +165,8 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if not 0.0 <= args.full_output_edge_probability <= 1.0:
+        parser.error("--full_output_edge_probability must be between 0.0 and 1.0.")
 
     return args
 
@@ -180,6 +195,8 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
+                  edge_message_mode=args.edge_message_mode,
+                  full_output_edge_probability=args.full_output_edge_probability,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
