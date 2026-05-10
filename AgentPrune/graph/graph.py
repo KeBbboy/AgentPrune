@@ -236,9 +236,9 @@ class Graph(ABC):
                 active_edges.append((node, "temporal", predecessor.id))
 
         for predecessor in self.decision_node.spatial_predecessors:
-            active_edges.append((self.decision_node, "spatial", predecessor.id))
+            self.decision_node.active_spatial_message_modes[predecessor.id] = "full"
         for predecessor in self.decision_node.temporal_predecessors:
-            active_edges.append((self.decision_node, "temporal", predecessor.id))
+            self.decision_node.active_temporal_message_modes[predecessor.id] = "full"
 
         full_edge_count = int(len(active_edges) * self.full_output_edge_probability + 0.5)
         full_edge_count = max(0, min(full_edge_count, len(active_edges)))
