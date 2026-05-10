@@ -45,6 +45,8 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                edge_message_mode: str = "full",
+                edge_answer_percent: float = 0.0,
                 ):
         
         if fixed_spatial_masks is None:
@@ -64,6 +66,9 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
+        self.edge_message_mode = edge_message_mode
+        self.edge_answer_percent = edge_answer_percent
+        self.eval_mode = False
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -202,8 +207,61 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].spatial_predecessors = []
             self.nodes[node_id].spatial_successors = []
+            self.nodes[node_id].spatial_message_types = {}
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
+        self.decision_node.spatial_message_types = {}
+
+    def _normalized_edge_answer_ratio(self) -> float:
+        ratio = self.edge_answer_percent
+        if ratio > 1.0:
+            ratio = ratio / 100.0
+        return min(max(ratio, 0.0), 1.0)
+
+    def _top_percent_answer_edge_indices(self) -> set[int]:
+        active_edge_indices = [
+            edge_idx
+            for edge_idx, ((src_id, dst_id), edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_masks))
+            if edge_mask > 0 and src_id != dst_id
+        ]
+        if len(active_edge_indices) == 0:
+            return set()
+
+        answer_ratio = self._normalized_edge_answer_ratio()
+        answer_edge_count = int(np.ceil(len(active_edge_indices) * answer_ratio))
+        if answer_edge_count <= 0:
+            return set()
+
+        edge_weights = torch.sigmoid(self.spatial_logits.detach())
+        sorted_edge_indices = sorted(
+            active_edge_indices,
+            key=lambda edge_idx: float(edge_weights[edge_idx]),
+            reverse=True,
+        )
+        return set(sorted_edge_indices[:answer_edge_count])
+
+    def _get_spatial_message_type(self, edge_idx: int, answer_edge_indices: set[int]) -> str:
+        if self.edge_message_mode == "full" or not self.eval_mode:
+            return "full"
+        if self.edge_message_mode == "top_percent":
+            return "answer" if edge_idx in answer_edge_indices else "reasoning"
+        raise ValueError(
+            f"Unsupported edge_message_mode: {self.edge_message_mode}. "
+            "Expected one of: full, top_percent."
+        )
+
+    def _add_spatial_successor_with_message_type(
+        self,
+        out_node: Node,
+        in_node: Node,
+        edge_idx: int,
+        answer_edge_indices: set[int],
+    ):
+        out_node.add_successor(in_node, 'spatial')
+        in_node.spatial_message_types[out_node.id] = self._get_spatial_message_type(
+            edge_idx,
+            answer_edge_indices,
+        )
 
     def _get_token_encoder(self):
         if self._token_encoder is not None:
@@ -355,6 +413,7 @@ class Graph(ABC):
     def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
         self.clear_spatial_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
+        answer_edge_indices = self._top_percent_answer_edge_indices()
         
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_logits, self.spatial_masks)):
             out_node:Node = self.find_node(potential_connection[0])
@@ -363,14 +422,24 @@ class Graph(ABC):
                 continue
             elif edge_mask == 1.0 and self.optimized_spatial==False:
                 if not self.check_cycle(in_node, {out_node}):
-                    out_node.add_successor(in_node,'spatial')
+                    self._add_spatial_successor_with_message_type(
+                        out_node,
+                        in_node,
+                        edge_idx,
+                        answer_edge_indices,
+                    )
                 continue
             if not self.check_cycle(in_node, {out_node}):
                 edge_prob = torch.sigmoid(edge_logit / temperature)
                 if threshold:
                     edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
                 if torch.rand(1) < edge_prob:
-                    out_node.add_successor(in_node,'spatial')
+                    self._add_spatial_successor_with_message_type(
+                        out_node,
+                        in_node,
+                        edge_idx,
+                        answer_edge_indices,
+                    )
                     log_probs.append(torch.log(edge_prob))
                 else:
                     log_probs.append(torch.log(1 - edge_prob))
@@ -520,6 +589,7 @@ class Graph(ABC):
             node.update_memory()
 
     def set_eval_mode(self, enabled: bool):
+        self.eval_mode = enabled
         self.enable_edge_cost_recording = not enabled
 
     def check_cycle(self, new_node, target_nodes):

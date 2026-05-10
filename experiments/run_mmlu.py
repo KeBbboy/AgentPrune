@@ -141,6 +141,11 @@ def parse_args():
                         help="Maximum number of validation questions to evaluate.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
+    parser.add_argument('--edge_message_mode', type=str, default='full',
+                        choices=['full', 'top_percent'],
+                        help="Spatial edge message mode. full keeps original outputs; top_percent sends answer on top-weight edges and reasoning on the rest.")
+    parser.add_argument('--edge_answer_percent', type=float, default=0.0,
+                        help="Percent of kept spatial edges that send answer in top_percent mode. Accepts 0-100 or 0-1.")
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
     parser.add_argument('--temperature', type=float, default=0.0,
@@ -180,6 +185,8 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
+                  edge_message_mode=args.edge_message_mode,
+                  edge_answer_percent=args.edge_answer_percent,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
