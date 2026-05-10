@@ -223,21 +223,28 @@ class Graph(ABC):
         if self.edge_message_mode != "random_full_rest_answer":
             raise ValueError(f"Unsupported edge_message_mode: {self.edge_message_mode}")
 
-        def choose_message_type() -> str:
-            if random.random() < self.full_output_edge_probability:
-                return "full"
-            return "answer_only"
-
+        active_edges = []
         for node in self.nodes.values():
             for predecessor in node.spatial_predecessors:
-                node.active_spatial_message_modes[predecessor.id] = choose_message_type()
+                active_edges.append((node, "spatial", predecessor.id))
             for predecessor in node.temporal_predecessors:
-                node.active_temporal_message_modes[predecessor.id] = choose_message_type()
+                active_edges.append((node, "temporal", predecessor.id))
 
         for predecessor in self.decision_node.spatial_predecessors:
-            self.decision_node.active_spatial_message_modes[predecessor.id] = choose_message_type()
+            active_edges.append((self.decision_node, "spatial", predecessor.id))
         for predecessor in self.decision_node.temporal_predecessors:
-            self.decision_node.active_temporal_message_modes[predecessor.id] = choose_message_type()
+            active_edges.append((self.decision_node, "temporal", predecessor.id))
+
+        full_edge_count = int(len(active_edges) * self.full_output_edge_probability + 0.5)
+        full_edge_count = max(0, min(full_edge_count, len(active_edges)))
+        full_edge_indexes = set(random.sample(range(len(active_edges)), full_edge_count))
+
+        for edge_index, (node, edge_type, predecessor_id) in enumerate(active_edges):
+            message_type = "full" if edge_index in full_edge_indexes else "answer_only"
+            if edge_type == "spatial":
+                node.active_spatial_message_modes[predecessor_id] = message_type
+            else:
+                node.active_temporal_message_modes[predecessor_id] = message_type
 
     def _get_token_encoder(self):
         if self._token_encoder is not None:
