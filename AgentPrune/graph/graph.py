@@ -240,6 +240,28 @@ class Graph(ABC):
         )
         return set(sorted_edge_indices[:answer_edge_count])
 
+    def _top_percent_temporal_answer_edge_indices(self) -> set[int]:
+        active_edge_indices = [
+            edge_idx
+            for edge_idx, ((src_id, dst_id), edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_masks))
+            if edge_mask > 0 and src_id != dst_id
+        ]
+        if len(active_edge_indices) == 0:
+            return set()
+
+        answer_ratio = self._normalized_edge_answer_ratio()
+        answer_edge_count = int(np.ceil(len(active_edge_indices) * answer_ratio))
+        if answer_edge_count <= 0:
+            return set()
+
+        edge_weights = torch.sigmoid(self.temporal_logits.detach())
+        sorted_edge_indices = sorted(
+            active_edge_indices,
+            key=lambda edge_idx: float(edge_weights[edge_idx]),
+            reverse=True,
+        )
+        return set(sorted_edge_indices[:answer_edge_count])
+
     def _get_spatial_message_type(self, edge_idx: int, answer_edge_indices: set[int]) -> str:
         if self.edge_message_mode == "full" or not self.eval_mode:
             return "full"
@@ -259,6 +281,19 @@ class Graph(ABC):
     ):
         out_node.add_successor(in_node, 'spatial')
         in_node.spatial_message_types[out_node.id] = self._get_spatial_message_type(
+            edge_idx,
+            answer_edge_indices,
+        )
+
+    def _add_temporal_successor_with_message_type(
+        self,
+        out_node: Node,
+        in_node: Node,
+        edge_idx: int,
+        answer_edge_indices: set[int],
+    ):
+        out_node.add_successor(in_node, 'temporal')
+        in_node.temporal_message_types[out_node.id] = self._get_spatial_message_type(
             edge_idx,
             answer_edge_indices,
         )
@@ -397,6 +432,7 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].temporal_predecessors = []
             self.nodes[node_id].temporal_successors = []
+            self.nodes[node_id].temporal_message_types = {}
 
     def reset_runtime_audit(self):
         for node in self.nodes.values():
@@ -451,6 +487,7 @@ class Graph(ABC):
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal)]
         if round == 0:
             return torch.sum(torch.stack(log_probs))  
+        answer_edge_indices = self._top_percent_temporal_answer_edge_indices()
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_logits, self.temporal_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
@@ -458,14 +495,24 @@ class Graph(ABC):
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
-                    out_node.add_successor(in_node,'temporal')
+                    self._add_temporal_successor_with_message_type(
+                        out_node,
+                        in_node,
+                        edge_idx,
+                        answer_edge_indices,
+                    )
                 continue
             
             edge_prob = torch.sigmoid(edge_logit / temperature)
             if threshold:
                 edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
             if torch.rand(1) < edge_prob:
-                out_node.add_successor(in_node,'temporal')
+                self._add_temporal_successor_with_message_type(
+                    out_node,
+                    in_node,
+                    edge_idx,
+                    answer_edge_indices,
+                )
                 log_probs.append(torch.log(edge_prob))
             else:
                 log_probs.append(torch.log(1 - edge_prob))

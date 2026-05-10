@@ -68,6 +68,7 @@ class Node(ABC):
         self.runtime_round_index: Optional[int] = None
         self.runtime_execution_index: Optional[int] = None
         self.spatial_message_types: Dict[str, str] = {}
+        self.temporal_message_types: Dict[str, str] = {}
 
     @property
     def node_name(self):
@@ -207,7 +208,18 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
+                message_type = self.temporal_message_types.get(predecessor.id, "full")
+                formatted_output = self._format_spatial_output(
+                    predecessor=predecessor,
+                    output=predecessor_output,
+                    message_type=message_type,
+                )
+                temporal_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": formatted_output,
+                    "raw_output": predecessor_output,
+                    "message_type": message_type,
+                }
 
         return temporal_info
     
