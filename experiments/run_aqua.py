@@ -28,13 +28,6 @@ from experiments.run_mmlu import (
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
 
-def should_use_structured_aqua_output(active_edge_message_mode: str) -> bool:
-    return active_edge_message_mode in {
-        'full_output_xml',
-        'spatial_answer_claim_temporal_top_score_steps',
-    }
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune experiments on AQuA")
 
@@ -82,36 +75,9 @@ def parse_args():
     parser.add_argument('--optimized_temporal', action='store_true')
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation.")
-    parser.add_argument(
-        '--active_edge_message_mode',
-        type=str,
-        default='spatial_answer_claim_temporal_top_score_steps',
-        choices=[
-            'full_output',
-            'full_output_xml',
-            'spatial_answer_claim_temporal_top_score_steps',
-        ],
-        help="High-level active-edge message-sharing mode.",
-    )
-    parser.add_argument(
-        '--answer_steps_top_score_ratio',
-        type=float,
-        default=0.7,
-        help="Top ratio of selected active edges ranked by score that share answer+steps.",
-    )
-
     args = parser.parse_args()
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
-    if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
-        parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
-
-    args.share_active_spatial_answer_claim = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
-    args.share_active_temporal_answer_steps_top_score = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
 
     return args
 
@@ -128,7 +94,6 @@ async def main():
     kwargs = get_kwargs(
         args.mode,
         len(agent_names),
-        use_structured_output=should_use_structured_aqua_output(args.active_edge_message_mode),
     )
 
     graph = Graph(
@@ -140,9 +105,6 @@ async def main():
         llm_temperature=args.temperature,
         optimized_spatial=args.optimized_spatial,
         optimized_temporal=args.optimized_temporal,
-        share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
-        share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
-        answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
         **kwargs,
     )
 

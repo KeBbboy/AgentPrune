@@ -106,15 +106,6 @@ def freeze_graph_for_evaluation(graph: Graph) -> None:
 
 
 
-def should_use_structured_mmlu_output(active_edge_message_mode: str) -> bool:
-    return active_edge_message_mode in {
-        'full_output_xml',
-        'spatial_answer_claim_temporal_top_score_steps',
-        'temporal_answer_claim_spatial_top_score_steps',
-    }
-
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Process some parameters.")
 
@@ -152,24 +143,6 @@ def parse_args():
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
-    parser.add_argument(
-        '--active_edge_message_mode',
-        type=str,
-        default='full_output',
-        choices=[
-            'full_output',
-            'full_output_xml',
-            'spatial_answer_claim_temporal_top_score_steps',
-            'temporal_answer_claim_spatial_top_score_steps',
-        ],
-        help="High-level active-edge message-sharing mode for retained communication edges.",
-    )
-    parser.add_argument(
-        '--answer_steps_top_score_ratio',
-        type=float,
-        default=0.7,
-        help="Top ratio of selected active edges ranked by score that share answer+steps.",
-    )
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
@@ -179,17 +152,6 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
-    if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
-        parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
-    args.share_active_spatial_answer_claim = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
-    args.share_active_temporal_answer_steps_top_score = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
-    args.share_active_temporal_answer_claim = (
-        args.active_edge_message_mode == 'temporal_answer_claim_spatial_top_score_steps'
-    )
 
     return args
 
@@ -207,7 +169,6 @@ async def main():
     kwargs = get_kwargs(
         mode,
         len(agent_names),
-        use_structured_output=should_use_structured_mmlu_output(args.active_edge_message_mode),
     )
     limit_questions = args.limit_questions
     
@@ -219,10 +180,6 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
-                  share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
-                  share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
-                  share_active_temporal_answer_claim=args.share_active_temporal_answer_claim,
-                  answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')

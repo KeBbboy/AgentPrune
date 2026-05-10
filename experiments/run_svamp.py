@@ -79,13 +79,6 @@ def get_token_snapshot():
     return PromptTokens.instance().value, CompletionTokens.instance().value
 
 
-def should_use_structured_svamp_output(active_edge_message_mode: str) -> bool:
-    return active_edge_message_mode in {
-        'full_output_xml',
-        'spatial_answer_claim_temporal_top_score_steps',
-    }
-
-
 def print_phase_token_summary(phase_name: str, prompt_used: float, completion_used: float):
     total_used = prompt_used + completion_used
     print(f"{phase_name} Prompt Tokens: {prompt_used}")
@@ -149,23 +142,6 @@ def parse_args():
                         help='The decison method of the agentprune')
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After the optimization batches finish, switch the graph to evaluation message-sharing mode for the remaining batches.")
-    parser.add_argument(
-        '--active_edge_message_mode',
-        type=str,
-        default='spatial_answer_claim_temporal_top_score_steps',
-        choices=[
-            'full_output',
-            'full_output_xml',
-            'spatial_answer_claim_temporal_top_score_steps',
-        ],
-        help="Active-edge message-sharing mode applied after training batches finish.",
-    )
-    parser.add_argument(
-        '--answer_steps_top_score_ratio',
-        type=float,
-        default=0.7,
-        help="Fraction of retained active edges ranked by learned score that share answer+steps in top-score modes.",
-    )
     parser.add_argument('--optimized_spatial', action='store_true')
     parser.add_argument('--optimized_temporal', action='store_true')
     args = parser.parse_args()
@@ -173,15 +149,6 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
-    if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
-        parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
-
-    args.share_active_spatial_answer_claim = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
-    args.share_active_temporal_answer_steps_top_score = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
     return args
 
 
@@ -199,7 +166,6 @@ async def main():
     kwargs = get_kwargs(
         args.mode,
         len(agent_names),
-        use_structured_output=should_use_structured_svamp_output(args.active_edge_message_mode),
     )
     graph = Graph(domain=args.domain,
                   llm_name=args.llm_name,
@@ -207,9 +173,6 @@ async def main():
                   decision_method=decision_method,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
-                  share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
-                  share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
-                  answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
     graph.set_eval_mode(False)
     optimizer = torch.optim.Adam([graph.spatial_logits, graph.temporal_logits], lr=args.lr)

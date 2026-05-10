@@ -150,37 +150,11 @@ def parse_args():
                         help="After the optimization batches finish, switch the graph to evaluation message-sharing mode for the remaining batches.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
-    parser.add_argument(
-        '--active_edge_message_mode',
-        type=str,
-        default='spatial_answer_claim_temporal_top_score_steps',
-        choices=[
-            'full_output',
-            'full_output_xml',
-            'spatial_answer_claim_temporal_top_score_steps',
-        ],
-        help="Active-edge message-sharing mode applied after training batches finish.",
-    )
-    parser.add_argument(
-        '--answer_steps_top_score_ratio',
-        type=float,
-        default=0.7,
-        help="Fraction of retained active edges ranked by learned score that share answer+steps in top-score modes.",
-    )
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
-    if not 0.0 <= args.answer_steps_top_score_ratio <= 1.0:
-        parser.error("--answer_steps_top_score_ratio must be between 0.0 and 1.0.")
-
-    args.share_active_spatial_answer_claim = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
-    args.share_active_temporal_answer_steps_top_score = (
-        args.active_edge_message_mode == 'spatial_answer_claim_temporal_top_score_steps'
-    )
 
     return args
 
@@ -204,10 +178,6 @@ async def main():
     kwargs = get_kwargs(
         args.mode,
         len(agent_names),
-        use_structured_output=args.active_edge_message_mode in {
-            'full_output_xml',
-            'spatial_answer_claim_temporal_top_score_steps',
-        },
     )
     graph = Graph(domain="humaneval",
                   llm_name=args.llm_name,
@@ -217,9 +187,6 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
-                  share_active_spatial_answer_claim=args.share_active_spatial_answer_claim,
-                  share_active_temporal_answer_steps_top_score=args.share_active_temporal_answer_steps_top_score,
-                  answer_steps_top_score_ratio=args.answer_steps_top_score_ratio,
                   **kwargs)
     graph.set_eval_mode(False)
     optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
