@@ -125,9 +125,9 @@ Using the reasoning from other agents as additional advice with critical thinkin
 You are strictly prohibited from imitating the analysis process of other agents
 Your reply must be less than 100 words but include your answer and a brief step by step analysis of the question.
 The first line of your reply must contain only one letter(for example : A, B, C or D)
-"""
+        """
         role_prefix = f"{role_instruction}\n" if role_instruction else ""
-        return role_prefix + generic_instruction
+        return role_prefix + generic_instruction + MMLUPromptSet._strict_answer_format()
     
     @staticmethod
     def get_decision_constraint():
