@@ -147,14 +147,18 @@ def parse_args():
         '--edge_message_mode',
         type=str,
         default='full_output',
-        choices=['full_output', 'random_full_rest_answer'],
-        help="Message mode for active graph edges. random_full_rest_answer sends full output on sampled edges and only the first-line answer on the rest.",
+        choices=['full_output', 'random_full_rest_answer', 'random_full_rest_reasoning'],
+        help=(
+            "Message mode for active graph edges. random_full_rest_answer sends full output on sampled edges "
+            "and only the first-line answer on the rest. random_full_rest_reasoning sends full output on sampled "
+            "edges and reasoning without the answer on the rest."
+        ),
     )
     parser.add_argument(
         '--full_output_edge_probability',
         type=float,
         default=1.0,
-        help="Per-edge probability of sending full output when --edge_message_mode=random_full_rest_answer.",
+        help="Ratio of active edges that send full output when using a random_full_rest_* edge message mode.",
     )
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")

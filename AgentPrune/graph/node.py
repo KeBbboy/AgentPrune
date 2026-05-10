@@ -149,6 +149,37 @@ class Node(ABC):
                 return line
         return predecessor_output.strip()
 
+    def _extract_reasoning_without_answer(self, predecessor_output: Any) -> str:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
+
+        reasoning_output = re.sub(
+            r"<answer>\s*.*?\s*</answer>",
+            "",
+            predecessor_output,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        kept_lines = []
+        first_content_line_seen = False
+        for line in reasoning_output.splitlines():
+            stripped_line = line.strip()
+            if not first_content_line_seen and stripped_line:
+                first_content_line_seen = True
+                if re.match(r"^[A-E]$", stripped_line, flags=re.IGNORECASE):
+                    continue
+            if re.match(r"^(final\s+)?answer\s*(is|:)\s*.+$", stripped_line, flags=re.IGNORECASE):
+                continue
+            kept_lines.append(line)
+        return "\n".join(kept_lines).strip()
+
+    def _format_predecessor_output(self, predecessor_output: Any, message_type: str) -> str:
+        if message_type == "answer_only":
+            return self._extract_first_line_answer(predecessor_output)
+        if message_type == "reasoning_only":
+            return self._extract_reasoning_without_answer(predecessor_output)
+        return predecessor_output
+
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
         spatial_info = {}
@@ -162,8 +193,7 @@ class Node(ABC):
                 else:
                     predecessor_output = predecessor_outputs
                 message_type = self.active_spatial_message_modes.get(predecessor.id, "full")
-                if message_type == "answer_only":
-                    predecessor_output = self._extract_first_line_answer(predecessor_output)
+                predecessor_output = self._format_predecessor_output(predecessor_output, message_type)
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": predecessor_output,
@@ -184,8 +214,7 @@ class Node(ABC):
                 else:
                     predecessor_output = predecessor_outputs
                 message_type = self.active_temporal_message_modes.get(predecessor.id, "full")
-                if message_type == "answer_only":
-                    predecessor_output = self._extract_first_line_answer(predecessor_output)
+                predecessor_output = self._format_predecessor_output(predecessor_output, message_type)
                 temporal_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": predecessor_output,

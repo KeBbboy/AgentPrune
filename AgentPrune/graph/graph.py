@@ -220,8 +220,13 @@ class Graph(ABC):
         if self.edge_message_mode == "full_output":
             return
 
-        if self.edge_message_mode != "random_full_rest_answer":
+        rest_message_type_by_mode = {
+            "random_full_rest_answer": "answer_only",
+            "random_full_rest_reasoning": "reasoning_only",
+        }
+        if self.edge_message_mode not in rest_message_type_by_mode:
             raise ValueError(f"Unsupported edge_message_mode: {self.edge_message_mode}")
+        rest_message_type = rest_message_type_by_mode[self.edge_message_mode]
 
         active_edges = []
         for node in self.nodes.values():
@@ -240,7 +245,7 @@ class Graph(ABC):
         full_edge_indexes = set(random.sample(range(len(active_edges)), full_edge_count))
 
         for edge_index, (node, edge_type, predecessor_id) in enumerate(active_edges):
-            message_type = "full" if edge_index in full_edge_indexes else "answer_only"
+            message_type = "full" if edge_index in full_edge_indexes else rest_message_type
             if edge_type == "spatial":
                 node.active_spatial_message_modes[predecessor_id] = message_type
             else:

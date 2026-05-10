@@ -78,26 +78,6 @@ You are a liar who only tell lies.
 """,
 }
 
-
-XML_ANALYZE_FORMAT_CONSTRAINT = """
-Answer the multiple-choice question by analyzing it from your role's perspective.
-
-CRITICAL OUTPUT FORMAT — you MUST respond with exactly these three XML blocks,
-in this order, with no text before, between, or after them:
-
-<claim>One sentence stating your core position.</claim>
-<steps>
-- First key reasoning point
-- Second key reasoning point
-- Additional points as needed (no upper limit, but each should be one short bullet)
-</steps>
-<answer>A</answer>
-
-The <answer> tag must contain ONLY a single letter from {A, B, C, D}.
-Do not include explanations inside <answer>.
-Do not output any text outside these three blocks.
-"""
-
 @PromptSetRegistry.register('mmlu')
 class MMLUPromptSet(PromptSet):
     """
@@ -146,10 +126,8 @@ You are strictly prohibited from imitating the analysis process of other agents
 Your reply must be less than 100 words but include your answer and a brief step by step analysis of the question.
 The first line of your reply must contain only one letter(for example : A, B, C or D)
 """
-        if use_structured_output:
-            return f"{role_instruction}\n{generic_instruction}\n{XML_ANALYZE_FORMAT_CONSTRAINT}"
         role_prefix = f"{role_instruction}\n" if role_instruction else ""
-        return role_prefix + generic_instruction + MMLUPromptSet._strict_answer_format()
+        return role_prefix + generic_instruction
     
     @staticmethod
     def get_decision_constraint():
