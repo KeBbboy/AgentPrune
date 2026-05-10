@@ -186,6 +186,9 @@ async def main():
         len(agent_names),
     )
     limit_questions = args.limit_questions
+    train_mode_enabled = args.optimized_spatial or args.optimized_temporal
+    eval_edge_message_mode = args.edge_message_mode
+    eval_full_output_edge_probability = args.full_output_edge_probability
     
     graph = Graph(domain=args.domain,
                   llm_name=args.llm_name,
@@ -195,8 +198,8 @@ async def main():
                   llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
-                  edge_message_mode=args.edge_message_mode,
-                  full_output_edge_probability=args.full_output_edge_probability,
+                  edge_message_mode='full_output' if train_mode_enabled else eval_edge_message_mode,
+                  full_output_edge_probability=1.0 if train_mode_enabled else eval_full_output_edge_probability,
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
@@ -205,8 +208,10 @@ async def main():
     train_completion_used = 0.0
     train_agent_metrics: List[Dict[str, Any]] = []
     
-    if args.optimized_spatial or args.optimized_temporal:
+    if train_mode_enabled:
         graph.set_eval_mode(False)
+        if eval_edge_message_mode != 'full_output':
+            print("Training edge message mode forced to full_output; requested edge message mode will be applied after training.")
         train_prompt_start, train_completion_start = get_token_snapshot()
         train_agent_start = get_agent_token_snapshot(graph)
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
@@ -224,6 +229,13 @@ async def main():
     if args.freeze_after_training:
         freeze_graph_for_evaluation(graph)
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
+
+    graph.edge_message_mode = eval_edge_message_mode
+    graph.full_output_edge_probability = eval_full_output_edge_probability
+    print(
+        f"Evaluation edge message mode: {graph.edge_message_mode}; "
+        f"full_output_edge_probability={graph.full_output_edge_probability}."
+    )
 
     graph.set_eval_mode(True)
     eval_agent_start = get_agent_token_snapshot(graph)
