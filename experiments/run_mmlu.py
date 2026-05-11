@@ -9,14 +9,22 @@ import random
 import copy
 import numpy as np
 import torch
+import tiktoken
 
 from AgentPrune.graph.graph import Graph
+from AgentPrune.graph.node import Node
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
 from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
 from AgentPrune.utils.const import AgentPrune_ROOT
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
+
+EDGE_MESSAGE_TOKEN_PREFIX_MODES = {
+    "token_prefix",
+    "agentprune_token_prefix",
+    "random_full_rest_answer",
+}
 
 def print_agent_token_summary(graph: Graph):
     print("Per-Agent Token Usage:")
@@ -104,6 +112,80 @@ def freeze_graph_for_evaluation(graph: Graph) -> None:
     graph.temporal_logits.requires_grad_(False)
 
 
+def _truncate_text_by_token_ratio(node: Node, text: Any, keep_ratio: float) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+    if not text:
+        return text
+    try:
+        encoder = getattr(node, "_mmlu_edge_message_encoder", None)
+        if encoder is None:
+            try:
+                encoder = tiktoken.encoding_for_model(node.llm_name or "gpt-4o")
+            except Exception:
+                encoder = tiktoken.get_encoding("cl100k_base")
+            node._mmlu_edge_message_encoder = encoder
+        tokens = encoder.encode(text)
+        if len(tokens) == 0:
+            return text
+        keep_tokens = max(1, int(len(tokens) * keep_ratio))
+        if keep_tokens >= len(tokens):
+            return text
+        return encoder.decode(tokens[:keep_tokens])
+    except Exception:
+        words = text.split()
+        if len(words) == 0:
+            return text
+        keep_words = max(1, int(len(words) * keep_ratio))
+        return " ".join(words[:keep_words])
+
+
+def install_mmlu_edge_message_truncation() -> None:
+    if getattr(Node, "_mmlu_edge_message_truncation_installed", False):
+        return
+
+    original_get_spatial_info = Node.get_spatial_info
+    original_get_temporal_info = Node.get_temporal_info
+
+    def get_spatial_info_with_token_prefix(self: Node) -> Dict[str, Dict]:
+        spatial_info = original_get_spatial_info(self)
+        keep_ratio = getattr(self, "mmlu_edge_message_token_keep_ratio", None)
+        if keep_ratio is None or keep_ratio >= 1:
+            return spatial_info
+        for info in spatial_info.values():
+            info["output"] = _truncate_text_by_token_ratio(self, info["output"], keep_ratio)
+            info["message_type"] = "token_prefix"
+        return spatial_info
+
+    def get_temporal_info_with_token_prefix(self: Node) -> Dict[str, Any]:
+        temporal_info = original_get_temporal_info(self)
+        keep_ratio = getattr(self, "mmlu_edge_message_token_keep_ratio", None)
+        if keep_ratio is None or keep_ratio >= 1:
+            return temporal_info
+        for info in temporal_info.values():
+            info["output"] = _truncate_text_by_token_ratio(self, info["output"], keep_ratio)
+        return temporal_info
+
+    Node.get_spatial_info = get_spatial_info_with_token_prefix
+    Node.get_temporal_info = get_temporal_info_with_token_prefix
+    Node._mmlu_edge_message_truncation_installed = True
+
+
+def configure_mmlu_edge_message_mode(
+    graph: Graph,
+    edge_message_mode: str,
+    full_output_edge_probability: float,
+) -> None:
+    if edge_message_mode not in EDGE_MESSAGE_TOKEN_PREFIX_MODES:
+        return
+    install_mmlu_edge_message_truncation()
+    for node in graph.nodes.values():
+        node.mmlu_edge_message_token_keep_ratio = full_output_edge_probability
+    print(
+        "MMLU edge message mode enabled: kept training edges pass "
+        f"the first {full_output_edge_probability:.2%} of output tokens during evaluation."
+    )
+
 
 
 def parse_args():
@@ -113,6 +195,11 @@ def parse_args():
                         choices=['DirectAnswer', 'FullConnected', 'Random', 'Chain', 'Debate', 'Layered','Star', 'Mesh',
                                  'FakeFullConnected','FakeRandom','FakeChain','FakeStar','FakeMesh','FakeAGRandom','FakeAGFull'],
                         help="Mode of operation. Default is 'FullConnected'.")
+    parser.add_argument('--edge_message_mode', type=str, default='full',
+                        choices=['full', 'token_prefix', 'agentprune_token_prefix', 'random_full_rest_answer'],
+                        help="MMLU-only evaluation edge message mode. Use token_prefix for AgentPrune token-ratio truncation.")
+    parser.add_argument('--full_output_edge_probability', type=float, default=1.0,
+                        help="For token_prefix edge_message_mode, keep this leading ratio of tokens on retained agent edges during evaluation.")
     parser.add_argument('--lr', type=float, default=0.1,
                         help="learning rate")
     parser.add_argument('--batch_size', type=int, default=4,
@@ -152,6 +239,8 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if args.edge_message_mode in EDGE_MESSAGE_TOKEN_PREFIX_MODES and not (0 < args.full_output_edge_probability <= 1):
+        parser.error("--full_output_edge_probability must be in (0, 1] for token-prefix edge message modes.")
 
     return args
 
@@ -209,6 +298,11 @@ async def main():
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
 
     graph.set_eval_mode(True)
+    configure_mmlu_edge_message_mode(
+        graph,
+        args.edge_message_mode,
+        args.full_output_edge_probability,
+    )
     eval_agent_start = get_agent_token_snapshot(graph)
 
     eval_prompt_start, eval_completion_start = get_token_snapshot()
