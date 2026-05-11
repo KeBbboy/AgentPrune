@@ -27,3 +27,4 @@ hidden/
 dataset/aqua/train.jsonl
 dataset/aqua/dev.jsonl
 dataset/aqua/test.jsonl
+Qwen3-8B/
