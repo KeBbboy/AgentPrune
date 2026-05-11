@@ -54,6 +54,7 @@ class FinalWriteCode(Node):
   
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        self.set_last_input_messages(message)
         response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         return response
     
@@ -63,6 +64,7 @@ class FinalWriteCode(Node):
   
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        self.set_last_input_messages(message)
         response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
         return response
 
@@ -94,6 +96,7 @@ class FinalRefer(Node):
   
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        self.set_last_input_messages(message)
         response = self.llm.gen(message, temperature=kwargs.get("temperature"))
         return response
     
@@ -103,6 +106,7 @@ class FinalRefer(Node):
   
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        self.set_last_input_messages(message)
         response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
         return response
 

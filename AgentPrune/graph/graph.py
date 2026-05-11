@@ -45,6 +45,8 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                edge_message_mode: str = "full",
+                edge_answer_percent: float = 0.0,
                 ):
         
         if fixed_spatial_masks is None:
@@ -64,6 +66,30 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
+        self.edge_message_mode = edge_message_mode
+        self.edge_answer_percent = edge_answer_percent
+        self.eval_mode = False
+        self.edge_content_policy = None
+        self.edge_policy_training = False
+        self.edge_policy_log_probs: List[torch.Tensor] = []
+        self.edge_policy_entropies: List[torch.Tensor] = []
+        self.edge_policy_action_records: List[Dict[str, Any]] = []
+        self.edge_policy_action_counts: Dict[str, int] = {
+            "answer": 0,
+            "reasoning": 0,
+            "spatial_answer": 0,
+            "spatial_reasoning": 0,
+            "temporal_answer": 0,
+            "temporal_reasoning": 0,
+        }
+        self.current_run_prompt_tokens = 0
+        self.current_run_completion_tokens = 0
+        self.current_run_total_tokens = 0
+        self.current_run_step_tokens = 0
+        self.current_run_step_edges = 0
+        self.current_run_spatial_step_tokens = 0
+        self.current_run_temporal_step_tokens = 0
+        self.current_run_step_tokens_by_edge: Dict[tuple[str, int], int] = {}
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -202,8 +228,220 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].spatial_predecessors = []
             self.nodes[node_id].spatial_successors = []
+            self.nodes[node_id].spatial_message_types = {}
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
+        self.decision_node.spatial_message_types = {}
+
+    def reset_edge_policy_trace(self):
+        self.edge_policy_log_probs = []
+        self.edge_policy_entropies = []
+        self.edge_policy_action_records = []
+        self.edge_policy_action_counts = {
+            "answer": 0,
+            "reasoning": 0,
+            "spatial_answer": 0,
+            "spatial_reasoning": 0,
+            "temporal_answer": 0,
+            "temporal_reasoning": 0,
+        }
+
+    def reset_run_token_usage(self):
+        self.current_run_prompt_tokens = 0
+        self.current_run_completion_tokens = 0
+        self.current_run_total_tokens = 0
+        self.current_run_step_tokens = 0
+        self.current_run_step_edges = 0
+        self.current_run_spatial_step_tokens = 0
+        self.current_run_temporal_step_tokens = 0
+        self.current_run_step_tokens_by_edge = {}
+
+    def get_edge_policy_log_prob_sum(self) -> torch.Tensor:
+        if len(self.edge_policy_log_probs) == 0:
+            return torch.tensor(0.0)
+        return torch.sum(torch.stack(self.edge_policy_log_probs))
+
+    def get_edge_policy_entropy_sum(self) -> torch.Tensor:
+        if len(self.edge_policy_entropies) == 0:
+            return torch.tensor(0.0)
+        return torch.sum(torch.stack(self.edge_policy_entropies))
+
+    def get_edge_policy_action_counts(self) -> Dict[str, int]:
+        return dict(self.edge_policy_action_counts)
+
+    def get_edge_policy_action_records(self) -> List[Dict[str, Any]]:
+        return list(self.edge_policy_action_records)
+
+    def get_step_tokens_by_edge(self) -> Dict[tuple[str, int], int]:
+        return dict(self.current_run_step_tokens_by_edge)
+
+    def get_edge_policy_feature_dim(self) -> int:
+        return 2 + 2 * len(self.nodes)
+
+    def get_edge_policy_feature(
+        self,
+        edge_idx: int,
+        edge_kind: str,
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        edge_logits = self.spatial_logits if edge_kind == "spatial" else self.temporal_logits
+        potential_edges = (
+            self.potential_spatial_edges
+            if edge_kind == "spatial"
+            else self.potential_temporal_edges
+        )
+        src_id, dst_id = potential_edges[edge_idx]
+        node_ids = list(self.nodes.keys())
+        src_index = node_ids.index(src_id)
+        dst_index = node_ids.index(dst_id)
+        edge_weight = float(torch.sigmoid(edge_logits[edge_idx].detach()).item())
+        feature = torch.zeros(self.get_edge_policy_feature_dim(), dtype=torch.float32)
+        feature[0] = edge_weight
+        feature[1] = 1.0 if edge_kind == "temporal" else 0.0
+        feature[2 + src_index] = 1.0
+        feature[2 + len(node_ids) + dst_index] = 1.0
+        if device is not None:
+            feature = feature.to(device)
+        return feature.view(1, -1)
+
+    def _normalized_edge_answer_ratio(self) -> float:
+        ratio = self.edge_answer_percent
+        if ratio > 1.0:
+            ratio = ratio / 100.0
+        return min(max(ratio, 0.0), 1.0)
+
+    def _top_percent_answer_edge_indices(self) -> set[int]:
+        active_edge_indices = [
+            edge_idx
+            for edge_idx, ((src_id, dst_id), edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_masks))
+            if edge_mask > 0 and src_id != dst_id
+        ]
+        if len(active_edge_indices) == 0:
+            return set()
+
+        answer_ratio = self._normalized_edge_answer_ratio()
+        answer_edge_count = int(np.ceil(len(active_edge_indices) * answer_ratio))
+        if answer_edge_count <= 0:
+            return set()
+
+        edge_weights = torch.sigmoid(self.spatial_logits.detach())
+        sorted_edge_indices = sorted(
+            active_edge_indices,
+            key=lambda edge_idx: float(edge_weights[edge_idx]),
+            reverse=True,
+        )
+        return set(sorted_edge_indices[:answer_edge_count])
+
+    def _top_percent_answer_temporal_edge_indices(self) -> set[int]:
+        active_edge_indices = [
+            edge_idx
+            for edge_idx, (edge_mask) in enumerate(self.temporal_masks)
+            if edge_mask > 0
+        ]
+        if len(active_edge_indices) == 0:
+            return set()
+
+        answer_ratio = self._normalized_edge_answer_ratio()
+        answer_edge_count = int(np.ceil(len(active_edge_indices) * answer_ratio))
+        if answer_edge_count <= 0:
+            return set()
+
+        edge_weights = torch.sigmoid(self.temporal_logits.detach())
+        sorted_edge_indices = sorted(
+            active_edge_indices,
+            key=lambda edge_idx: float(edge_weights[edge_idx]),
+            reverse=True,
+        )
+        return set(sorted_edge_indices[:answer_edge_count])
+
+    def _record_edge_policy_action(self, edge_kind: str, message_type: str) -> None:
+        self.edge_policy_action_counts[message_type] += 1
+        self.edge_policy_action_counts[f"{edge_kind}_{message_type}"] += 1
+
+    def _get_rl_policy_message_type(self, edge_idx: int, edge_kind: str) -> str:
+        if self.edge_content_policy is None:
+            return "full"
+
+        policy = self.edge_content_policy
+        try:
+            device = next(policy.parameters()).device
+        except StopIteration:
+            device = self.spatial_logits.device
+        edge_feature = self.get_edge_policy_feature(edge_idx, edge_kind, device=device)
+        logits = policy(edge_feature)
+
+        if self.edge_policy_training:
+            dist = torch.distributions.Categorical(logits=logits)
+            action = dist.sample()
+            log_prob = dist.log_prob(action).squeeze()
+            entropy = dist.entropy().squeeze()
+            self.edge_policy_log_probs.append(log_prob)
+            self.edge_policy_entropies.append(entropy)
+            action_value = int(action.item())
+        else:
+            log_prob = None
+            entropy = None
+            with torch.no_grad():
+                action_value = int(torch.argmax(logits, dim=-1).item())
+
+        message_type = "answer" if action_value == 0 else "reasoning"
+        self._record_edge_policy_action(edge_kind, message_type)
+        if self.edge_policy_training and log_prob is not None and entropy is not None:
+            self.edge_policy_action_records.append({
+                "edge_kind": edge_kind,
+                "edge_idx": edge_idx,
+                "message_type": message_type,
+                "log_prob": log_prob,
+                "entropy": entropy,
+            })
+        return message_type
+
+    def _get_edge_message_type(
+        self,
+        edge_idx: int,
+        edge_kind: str,
+        answer_edge_indices: set[int],
+    ) -> str:
+        if self.edge_message_mode == "full" or not self.eval_mode:
+            return "full"
+        if self.edge_message_mode == "top_percent":
+            message_type = "answer" if edge_idx in answer_edge_indices else "reasoning"
+            self._record_edge_policy_action(edge_kind, message_type)
+            return message_type
+        if self.edge_message_mode == "rl_policy":
+            return self._get_rl_policy_message_type(edge_idx, edge_kind)
+        raise ValueError(
+            f"Unsupported edge_message_mode: {self.edge_message_mode}. "
+            "Expected one of: full, top_percent, rl_policy."
+        )
+
+    def _add_spatial_successor_with_message_type(
+        self,
+        out_node: Node,
+        in_node: Node,
+        edge_idx: int,
+        answer_edge_indices: set[int],
+    ):
+        out_node.add_successor(in_node, 'spatial')
+        in_node.spatial_message_types[out_node.id] = self._get_edge_message_type(
+            edge_idx,
+            "spatial",
+            answer_edge_indices,
+        )
+
+    def _add_temporal_successor_with_message_type(
+        self,
+        out_node: Node,
+        in_node: Node,
+        edge_idx: int,
+        answer_edge_indices: set[int],
+    ):
+        out_node.add_successor(in_node, 'temporal')
+        in_node.temporal_message_types[out_node.id] = self._get_edge_message_type(
+            edge_idx,
+            "temporal",
+            answer_edge_indices,
+        )
 
     def _get_token_encoder(self):
         if self._token_encoder is not None:
@@ -249,6 +487,55 @@ class Graph(ABC):
             return outputs[-1]
         return outputs
 
+    def _get_latest_memory_output(self, node: Node) -> Any:
+        outputs = node.last_memory.get("outputs", [])
+        if isinstance(outputs, list):
+            if len(outputs) == 0:
+                return None
+            return outputs[-1]
+        return outputs
+
+    def record_step_edge_token_usage(self, node: Node):
+        for predecessor in node.spatial_predecessors:
+            message_type = node.spatial_message_types.get(predecessor.id, "full")
+            if message_type != "reasoning":
+                continue
+            formatted_output = node._format_edge_output(
+                predecessor=predecessor,
+                output=self._get_latest_output(predecessor),
+                message_type=message_type,
+            )
+            token_cost = self.count_text_tokens(formatted_output)
+            self.current_run_step_tokens += token_cost
+            self.current_run_spatial_step_tokens += token_cost
+            self.current_run_step_edges += 1
+            edge_idx = self.spatial_edge_index_map.get((predecessor.id, node.id))
+            if edge_idx is not None:
+                edge_key = ("spatial", edge_idx)
+                self.current_run_step_tokens_by_edge[edge_key] = (
+                    self.current_run_step_tokens_by_edge.get(edge_key, 0) + token_cost
+                )
+
+        for predecessor in node.temporal_predecessors:
+            message_type = node.temporal_message_types.get(predecessor.id, "full")
+            if message_type != "reasoning":
+                continue
+            formatted_output = node._format_edge_output(
+                predecessor=predecessor,
+                output=self._get_latest_memory_output(predecessor),
+                message_type=message_type,
+            )
+            token_cost = self.count_text_tokens(formatted_output)
+            self.current_run_step_tokens += token_cost
+            self.current_run_temporal_step_tokens += token_cost
+            self.current_run_step_edges += 1
+            edge_idx = self.temporal_edge_index_map.get((predecessor.id, node.id))
+            if edge_idx is not None:
+                edge_key = ("temporal", edge_idx)
+                self.current_run_step_tokens_by_edge[edge_key] = (
+                    self.current_run_step_tokens_by_edge.get(edge_key, 0) + token_cost
+                )
+
     def record_spatial_edge_costs(self, node: Node):
         if not self.enable_edge_cost_recording:
             return
@@ -270,8 +557,6 @@ class Graph(ABC):
         self.enable_edge_cost_recording = other.enable_edge_cost_recording
 
     def record_node_token_usage(self, node: Node):
-        if node is self.decision_node:
-            return
         prompt_tokens = None
         completion_tokens = None
         if node.last_llm_usage is not None:
@@ -282,6 +567,11 @@ class Graph(ABC):
             prompt_tokens = self.count_message_tokens(node.last_input_messages)
         if completion_tokens is None:
             completion_tokens = self.count_text_tokens(self._get_latest_output(node))
+        self.current_run_prompt_tokens += prompt_tokens
+        self.current_run_completion_tokens += completion_tokens
+        self.current_run_total_tokens += prompt_tokens + completion_tokens
+        if node is self.decision_node:
+            return
         node_key = node.id
 
         if node_key not in self.agent_token_stats:
@@ -339,6 +629,7 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].temporal_predecessors = []
             self.nodes[node_id].temporal_successors = []
+            self.nodes[node_id].temporal_message_types = {}
 
     def reset_runtime_audit(self):
         for node in self.nodes.values():
@@ -355,6 +646,7 @@ class Graph(ABC):
     def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
         self.clear_spatial_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
+        answer_edge_indices = self._top_percent_answer_edge_indices()
         
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_logits, self.spatial_masks)):
             out_node:Node = self.find_node(potential_connection[0])
@@ -363,14 +655,24 @@ class Graph(ABC):
                 continue
             elif edge_mask == 1.0 and self.optimized_spatial==False:
                 if not self.check_cycle(in_node, {out_node}):
-                    out_node.add_successor(in_node,'spatial')
+                    self._add_spatial_successor_with_message_type(
+                        out_node,
+                        in_node,
+                        edge_idx,
+                        answer_edge_indices,
+                    )
                 continue
             if not self.check_cycle(in_node, {out_node}):
                 edge_prob = torch.sigmoid(edge_logit / temperature)
                 if threshold:
                     edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
                 if torch.rand(1) < edge_prob:
-                    out_node.add_successor(in_node,'spatial')
+                    self._add_spatial_successor_with_message_type(
+                        out_node,
+                        in_node,
+                        edge_idx,
+                        answer_edge_indices,
+                    )
                     log_probs.append(torch.log(edge_prob))
                 else:
                     log_probs.append(torch.log(1 - edge_prob))
@@ -382,6 +684,7 @@ class Graph(ABC):
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal)]
         if round == 0:
             return torch.sum(torch.stack(log_probs))  
+        answer_edge_indices = self._top_percent_answer_temporal_edge_indices()
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_logits, self.temporal_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
@@ -389,14 +692,24 @@ class Graph(ABC):
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
-                    out_node.add_successor(in_node,'temporal')
+                    self._add_temporal_successor_with_message_type(
+                        out_node,
+                        in_node,
+                        edge_idx,
+                        answer_edge_indices,
+                    )
                 continue
             
             edge_prob = torch.sigmoid(edge_logit / temperature)
             if threshold:
                 edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
             if torch.rand(1) < edge_prob:
-                out_node.add_successor(in_node,'temporal')
+                self._add_temporal_successor_with_message_type(
+                    out_node,
+                    in_node,
+                    edge_idx,
+                    answer_edge_indices,
+                )
                 log_probs.append(torch.log(edge_prob))
             else:
                 log_probs.append(torch.log(1 - edge_prob))
@@ -411,6 +724,8 @@ class Graph(ABC):
                   aggregate_mode: str = "all connected") -> List[Any]:
         # inputs:{'task':"xxx"}
         self.reset_runtime_audit()
+        self.reset_edge_policy_trace()
+        self.reset_run_token_usage()
         log_probs = 0
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
@@ -430,6 +745,7 @@ class Graph(ABC):
                 while tries < max_tries:
                     try:
                         self.record_spatial_edge_costs(current_node)
+                        self.record_step_edge_token_usage(current_node)
                         current_node.execute(inputs, temperature=self.llm_temperature) # output is saved in the node.outputs
                         self.record_node_token_usage(current_node)
                         self._log_node_output(current_node, phase=f"round-{round}")
@@ -452,6 +768,7 @@ class Graph(ABC):
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
         self.decision_node.execute(inputs, temperature=self.llm_temperature)
+        self.record_node_token_usage(self.decision_node)
         self._log_node_output(self.decision_node, phase="final-decision")
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
@@ -465,6 +782,8 @@ class Graph(ABC):
                   max_time: int = 600,
                   aggregate_mode: str = "all connected",) -> List[Any]:
         self.reset_runtime_audit()
+        self.reset_edge_policy_trace()
+        self.reset_run_token_usage()
         log_probs = 0
         for round in range(num_rounds):
             log_probs += self.construct_spatial_connection()
@@ -483,6 +802,7 @@ class Graph(ABC):
                 while tries < max_tries:
                     try:
                         self.record_spatial_edge_costs(current_node)
+                        self.record_step_edge_token_usage(current_node)
                         await asyncio.wait_for(
                             current_node.async_execute(input, temperature=self.llm_temperature),
                         timeout=max_time,
@@ -509,6 +829,7 @@ class Graph(ABC):
         elif aggregate_mode == "last connected":
             self.connect_decision_node(last_node_id=current_node_id)
         await self.decision_node.async_execute(input, temperature=self.llm_temperature)
+        self.record_node_token_usage(self.decision_node)
         self._log_node_output(self.decision_node, phase="final-decision")
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
@@ -520,6 +841,7 @@ class Graph(ABC):
             node.update_memory()
 
     def set_eval_mode(self, enabled: bool):
+        self.eval_mode = enabled
         self.enable_edge_cost_recording = not enabled
 
     def check_cycle(self, new_node, target_nodes):

@@ -67,6 +67,8 @@ class Node(ABC):
         self.runtime_sample_index: Optional[int] = None
         self.runtime_round_index: Optional[int] = None
         self.runtime_execution_index: Optional[int] = None
+        self.spatial_message_types: Dict[str, str] = {}
+        self.temporal_message_types: Dict[str, str] = {}
 
     @property
     def node_name(self):
@@ -143,13 +145,65 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
+                message_type = self.spatial_message_types.get(predecessor.id, "full")
+                formatted_output = self._format_edge_output(
+                    predecessor=predecessor,
+                    output=predecessor_output,
+                    message_type=message_type,
+                )
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
-                    "output": predecessor_output,
-                    "message_type": "full",
+                    "output": formatted_output,
+                    "raw_output": predecessor_output,
+                    "message_type": message_type,
                 }
 
         return spatial_info
+
+    def _format_edge_output(self, predecessor: "Node", output: Any, message_type: str) -> Any:
+        if message_type == "full":
+            return output
+
+        if not isinstance(output, str):
+            output = str(output)
+
+        if message_type == "answer":
+            if hasattr(predecessor, "prompt_set") and hasattr(predecessor.prompt_set, "postprocess_answer"):
+                try:
+                    answer = predecessor.prompt_set.postprocess_answer(output)
+                    if answer:
+                        return answer
+                except Exception:
+                    pass
+            answer_tag = self._extract_answer_tag_content(output)
+            if answer_tag:
+                return answer_tag
+            return output.strip()
+
+        if message_type == "reasoning":
+            reasoning = re.sub(
+                r"<answer>\s*.*?\s*</answer>",
+                "",
+                output,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            reasoning = re.sub(
+                r"(?im)^\s*(the answer is|answer is)\b.*$",
+                "",
+                reasoning,
+            )
+            # MMLU agents are instructed to put a bare A/B/C/D answer on the
+            # first line; remove that line so reasoning edges do not leak it.
+            reasoning = re.sub(
+                r"(?im)\A\s*[ABCD]\s*(?:\r?\n|$)",
+                "",
+                reasoning,
+                count=1,
+            )
+            reasoning = reasoning.strip()
+            return reasoning if reasoning else output.strip()
+
+        return output
 
     def get_temporal_info(self)->Dict[str,Any]:
         temporal_info = {}
@@ -162,7 +216,18 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
+                message_type = self.temporal_message_types.get(predecessor.id, "full")
+                formatted_output = self._format_edge_output(
+                    predecessor=predecessor,
+                    output=predecessor_output,
+                    message_type=message_type,
+                )
+                temporal_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": formatted_output,
+                    "raw_output": predecessor_output,
+                    "message_type": message_type,
+                }
 
         return temporal_info
     

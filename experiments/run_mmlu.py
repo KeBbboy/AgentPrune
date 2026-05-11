@@ -15,6 +15,7 @@ from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
 from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
+from experiments.train_mmlu_edge_policy import load_edge_policy_config, train_edge_content_policy
 from AgentPrune.utils.const import AgentPrune_ROOT
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
@@ -143,6 +144,8 @@ def parse_args():
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
+    parser.add_argument('--edge_policy_config', type=str, default='configs/mmlu_edge_policy.json',
+                        help="JSON config for stage-2 answer/reasoning edge content policy training.")
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
@@ -184,6 +187,7 @@ async def main():
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')
+    edge_policy_config = load_edge_policy_config(args.edge_policy_config)
     train_prompt_used = 0.0
     train_completion_used = 0.0
     train_agent_metrics: List[Dict[str, Any]] = []
@@ -209,6 +213,24 @@ async def main():
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
 
     graph.set_eval_mode(True)
+
+    if edge_policy_config.get("enabled", False):
+        edge_policy_agent_start = get_agent_token_snapshot(graph)
+        edge_policy_prompt_start, edge_policy_completion_start = get_token_snapshot()
+        await train_edge_content_policy(
+            graph=graph,
+            dataset=dataset_train,
+            num_rounds=args.num_rounds,
+            config=edge_policy_config,
+        )
+        edge_policy_prompt_used = PromptTokens.instance().value - edge_policy_prompt_start
+        edge_policy_completion_used = CompletionTokens.instance().value - edge_policy_completion_start
+        edge_policy_agent_metrics = get_phase_agent_token_metrics(graph, edge_policy_agent_start)
+        print_phase_token_summary("EdgePolicy Training", edge_policy_prompt_used, edge_policy_completion_used)
+        print_phase_agent_token_summary("EdgePolicy Training", edge_policy_agent_metrics)
+    else:
+        print("EdgePolicy training skipped: config.enabled is false.")
+
     eval_agent_start = get_agent_token_snapshot(graph)
 
     eval_prompt_start, eval_completion_start = get_token_snapshot()

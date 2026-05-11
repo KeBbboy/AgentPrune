@@ -1,6 +1,7 @@
 *.tar
 *.csv
 *.json
+!configs/mmlu_edge_policy.json
 *.pyc
 *.out
 *.log
