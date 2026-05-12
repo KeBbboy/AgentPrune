@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Union
 
 import torch
+from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.stdout.reconfigure(encoding="utf-8")
@@ -220,7 +221,8 @@ async def main():
     total_score = 0.0
     total_executed = 0
 
-    for i_batch in range(num_batches):
+    progress_bar = tqdm(range(num_batches), desc=f"LongBench/{args.dataset_name}", dynamic_ncols=True)
+    for i_batch in progress_bar:
         print(f"Batch {i_batch}", 80 * "-")
         start_ts = time.time()
         current_batch = dataloader(dataset, args.batch_size, i_batch)
@@ -290,7 +292,7 @@ async def main():
         print(f"Batch time {time.time() - start_ts:.3f}")
         print(f"Average score: {average_score}")
         print(f"Average score percent: {average_score_percent}")
-        print("utilities:", utilities)
+        progress_bar.set_postfix(avg_score=f"{average_score_percent:.2f}")
 
         if (
             (i_batch + 1) % args.imp_per_iterations == 0
