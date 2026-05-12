@@ -34,6 +34,9 @@ Please download the `MMLU`, `HumanEval`, and `GSM8K` datasets and place them in 
 dataset
 └── mmlu
     └── data
+└── mmlu_pro
+    ├── validation.parquet|json|jsonl
+    └── test.parquet|json|jsonl
 └── humaneval
     └── humaneval-py.jsonl
 └── gsm8k
@@ -60,6 +63,15 @@ python experiments/run_mmlu.py --agent_nums 6 --mode FakeAGFull --batch_size 4 -
 The above code verifies the experimental results of the `mmlu` dataset under different topologies.
 
 We also provide experimental code for other datasets and topologies.You can refer to `experiments/run_humaneval.py` and `experiments/run_gsm8k.py`.
+
+### ▶️ Run AgentPrune on MMLU-Pro
+
+Place `dev/val` split files under `dataset/mmlu_pro/`. If you are using the official `TIGER-Lab/MMLU-Pro` release, the loader also accepts `validation/test` filenames and maps them to the default `dev/val` behavior. Then run:
+
+```bash
+python experiments/run_mmlu_pro.py --agent_nums 6 --mode FakeAGFull --batch_size 4 --num_iterations 10 --imp_per_iterations 5 --pruning_rate 0.25 --num_rounds 1 --optimized_spatial --optimized_temporal
+python experiments/run_mmlu_pro.py --agent_nums 1 --mode DirectAnswer --decision_method FinalMajorVote --agent_names AdverarialAgent --batch_size 4
+```
 
 ### 🔗 Integrate into other multi-agent systems frameworks
 
