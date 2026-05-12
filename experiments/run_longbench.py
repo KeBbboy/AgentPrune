@@ -136,9 +136,9 @@ def parse_args():
         choices=["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"],
     )
     parser.add_argument("--lr", type=float, default=0.1)
-    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--imp_per_iterations", type=int, default=5)
-    parser.add_argument("--num_rounds", type=int, default=1)
+    parser.add_argument("--num_rounds", type=int, default=2)
     parser.add_argument("--pruning_rate", type=float, default=0.25)
     parser.add_argument("--num_iterations", type=int, default=10)
     parser.add_argument("--domain", type=str, default="longbench")
