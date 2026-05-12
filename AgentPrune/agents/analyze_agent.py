@@ -39,7 +39,12 @@ class AnalyzeAgent(Node):
         """ To be overriden by the descendant class """
         """ Process the raw_inputs(most of the time is a List[Dict]) """              
         system_prompt = f"{self.constraint}"
-        user_prompt = f"The task is: {raw_inputs['task']}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
+        if self.role == 'Fake':
+            user_prompt = self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
+        elif self.domain == "longbench":
+            user_prompt = raw_inputs["task"]
+        else:
+            user_prompt = f"The task is: {raw_inputs['task']}\n"
         spatial_str = ""
         temporal_str = ""
         for id, info in spatial_info.items():

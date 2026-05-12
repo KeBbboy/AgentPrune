@@ -85,7 +85,13 @@ class FinalRefer(Node):
         for id, info in spatial_info.items():
             spatial_str += id + ": " + info['output'] + "\n\n"
         decision_few_shot = self.prompt_set.get_decision_few_shot()
-        user_prompt = f"{decision_few_shot} The task is:\n\n {raw_inputs['task']}.\n At the same time, the output of other agents is as follows:\n\n{spatial_str}"
+        if self.domain == "longbench":
+            user_prompt = (
+                f"{decision_few_shot}{raw_inputs['task']}\n\n"
+                f"Other agents' outputs for reference:\n\n{spatial_str}"
+            )
+        else:
+            user_prompt = f"{decision_few_shot} The task is:\n\n {raw_inputs['task']}.\n At the same time, the output of other agents is as follows:\n\n{spatial_str}"
         return system_prompt, user_prompt
                 
     def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
@@ -101,6 +107,46 @@ class FinalRefer(Node):
         """ To be overriden by the descendant class """
         """ Use the processed input to get the result """
   
+        system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
+        message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
+        return response
+
+@AgentRegistry.register('FinalLongBenchRefer')
+class FinalLongBenchRefer(Node):
+    def __init__(self, id: str | None =None,  domain: str = "", llm_name: str = "",):
+        super().__init__(id, "FinalLongBenchRefer" ,domain, llm_name)
+        self.llm = LLMRegistry.get(llm_name)
+        self.prompt_set = PromptSetRegistry.get(domain)
+
+    def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Any], temporal_info:Dict[str,Any], **kwargs)->List[Any]:
+        self.role = self.prompt_set.get_decision_role()
+        self.constraint = self.prompt_set.get_decision_constraint()
+        system_prompt = f"{self.role}.\n {self.constraint}"
+
+        agent_sections = []
+        for agent_id, info in spatial_info.items():
+            candidate_answer = self.prompt_set.postprocess_answer(info["output"])
+            agent_sections.append(
+                f"Agent {agent_id} ({info['role']}) candidate answer:\n"
+                f"{candidate_answer}\n\n"
+                f"Full response:\n{info['output']}\n"
+            )
+
+        user_prompt = (
+            f"{raw_inputs['task']}\n\n"
+            "Other agents' outputs for reference:\n\n"
+            + "\n".join(agent_sections)
+        )
+        return system_prompt, user_prompt
+
+    def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
+        system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
+        message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+        response = self.llm.gen(message, temperature=kwargs.get("temperature"))
+        return response
+
+    async def _async_execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
         response = await self.llm.agen(message, temperature=kwargs.get("temperature"))
