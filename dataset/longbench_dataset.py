@@ -183,12 +183,14 @@ QASPER_REASONING_PROMPT = (
     "You are given a scientific article and a question. Answer the question as concisely as you can, "
     "using a single phrase or sentence if possible. If the question cannot be answered based on the "
     'information in the article, write "unanswerable". If the question is a yes/no question, answer '
-    '"yes", "no", or "unanswerable". First answer the question, then briefly explain your reasoning.\n\n'
+    '"yes", "no", or "unanswerable". First answer the question, then give one very short reasoning sentence. '
+    "Keep the reasoning under 200 words. Do not provide any additional explanation.\n\n"
     "Article: {context}\n\n"
     "Answer the question based on the above article as concisely as you can, using a single phrase or "
     "sentence if possible. If the question cannot be answered based on the information in the article, "
     'write "unanswerable". If the question is a yes/no question, answer "yes", "no", or "unanswerable". '
-    "First answer the question, then briefly explain your reasoning. "
+    "First answer the question, then give one very short reasoning sentence. Keep the reasoning under 200 words. "
+    "Do not provide any additional explanation. "
     "Question: {input}\n\n"
     "Answer:"
 )
