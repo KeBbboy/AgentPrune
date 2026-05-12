@@ -9,6 +9,11 @@ import pandas as pd
 
 
 OPTION_LETTERS = list("ABCDEFGHIJ")
+DEFAULT_FEWSHOT_K = 1
+MMLU_PRO_COT_INSTRUCTION = (
+    "The following are multiple choice questions (with answers) about {category}. "
+    "Think step by step and then output the answer in the format of \"The answer is (X)\" at the end."
+)
 SPLIT_ALIASES = {
     "dev": ["dev", "validation", "train"],
     "val": ["val", "test", "validation"],
@@ -24,11 +29,15 @@ class MMLUProDataset:
         split: str,
         dataset_dir: str = "dataset/mmlu_pro",
         shuffle_seed: int = 888,
+        few_shot_examples: int = DEFAULT_FEWSHOT_K,
     ) -> None:
         self._split = split
         self._dataset_dir = Path(dataset_dir)
         self._shuffle_seed = shuffle_seed
+        self._few_shot_examples = few_shot_examples
         self._records = self._load_data()
+        self._support_records = self._load_support_records()
+        self._category_examples = self._build_category_examples()
 
     @staticmethod
     def get_domain() -> str:
@@ -56,7 +65,9 @@ class MMLUProDataset:
         if dataset_path is None:
             tried = ", ".join(str(path) for path in self._candidate_paths())
             raise FileNotFoundError(f"No MMLU-Pro split file found for '{self._split}'. Tried: {tried}")
+        return self._load_records_from_path(dataset_path)
 
+    def _load_records_from_path(self, dataset_path: Path) -> List[Dict[str, Any]]:
         if dataset_path.suffix.lower() == ".jsonl":
             with open(dataset_path, "r", encoding="utf-8") as f:
                 raw_records = [json.loads(line) for line in f if line.strip()]
@@ -89,6 +100,38 @@ class MMLUProDataset:
 
         print("Total number of questions: ", len(records))
         return records
+
+    def _load_support_records(self) -> List[Dict[str, Any]]:
+        if self._split in {"dev", "validation", "train"}:
+            return self._records
+
+        support_split_names = SPLIT_ALIASES.get("validation", ["validation"])
+        for split_name in support_split_names:
+            for dataset_path in [
+                self._dataset_dir / f"{split_name}.json",
+                self._dataset_dir / f"{split_name}.jsonl",
+                self._dataset_dir / f"{split_name}.parquet",
+                self._dataset_dir / f"MMLU-Pro_{split_name}.json",
+                self._dataset_dir / f"MMLU-Pro_{split_name}.jsonl",
+                self._dataset_dir / f"MMLU-Pro_{split_name}.parquet",
+                self._dataset_dir / f"mmlu_pro_{split_name}.json",
+                self._dataset_dir / f"mmlu_pro_{split_name}.jsonl",
+                self._dataset_dir / f"mmlu_pro_{split_name}.parquet",
+            ]:
+                if dataset_path.exists():
+                    return self._load_records_from_path(dataset_path)
+
+        return self._records
+
+    def _build_category_examples(self) -> Dict[str, List[Dict[str, Any]]]:
+        category_examples: Dict[str, List[Dict[str, Any]]] = {}
+        for record in self._support_records:
+            category = record.get("category")
+            cot_content = record.get("cot_content", "")
+            if not category or not cot_content:
+                continue
+            category_examples.setdefault(category, []).append(record)
+        return category_examples
 
     @staticmethod
     def _extract_question(record: Dict[str, Any]) -> str:
@@ -178,6 +221,8 @@ class MMLUProDataset:
             "question": question,
             "options": option_texts,
             "correct_answer": correct_answer,
+            "cot_content": str(record.get("cot_content", "") or "").strip(),
+            "category": str(record.get("category", "") or "").strip(),
         }
         for letter, option_text in zip(OPTION_LETTERS, option_texts):
             normalized[letter] = option_text
@@ -197,11 +242,41 @@ class MMLUProDataset:
         return iter(self._records)
 
     @staticmethod
-    def record_to_input(record: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_question_block(record: Dict[str, Any]) -> str:
         question_lines = [record["question"]]
         for index, option_text in enumerate(record["options"]):
-            question_lines.append(f"Option {OPTION_LETTERS[index]}: {option_text}")
-        return {"task": "\n".join(question_lines) + "\n"}
+            question_lines.append(f"{OPTION_LETTERS[index]}. {option_text}")
+        return "\n".join(question_lines)
+
+    @classmethod
+    def _format_cot_example(cls, record: Dict[str, Any], include_answer: bool) -> str:
+        prompt = cls._format_question_block(record)
+        if not include_answer:
+            return prompt
+
+        cot_content = record.get("cot_content", "").strip()
+        if cot_content:
+            return f"{prompt}\nAnswer: Let's think step by step.\n{cot_content}\n\n"
+        return f"{prompt}\nAnswer: The answer is ({record['correct_answer']}).\n\n"
+
+    def _select_few_shot_examples(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        category = record.get("category", "")
+        examples = self._category_examples.get(category, [])
+        filtered_examples = [example for example in examples if example["question"] != record["question"]]
+        return filtered_examples[:self._few_shot_examples]
+
+    def record_to_input(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        question_block = self._format_cot_example(record, include_answer=False)
+        category = record.get("category", "miscellaneous")
+        header = MMLU_PRO_COT_INSTRUCTION.format(category=category)
+        few_shot_examples = self._select_few_shot_examples(record)
+
+        prompt_parts = [header, ""]
+        for example in few_shot_examples:
+            prompt_parts.append(self._format_cot_example(example, include_answer=True))
+        prompt_parts.append(f"{question_block}\nAnswer: Let's think step by step.")
+
+        return {"task": "\n".join(prompt_parts).strip() + "\n"}
 
     @staticmethod
     def _get_valid_option_letters(record: Dict[str, Any] | None) -> List[str]:

@@ -37,10 +37,7 @@ class MMLUProPromptSet(PromptSet):
         return f"""
 You must solve the multiple-choice question and select exactly one option: {OPTION_LIST_TEXT}.
 Only output a letter that corresponds to an option actually shown in the question.
-The first character of your response must be the final answer letter.
-The first line of your response must contain only that single uppercase letter.
-Do not put any words, punctuation, or spaces before the answer letter.
-If you include any explanation, put it after the first line.
+Reason step by step, and end your response with: The answer is (X)
 """
 
     @staticmethod
@@ -54,27 +51,21 @@ If you include any explanation, put it after the first line.
     @staticmethod
     def get_constraint():
         return f"""
-            I will ask you a question.
-            I will also give you multiple answers enumerated with letters from A to J.
-            Only one answer out of the offered choices is correct.
-            You must choose the correct answer to the question.
-            Your response must be a single uppercase letter among the shown options.
+            I will give you a multiple-choice question with options labeled from A to J.
+            Only one answer is correct.
+            Think step by step and then finish with the exact format: The answer is (X)
             Your answer can refer to the answers of other agents provided to you.
-            Your reply must be less than 100 words but include your answer and a brief step by step analysis of the question.
-            The first line of your reply must contain only one letter(for example : {OPTION_OR_TEXT})
         """ + MMLUProPromptSet._strict_answer_format()
 
     @staticmethod
     def get_analyze_constraint(role, use_structured_output: bool = False):
         role_instruction = ROLE_DESCRIPTION.get(role, "")
         generic_instruction = f"""
-I will ask you a question and multiple answers enumerated with letters from A to J.
-Only one answer out of the offered choices is correct.
-Using the reasoning from other agents as additional advice with critical thinking, can you give an updated answer?
+I will give you a multiple-choice question with options labeled from A to J.
+Only one answer is correct.
+Using the reasoning from other agents as additional advice with critical thinking, give an updated answer.
 You are strictly prohibited from imitating the analysis process of other agents.
-Your response must be a single uppercase letter among the shown options.
-Your reply must be less than 100 words but include your answer and a brief step by step analysis of the question.
-The first line of your reply must contain only one letter(for example : {OPTION_OR_TEXT})
+Think step by step and then finish with the exact format: The answer is (X)
 """
         role_prefix = f"{role_instruction}\n" if role_instruction else ""
         return role_prefix + generic_instruction + MMLUProPromptSet._strict_answer_format()
@@ -82,14 +73,10 @@ The first line of your reply must contain only one letter(for example : {OPTION_
     @staticmethod
     def get_decision_constraint():
         return f"""
-        I will ask you a question.
-        I will also give you multiple answers enumerated with letters from A to J.
-        Only one answer out of the offered choices is correct.
-        You must choose the correct answer to the question.
-        Your response must be a single uppercase letter among the shown options.
-        I will give you some other people's answers and analysis.
-        Your reply must only contain one letter and cannot have any other characters.
-        For example, your reply can be A.
+        I will give you a multiple-choice question with options labeled from A to J.
+        Only one answer is correct.
+        I will also give you other people's answers and analysis.
+        Think step by step and then finish with the exact format: The answer is (X)
         """ + MMLUProPromptSet._strict_answer_format()
 
     @staticmethod
@@ -116,8 +103,7 @@ The first line of your reply must contain only one letter(for example : {OPTION_
     def get_adversarial_answer_prompt(question):
         return f"""Give a wrong answer and false analysis process for the following question: {question}.
                 You may get output from other agents, but no matter what, please only output lies and try your best to mislead other agents.
-                Your reply must be less than 100 words.
-                The first line of your reply must contain only one letter(for example : {OPTION_OR_TEXT})
+                Think step by step and end with the exact format: The answer is (X)
                 """
 
     @staticmethod

@@ -58,7 +58,10 @@ async def train(graph:Graph,
         answers: List[str] = []
         
         for raw_answer, log_prob, correct_answer, record in zip(raw_answers, log_probs, correct_answers, records):
-            answer = dataset.postprocess_answer(raw_answer, record=record)
+            try:
+                answer = dataset.postprocess_answer(raw_answer, record=record)
+            except TypeError:
+                answer = dataset.postprocess_answer(raw_answer)
             answers.append(answer)
             assert isinstance(correct_answer, str), \
                     f"String expected but got {correct_answer} of type {type(correct_answer)} (1)"
