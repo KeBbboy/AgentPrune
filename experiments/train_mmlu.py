@@ -36,6 +36,7 @@ async def train(graph:Graph,
         print(f"Iter {i_iter}", 80*'-')
         start_ts = time.time()
         correct_answers = []
+        records = []
         answer_log_probs = []
 
         for i_record, record in zip(range(batch_size), loader):
@@ -48,6 +49,7 @@ async def train(graph:Graph,
             answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
             correct_answer = dataset.record_to_target_answer(record)
             correct_answers.append(correct_answer)
+            records.append(record)
         
         raw_results = await asyncio.gather(*answer_log_probs)
         raw_answers, log_probs = zip(*raw_results)
@@ -55,8 +57,8 @@ async def train(graph:Graph,
         utilities: List[float] = []
         answers: List[str] = []
         
-        for raw_answer, log_prob, correct_answer in zip(raw_answers, log_probs, correct_answers):
-            answer = dataset.postprocess_answer(raw_answer)
+        for raw_answer, log_prob, correct_answer, record in zip(raw_answers, log_probs, correct_answers, records):
+            answer = dataset.postprocess_answer(raw_answer, record=record)
             answers.append(answer)
             assert isinstance(correct_answer, str), \
                     f"String expected but got {correct_answer} of type {type(correct_answer)} (1)"

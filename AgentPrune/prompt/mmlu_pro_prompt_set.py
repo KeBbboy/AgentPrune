@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Union
 import itertools
 import re
+import random
 
 from AgentPrune.prompt.prompt_set import PromptSet
 from AgentPrune.prompt.prompt_set_registry import PromptSetRegistry
@@ -135,7 +136,7 @@ The first line of your reply must contain only one letter(for example : {OPTION_
     def get_decision_few_shot():
         return ""
 
-    def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
+    def postprocess_answer(self, answer: Union[str, List[str]], valid_options: List[str] | None = None) -> str:
         if isinstance(answer, list):
             answer = answer[0] if len(answer) > 0 else ""
         if not isinstance(answer, str):
@@ -143,16 +144,31 @@ The first line of your reply must contain only one letter(for example : {OPTION_
         if len(answer) == 0:
             return answer
 
-        xml_answer_match = re.search(r"<answer>\s*([A-J])\s*</answer>", answer, flags=re.IGNORECASE)
-        if xml_answer_match is not None:
-            return xml_answer_match.group(1).upper()
+        valid_letters = valid_options if valid_options else list(OPTION_LETTERS)
+        valid_letter_group = "".join(valid_letters)
 
-        answer_is_match = re.search(r"answer is\s*[:\-]?\s*([A-J])", answer, flags=re.IGNORECASE)
+        answer_is_match = re.search(
+            rf"answer is\s*\(?([{valid_letter_group}])\)?",
+            answer,
+            flags=re.IGNORECASE,
+        )
         if answer_is_match is not None:
             return answer_is_match.group(1).upper()
 
-        for char in answer:
-            upper_char = char.upper()
-            if upper_char in OPTION_LETTERS:
-                return upper_char
-        return answer[:1].upper()
+        answer_colon_match = re.search(
+            rf"answer:\s*\(?([{valid_letter_group}])\)?",
+            answer,
+            flags=re.IGNORECASE,
+        )
+        if answer_colon_match is not None:
+            return answer_colon_match.group(1).upper()
+
+        standalone_matches = re.findall(
+            rf"\b([{valid_letter_group}])\b",
+            answer,
+            flags=re.IGNORECASE,
+        )
+        if standalone_matches:
+            return standalone_matches[-1].upper()
+
+        return random.Random(answer).choice(valid_letters)
