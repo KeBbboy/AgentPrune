@@ -71,6 +71,8 @@ class Graph(ABC):
         self.eval_mode = False
         self.edge_content_policy = None
         self.edge_policy_training = False
+        self.edge_policy_min_spatial_step_edges = 0
+        self.edge_policy_min_temporal_step_edges = 0
         self.edge_policy_log_probs: List[torch.Tensor] = []
         self.edge_policy_entropies: List[torch.Tensor] = []
         self.edge_policy_action_records: List[Dict[str, Any]] = []
@@ -275,6 +277,62 @@ class Graph(ABC):
     def get_step_tokens_by_edge(self) -> Dict[tuple[str, int], int]:
         return dict(self.current_run_step_tokens_by_edge)
 
+    def _get_eval_min_step_edges(self, edge_kind: str) -> int:
+        if edge_kind == "spatial":
+            return max(0, int(self.edge_policy_min_spatial_step_edges))
+        return max(0, int(self.edge_policy_min_temporal_step_edges))
+
+    def _get_active_edge_indices(self, edge_kind: str) -> List[int]:
+        if edge_kind == "spatial":
+            return [
+                edge_idx
+                for edge_idx, ((src_id, dst_id), edge_mask) in enumerate(
+                    zip(self.potential_spatial_edges, self.spatial_masks)
+                )
+                if src_id != dst_id and edge_mask > 0
+            ]
+        return [
+            edge_idx
+            for edge_idx, edge_mask in enumerate(self.temporal_masks)
+            if edge_mask > 0
+        ]
+
+    def _get_eval_reasoning_edge_indices(self, edge_kind: str) -> set[int]:
+        if self.edge_content_policy is None:
+            return set()
+
+        policy = self.edge_content_policy
+        try:
+            device = next(policy.parameters()).device
+        except StopIteration:
+            device = self.spatial_logits.device
+
+        active_edge_indices = self._get_active_edge_indices(edge_kind)
+        if not active_edge_indices:
+            return set()
+
+        edge_step_scores: List[tuple[int, float]] = []
+        reasoning_edge_indices: set[int] = set()
+
+        for edge_idx in active_edge_indices:
+            edge_feature = self.get_edge_policy_feature(edge_idx, edge_kind, device=device)
+            with torch.no_grad():
+                probs = torch.softmax(policy(edge_feature), dim=-1).squeeze(0)
+            answer_prob = float(probs[0].item())
+            step_prob = float(probs[1].item())
+            edge_step_scores.append((edge_idx, step_prob))
+            if step_prob > answer_prob:
+                reasoning_edge_indices.add(edge_idx)
+
+        min_step_edges = min(self._get_eval_min_step_edges(edge_kind), len(active_edge_indices))
+        if len(reasoning_edge_indices) < min_step_edges:
+            for edge_idx, _step_prob in sorted(edge_step_scores, key=lambda item: item[1], reverse=True):
+                reasoning_edge_indices.add(edge_idx)
+                if len(reasoning_edge_indices) >= min_step_edges:
+                    break
+
+        return reasoning_edge_indices
+
     def get_edge_policy_feature_dim(self) -> int:
         return 2 + 2 * len(self.nodes)
 
@@ -381,8 +439,8 @@ class Graph(ABC):
         else:
             log_prob = None
             entropy = None
-            with torch.no_grad():
-                action_value = int(torch.argmax(logits, dim=-1).item())
+            reasoning_edge_indices = self._get_eval_reasoning_edge_indices(edge_kind)
+            action_value = 1 if edge_idx in reasoning_edge_indices else 0
 
         message_type = "answer" if action_value == 0 else "reasoning"
         self._record_edge_policy_action(edge_kind, message_type)

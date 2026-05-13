@@ -13,9 +13,8 @@ import torch
 from AgentPrune.graph.graph import Graph
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
-from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
-from experiments.train_mmlu_edge_policy import load_edge_policy_config, train_edge_content_policy
+from experiments.train_mmlu_edge_policy import load_edge_policy_config, train_joint_policy
 from AgentPrune.utils.const import AgentPrune_ROOT
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
@@ -103,8 +102,7 @@ def freeze_graph_for_evaluation(graph: Graph) -> None:
     graph.optimized_temporal = False
     graph.spatial_logits.requires_grad_(False)
     graph.temporal_logits.requires_grad_(False)
-
-
+    graph.edge_policy_training = False
 
 
 def parse_args():
@@ -193,11 +191,19 @@ async def main():
     train_agent_metrics: List[Dict[str, Any]] = []
     
     if args.optimized_spatial or args.optimized_temporal:
-        graph.set_eval_mode(False)
         train_prompt_start, train_completion_start = get_token_snapshot()
         train_agent_start = get_agent_token_snapshot(graph)
-        await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
-                    lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate)
+        await train_joint_policy(
+            graph=graph,
+            dataset=dataset_train,
+            num_rounds=args.num_rounds,
+            num_iters=args.num_iterations,
+            batch_size=args.batch_size,
+            graph_lr=args.lr,
+            imp_per_iters=args.imp_per_iterations,
+            pruning_rate=args.pruning_rate,
+            config=edge_policy_config,
+        )
         train_prompt_used = PromptTokens.instance().value - train_prompt_start
         train_completion_used = CompletionTokens.instance().value - train_completion_start
         train_agent_metrics = get_phase_agent_token_metrics(graph, train_agent_start)
@@ -209,27 +215,13 @@ async def main():
         print_phase_agent_token_summary("Training", train_agent_metrics)
 
     if args.freeze_after_training:
-        freeze_graph_for_evaluation(graph)
+        graph.optimized_spatial = False
+        graph.optimized_temporal = False
+        graph.spatial_logits.requires_grad_(False)
+        graph.temporal_logits.requires_grad_(False)
+        graph.edge_policy_training = False
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
-
     graph.set_eval_mode(True)
-
-    if edge_policy_config.get("enabled", False):
-        edge_policy_agent_start = get_agent_token_snapshot(graph)
-        edge_policy_prompt_start, edge_policy_completion_start = get_token_snapshot()
-        await train_edge_content_policy(
-            graph=graph,
-            dataset=dataset_train,
-            num_rounds=args.num_rounds,
-            config=edge_policy_config,
-        )
-        edge_policy_prompt_used = PromptTokens.instance().value - edge_policy_prompt_start
-        edge_policy_completion_used = CompletionTokens.instance().value - edge_policy_completion_start
-        edge_policy_agent_metrics = get_phase_agent_token_metrics(graph, edge_policy_agent_start)
-        print_phase_token_summary("EdgePolicy Training", edge_policy_prompt_used, edge_policy_completion_used)
-        print_phase_agent_token_summary("EdgePolicy Training", edge_policy_agent_metrics)
-    else:
-        print("EdgePolicy training skipped: config.enabled is false.")
 
     eval_agent_start = get_agent_token_snapshot(graph)
 
