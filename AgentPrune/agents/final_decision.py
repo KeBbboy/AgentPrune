@@ -1,4 +1,5 @@
 from typing import List,Any,Dict
+import re
 
 from AgentPrune.graph.node import Node
 from AgentPrune.agents.agent_registry import AgentRegistry
@@ -156,6 +157,17 @@ class FinalMajorVote(Node):
         """ To be overriden by the descendant class """
         """ Process the raw_inputs(most of the time is a List[Dict]) """
         return None
+
+    @staticmethod
+    def _extract_valid_options(raw_inputs: Dict[str, str]) -> List[str]:
+        task = raw_inputs.get("task", "")
+        option_letters = re.findall(r"^\s*(?:Option\s+)?([A-J])[\.\):]?\s", task, flags=re.IGNORECASE | re.MULTILINE)
+        deduped: List[str] = []
+        for letter in option_letters:
+            upper_letter = letter.upper()
+            if upper_letter not in deduped:
+                deduped.append(upper_letter)
+        return deduped
     
     def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
         """ To be overriden by the descendant class """
@@ -163,8 +175,12 @@ class FinalMajorVote(Node):
         output_num = {}
         max_output = ""
         max_output_num = 0
+        valid_options = self._extract_valid_options(input)
         for info in spatial_info.values():
-            processed_output = self.prompt_set.postprocess_answer(info['output'])
+            try:
+                processed_output = self.prompt_set.postprocess_answer(info['output'], valid_options=valid_options)
+            except TypeError:
+                processed_output = self.prompt_set.postprocess_answer(info['output'])
             if processed_output in output_num:
                 output_num[processed_output] += 1
             else:
@@ -180,8 +196,12 @@ class FinalMajorVote(Node):
         output_num = {}
         max_output = ""
         max_output_num = 0
+        valid_options = self._extract_valid_options(input)
         for info in spatial_info.values():
-            processed_output = self.prompt_set.postprocess_answer(info['output'])
+            try:
+                processed_output = self.prompt_set.postprocess_answer(info['output'], valid_options=valid_options)
+            except TypeError:
+                processed_output = self.prompt_set.postprocess_answer(info['output'])
             if processed_output in output_num:
                 output_num[processed_output] += 1
             else:

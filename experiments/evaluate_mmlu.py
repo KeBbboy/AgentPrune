@@ -62,7 +62,10 @@ async def evaluate(
         print(f"Batch time {time.time() - start_ts:.3f}")
         for raw_answer, record in zip(raw_answers, record_batch):
             print("Raw answer:", raw_answer)
-            answer = dataset.postprocess_answer(raw_answer)
+            try:
+                answer = dataset.postprocess_answer(raw_answer, record=record)
+            except TypeError:
+                answer = dataset.postprocess_answer(raw_answer)
             print("Postprocessed answer:", answer)
             correct_answer = dataset.record_to_target_answer(record)
             print("Correct answer:", correct_answer)

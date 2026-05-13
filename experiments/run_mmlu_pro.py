@@ -12,8 +12,8 @@ import torch
 
 from AgentPrune.graph.graph import Graph
 from dataset.mmlu_pro_dataset import MMLUProDataset
-from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
+from experiments.train_mmlu_edge_policy import load_edge_policy_config, train_joint_policy
 from experiments.run_mmlu import (
     print_agent_token_summary,
     get_agent_token_snapshot,
@@ -70,6 +70,8 @@ def parse_args():
     parser.add_argument('--optimized_temporal', action='store_true')
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
+    parser.add_argument('--edge_policy_config', type=str, default='configs/mmlu_edge_policy.json',
+                        help="JSON config for unified graph/message training.")
     parser.add_argument('--temperature', type=float, default=0.0,
                         help="LLM generation temperature. Default 0.0 for near-deterministic output.")
     parser.add_argument('--seed', type=int, default=42,
@@ -109,24 +111,25 @@ async def main():
 
     dataset_train = MMLUProDataset(args.train_split, dataset_dir=args.dataset_dir)
     dataset_eval = MMLUProDataset(args.eval_split, dataset_dir=args.dataset_dir)
+    edge_policy_config = load_edge_policy_config(args.edge_policy_config)
 
     train_prompt_used = 0.0
     train_completion_used = 0.0
     train_agent_metrics: List[Dict[str, Any]] = []
 
     if args.optimized_spatial or args.optimized_temporal:
-        graph.set_eval_mode(False)
         train_prompt_start, train_completion_start = get_token_snapshot()
         train_agent_start = get_agent_token_snapshot(graph)
-        await train(
+        await train_joint_policy(
             graph=graph,
             dataset=dataset_train,
-            num_iters=args.num_iterations,
             num_rounds=args.num_rounds,
-            lr=args.lr,
+            num_iters=args.num_iterations,
             batch_size=args.batch_size,
+            graph_lr=args.lr,
             imp_per_iters=args.imp_per_iterations,
             pruning_rate=args.pruning_rate,
+            config=edge_policy_config,
         )
         train_prompt_used = PromptTokens.instance().value - train_prompt_start
         train_completion_used = CompletionTokens.instance().value - train_completion_start
