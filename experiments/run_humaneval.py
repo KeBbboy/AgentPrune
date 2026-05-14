@@ -50,6 +50,18 @@ def load_config(config_path):
     with open(config_path, 'r',encoding='utf-8') as file:
         return yaml.safe_load(file)
 
+def get_training_sample_cutoff(dataset_limit: int, args, edge_policy_config: Dict[str, Any]) -> int:
+    if not (args.optimized_spatial or args.optimized_temporal):
+        return 0
+
+    training_batch_size = int(edge_policy_config.get("batch_size", args.batch_size))
+    training_iterations = int(edge_policy_config.get("iterations", args.num_iterations))
+    training_pool_size = min(dataset_limit, int(edge_policy_config.get("num_samples", dataset_limit)))
+
+    # Training walks the dataset from the front in batch order and may wrap if
+    # iterations * batch_size exceeds the configured training pool.
+    return min(dataset_limit, min(training_pool_size, training_batch_size * training_iterations))
+
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on HumanEval")
     parser.add_argument("--dataset_json", type=str, default="dataset/humaneval/humaneval-py.jsonl")
@@ -127,7 +139,6 @@ async def main():
     edge_policy_config = load_edge_policy_config(args.edge_policy_config)
 
     dataset_limit = min(len(dataset), args.limit_questions) if args.limit_questions is not None else len(dataset)
-    num_batches = int(math.ceil(dataset_limit / args.batch_size))
     total_solved, total_executed = (0, 0)
     train_prompt_start, train_completion_start = get_token_snapshot()
     train_agent_start = get_agent_token_snapshot(graph)
@@ -162,17 +173,30 @@ async def main():
         freeze_graph_for_evaluation(graph)
         print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
 
+    inference_start_index = get_training_sample_cutoff(dataset_limit, args, edge_policy_config)
+    inference_records = [dataset[i] for i in range(inference_start_index, dataset_limit)]
+    inference_num_batches = int(math.ceil(len(inference_records) / args.batch_size)) if inference_records else 0
+    if train_mode_enabled:
+        print(
+            "Inference starts after training-covered samples: "
+            f"skip first {inference_start_index} samples, "
+            f"run remaining {len(inference_records)} samples."
+        )
+
     graph.set_eval_mode(True)
     inference_prompt_start, inference_completion_start = get_token_snapshot()
     inference_agent_start = get_agent_token_snapshot(graph)
 
-    for i_batch in range(num_batches):
+    if not inference_records:
+        print("No remaining samples for inference after training.")
+
+    for i_batch in range(inference_num_batches):
         print(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
         answer_log_probs = []
         tests = []
         
-        current_batch = dataloader([dataset[i] for i in range(dataset_limit)], args.batch_size, i_batch)
+        current_batch = dataloader(inference_records, args.batch_size, i_batch)
         if not current_batch:
             print("No more data available.")
             break
@@ -182,7 +206,7 @@ async def main():
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
             realized_graph.share_cost_state(graph)
-            realized_graph.current_sample_index = i_batch * args.batch_size + i_record + 1
+            realized_graph.current_sample_index = inference_start_index + i_batch * args.batch_size + i_record + 1
             task = record["prompt"]
             test = record["test"]
             tests.append(test)
