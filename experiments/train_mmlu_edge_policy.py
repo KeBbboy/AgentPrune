@@ -477,27 +477,6 @@ async def train_joint_policy(
             base_rewards.append(base_reward)
             rewards.append(reward)
 
-            print(
-                "[JointTrain][Sample] "
-                f"iter={iter_idx + 1}/{iterations} sample={sample_idx + 1}/{batch_size} "
-                f"dataset_idx={sample_info['record_slot']} "
-                f"pred={sample_info['predicted_answer']} "
-                f"target={sample_info['correct_answer']} correct={correct:.0f} "
-                f"tokens={tokens_used} budget={budget:.1f} "
-                f"base_reward={base_reward:.4f} reward={reward:.4f} "
-                f"token_penalty={token_penalty:.4f} "
-                f"step_tokens={step_tokens} "
-                f"step_penalty={step_token_penalty:.4f} "
-                f"spatial_step_tokens={sample_info['spatial_step_tokens']} "
-                f"temporal_step_tokens={sample_info['temporal_step_tokens']} "
-                f"answer_edges={sample_info['action_counts'].get('answer', 0)} "
-                f"step_edges={sample_info['action_counts'].get('reasoning', 0)} "
-                f"spatial_answer={sample_info['action_counts'].get('spatial_answer', 0)} "
-                f"spatial_step={sample_info['action_counts'].get('spatial_reasoning', 0)} "
-                f"temporal_answer={sample_info['action_counts'].get('temporal_answer', 0)} "
-                f"temporal_step={sample_info['action_counts'].get('temporal_reasoning', 0)}"
-            )
-
         rewards_tensor = torch.tensor(rewards, dtype=torch.float32)
         batch_reward_mean = float(rewards_tensor.mean())
         if reward_baseline_ema is None:
