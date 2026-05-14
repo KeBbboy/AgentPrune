@@ -65,10 +65,10 @@ class Graph(ABC):
         self.log_node_outputs: bool = log_node_outputs
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
-        self.optimized_spatial_message_type = optimized_spatial
-        self.optimized_temporal_message_type = optimized_temporal
-        self.enable_spatial_message_type_action = optimized_spatial
-        self.enable_temporal_message_type_action = optimized_temporal
+        self.optimized_spatial_message_type = False
+        self.optimized_temporal_message_type = False
+        self.enable_spatial_message_type_action = False
+        self.enable_temporal_message_type_action = False
         self.enable_edge_cost_recording = True
         self.current_sample_index: Optional[int] = None
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
@@ -671,6 +671,23 @@ class Graph(ABC):
 
     def set_eval_mode(self, enabled: bool):
         self.enable_edge_cost_recording = not enabled
+
+    def set_message_type_learning_mode(self, enabled: bool):
+        self.enable_spatial_message_type_action = enabled
+        self.enable_temporal_message_type_action = enabled
+        self.optimized_spatial_message_type = enabled and self.optimized_spatial
+        self.optimized_temporal_message_type = enabled and self.optimized_temporal
+        self.spatial_message_type_logits.requires_grad_(self.optimized_spatial_message_type)
+        self.temporal_message_type_logits.requires_grad_(self.optimized_temporal_message_type)
+
+    def set_full_message_mode(self, enabled: bool):
+        if enabled:
+            self.enable_spatial_message_type_action = False
+            self.enable_temporal_message_type_action = False
+            self.optimized_spatial_message_type = False
+            self.optimized_temporal_message_type = False
+            self.spatial_message_type_logits.requires_grad_(False)
+            self.temporal_message_type_logits.requires_grad_(False)
 
     def check_cycle(self, new_node, target_nodes):
         if new_node in target_nodes:

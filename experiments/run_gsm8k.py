@@ -135,6 +135,8 @@ def parse_args():
                         help="After the optimization batches finish, switch the graph to evaluation message-sharing mode for the remaining batches.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
+    parser.add_argument('--learn_message_type', action='store_true',
+                        help="Enable answer/reason message-type learning on retained edges. Without this flag, retained edges transmit full messages as in the original AgentPrune.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -166,16 +168,12 @@ async def main():
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
                   **kwargs)
+    graph.set_message_type_learning_mode(args.learn_message_type)
     graph.set_eval_mode(False)
-    optimizer = torch.optim.Adam(
-        [
-            graph.spatial_logits,
-            graph.spatial_message_type_logits,
-            graph.temporal_logits,
-            graph.temporal_message_type_logits,
-        ],
-        lr=args.lr,
-    )
+    optimizer_params = [graph.spatial_logits, graph.temporal_logits]
+    if args.learn_message_type:
+        optimizer_params.extend([graph.spatial_message_type_logits, graph.temporal_message_type_logits])
+    optimizer = torch.optim.Adam(optimizer_params, lr=args.lr)
     
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)

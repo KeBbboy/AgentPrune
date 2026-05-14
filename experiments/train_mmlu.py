@@ -30,15 +30,10 @@ async def train(graph:Graph,
     
     loader = infinite_data_loader()
     
-    optimizer = torch.optim.Adam(
-        [
-            graph.spatial_logits,
-            graph.spatial_message_type_logits,
-            graph.temporal_logits,
-            graph.temporal_message_type_logits,
-        ],
-        lr=lr,
-    )
+    optimizer_params = [graph.spatial_logits, graph.temporal_logits]
+    if graph.enable_spatial_message_type_action or graph.enable_temporal_message_type_action:
+        optimizer_params.extend([graph.spatial_message_type_logits, graph.temporal_message_type_logits])
+    optimizer = torch.optim.Adam(optimizer_params, lr=lr)
     
     for i_iter in range(num_iters):
         print(f"Iter {i_iter}", 80*'-')

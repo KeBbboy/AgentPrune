@@ -69,6 +69,8 @@ def parse_args():
                         help="Maximum number of evaluation questions to run.")
     parser.add_argument('--optimized_spatial', action='store_true')
     parser.add_argument('--optimized_temporal', action='store_true')
+    parser.add_argument('--learn_message_type', action='store_true',
+                        help="Enable answer/reason message-type learning on retained edges. Without this flag, retained edges transmit full messages as in the original AgentPrune.")
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
                         help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
     parser.add_argument('--temperature', type=float, default=0.0,
@@ -107,6 +109,7 @@ async def main():
         optimized_temporal=args.optimized_temporal,
         **kwargs,
     )
+    graph.set_message_type_learning_mode(args.learn_message_type)
 
     dataset_train = MMLUProDataset(args.train_split, dataset_dir=args.dataset_dir)
     dataset_eval = MMLUProDataset(args.eval_split, dataset_dir=args.dataset_dir)
