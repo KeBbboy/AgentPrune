@@ -15,6 +15,7 @@ from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
 from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
+from experiments.run_humaneval import print_retained_edge_message_summary
 from AgentPrune.utils.const import AgentPrune_ROOT
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
@@ -207,6 +208,8 @@ async def main():
         print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
         print_phase_token_summary("Training", train_prompt_used, train_completion_used)
         print_phase_agent_token_summary("Training", train_agent_metrics)
+
+    print_retained_edge_message_summary(graph)
 
     if args.freeze_after_training:
         freeze_graph_for_evaluation(graph)
