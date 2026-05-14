@@ -131,6 +131,35 @@ class Node(ABC):
             return ""
         return answer_match.group(1).strip()
 
+    def _extract_reasoning_content(self, predecessor_output: str) -> str:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
+        reasoning = re.sub(
+            r"<answer>\s*.*?\s*</answer>",
+            "",
+            predecessor_output,
+            flags=re.IGNORECASE | re.DOTALL,
+        ).strip()
+        return reasoning
+
+    def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
+        message_type = "full"
+        selected_output = output
+        if source == "spatial" and hasattr(predecessor, "spatial_message_types"):
+            message_type = predecessor.spatial_message_types.get(self.id, "full")
+        elif source == "temporal" and hasattr(predecessor, "temporal_message_types"):
+            message_type = predecessor.temporal_message_types.get(self.id, "full")
+
+        if isinstance(output, str):
+            if message_type == "answer":
+                answer_payload = self._extract_answer_tag_content(output)
+                selected_output = answer_payload if answer_payload else output.strip()
+            elif message_type == "reason":
+                reasoning_payload = self._extract_reasoning_content(output)
+                selected_output = reasoning_payload if reasoning_payload else output.strip()
+
+        return message_type, selected_output
+
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
         spatial_info = {}
@@ -143,10 +172,11 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
+                message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="spatial")
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
-                    "output": predecessor_output,
-                    "message_type": "full",
+                    "output": selected_output,
+                    "message_type": message_type,
                 }
 
         return spatial_info
@@ -162,7 +192,12 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                temporal_info[predecessor.id] = {"role":predecessor.role,"output":predecessor_output}
+                message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="temporal")
+                temporal_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": selected_output,
+                    "message_type": message_type,
+                }
 
         return temporal_info
     

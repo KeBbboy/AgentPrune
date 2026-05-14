@@ -30,7 +30,15 @@ async def train(graph:Graph,
     
     loader = infinite_data_loader()
     
-    optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=lr)    
+    optimizer = torch.optim.Adam(
+        [
+            graph.spatial_logits,
+            graph.spatial_message_type_logits,
+            graph.temporal_logits,
+            graph.temporal_message_type_logits,
+        ],
+        lr=lr,
+    )
     
     for i_iter in range(num_iters):
         print(f"Iter {i_iter}", 80*'-')
@@ -42,7 +50,9 @@ async def train(graph:Graph,
         for i_record, record in zip(range(batch_size), loader):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
+            realized_graph.spatial_message_type_logits = graph.spatial_message_type_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.temporal_message_type_logits = graph.temporal_message_type_logits
             realized_graph.share_cost_state(graph)
             input_dict = dataset.record_to_input(record)
             print(input_dict)

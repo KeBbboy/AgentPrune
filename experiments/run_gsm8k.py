@@ -167,7 +167,15 @@ async def main():
                   optimized_temporal=args.optimized_temporal,
                   **kwargs)
     graph.set_eval_mode(False)
-    optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
+    optimizer = torch.optim.Adam(
+        [
+            graph.spatial_logits,
+            graph.spatial_message_type_logits,
+            graph.temporal_logits,
+            graph.temporal_message_type_logits,
+        ],
+        lr=args.lr,
+    )
     
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
@@ -195,7 +203,9 @@ async def main():
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
+            realized_graph.spatial_message_type_logits = graph.spatial_message_type_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.temporal_message_type_logits = graph.temporal_message_type_logits
             realized_graph.share_cost_state(graph)
             task = record["task"]
             step = record["step"]

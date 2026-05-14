@@ -99,9 +99,13 @@ def print_phase_agent_token_summary(phase_name: str, phase_metrics: List[Dict[st
 
 def freeze_graph_for_evaluation(graph: Graph) -> None:
     graph.optimized_spatial = False
+    graph.optimized_spatial_message_type = False
     graph.optimized_temporal = False
+    graph.optimized_temporal_message_type = False
     graph.spatial_logits.requires_grad_(False)
+    graph.spatial_message_type_logits.requires_grad_(False)
     graph.temporal_logits.requires_grad_(False)
+    graph.temporal_message_type_logits.requires_grad_(False)
 
 
 

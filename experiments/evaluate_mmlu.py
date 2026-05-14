@@ -23,7 +23,9 @@ async def evaluate(
     print(f"Evaluating AgentPrune on {dataset.__class__.__name__} split {dataset.split}")
     
     graph.spatial_logits.requires_grad_ = False
+    graph.spatial_message_type_logits.requires_grad_ = False
     graph.temporal_logits.requires_grad_ = False
+    graph.temporal_message_type_logits.requires_grad_ = False
     
     accuracy = Accuracy()
     def eval_loader(batch_size: int) -> Iterator[List[Any]]:
@@ -51,7 +53,9 @@ async def evaluate(
         for record_offset, record in enumerate(record_batch):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
+            realized_graph.spatial_message_type_logits = graph.spatial_message_type_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.temporal_message_type_logits = graph.temporal_message_type_logits
             realized_graph.share_cost_state(graph)
             realized_graph.current_sample_index = i_batch * eval_batch_size + record_offset + 1
             input_dict = dataset.record_to_input(record)

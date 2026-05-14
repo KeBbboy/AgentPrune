@@ -116,6 +116,33 @@ def print_phase_agent_token_summary(phase_name: str, phase_metrics: List[Dict[st
             f"input={item['prompt_tokens']}, output={item['completion_tokens']}, "
             f"total={item['total_tokens']}, calls={item['calls']}"
         )
+
+
+def print_retained_edge_message_summary(graph: Graph):
+    summary = graph.get_retained_edge_message_summary()
+    def count_message_types(edges: List[Dict[str, Any]]) -> Dict[str, int]:
+        counts = {"answer": 0, "reason": 0, "full": 0}
+        for edge in edges:
+            message_type = edge["message_type"]
+            if message_type not in counts:
+                counts[message_type] = 0
+            counts[message_type] += 1
+        return counts
+
+    spatial_counts = count_message_types(summary["spatial_edges"])
+    temporal_counts = count_message_types(summary["temporal_edges"])
+    total_counts = {
+        "answer": spatial_counts.get("answer", 0) + temporal_counts.get("answer", 0),
+        "reason": spatial_counts.get("reason", 0) + temporal_counts.get("reason", 0),
+        "full": spatial_counts.get("full", 0) + temporal_counts.get("full", 0),
+    }
+
+    print("Retained Spatial Edge Message Counts:")
+    print(f"  answer={spatial_counts.get('answer', 0)}, reason={spatial_counts.get('reason', 0)}, full={spatial_counts.get('full', 0)}")
+    print("Retained Temporal Edge Message Counts:")
+    print(f"  answer={temporal_counts.get('answer', 0)}, reason={temporal_counts.get('reason', 0)}, full={temporal_counts.get('full', 0)}")
+    print("Retained Edge Message Counts:")
+    print(f"  answer={total_counts['answer']}, reason={total_counts['reason']}, full={total_counts['full']}")
     
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on HumanEval")
@@ -189,7 +216,15 @@ async def main():
                   optimized_temporal=args.optimized_temporal,
                   **kwargs)
     graph.set_eval_mode(False)
-    optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
+    optimizer = torch.optim.Adam(
+        [
+            graph.spatial_logits,
+            graph.spatial_message_type_logits,
+            graph.temporal_logits,
+            graph.temporal_message_type_logits,
+        ],
+        lr=args.lr,
+    )
     
     dataset_limit = min(len(dataset), args.limit_questions) if args.limit_questions is not None else len(dataset)
     num_batches = int(math.ceil(dataset_limit / args.batch_size))
@@ -217,7 +252,9 @@ async def main():
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
+            realized_graph.spatial_message_type_logits = graph.spatial_message_type_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.temporal_message_type_logits = graph.temporal_message_type_logits
             realized_graph.share_cost_state(graph)
             realized_graph.current_sample_index = i_batch * args.batch_size + i_record + 1
             task = record["prompt"]
@@ -294,6 +331,8 @@ async def main():
         print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
         print_phase_token_summary("Training", 0.0, 0.0)
         print_phase_agent_token_summary("Training", [])
+
+    print_retained_edge_message_summary(graph)
 
     if inference_prompt_start is None or inference_completion_start is None or inference_agent_start is None:
         inference_prompt_start, inference_completion_start = get_token_snapshot()
