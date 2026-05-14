@@ -103,7 +103,7 @@ class Graph(ABC):
         self.spatial_message_type_logits = torch.nn.Parameter(
             torch.ones(len(self.potential_spatial_edges), requires_grad=self.optimized_spatial_message_type) * init_message_type_logit,
             requires_grad=self.optimized_spatial_message_type,
-        )  # trainable answer/reason logits for spatial edges
+        )  # trainable reason/answer logits for spatial edges; higher logit favors reason
 
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
         self.temporal_logits = torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,
@@ -113,7 +113,7 @@ class Graph(ABC):
         self.temporal_message_type_logits = torch.nn.Parameter(
             torch.ones(len(self.potential_temporal_edges), requires_grad=self.optimized_temporal_message_type) * init_message_type_logit,
             requires_grad=self.optimized_temporal_message_type,
-        )  # trainable answer/reason logits for temporal edges
+        )  # trainable reason/answer logits for temporal edges; higher logit favors reason
 
     def _log_node_output(self, node: Node, phase: str = "round") -> None:
         if not self.log_node_outputs:
@@ -419,18 +419,18 @@ class Graph(ABC):
             return "full"
 
         if not optimized:
-            message_type = "answer" if logits[edge_idx].item() >= 0 else "reason"
+            message_type = "reason" if logits[edge_idx].item() >= 0 else "answer"
             if return_log_prob:
                 return message_type, torch.tensor(0.0, device=logits.device)
             return message_type
 
-        answer_prob = torch.sigmoid(logits[edge_idx])
-        if torch.rand(1, device=answer_prob.device) < answer_prob:
-            message_type = "answer"
-            log_prob = torch.log(answer_prob)
-        else:
+        reason_prob = torch.sigmoid(logits[edge_idx])
+        if torch.rand(1, device=reason_prob.device) < reason_prob:
             message_type = "reason"
-            log_prob = torch.log(1 - answer_prob)
+            log_prob = torch.log(reason_prob)
+        else:
+            message_type = "answer"
+            log_prob = torch.log(1 - reason_prob)
         if return_log_prob:
             return message_type, log_prob
         return message_type
@@ -489,16 +489,16 @@ class Graph(ABC):
             return {
                 "message_type": "full",
                 "message_type_logit": None,
-                "answer_probability": None,
+                "reason_probability": None,
             }
 
         logit_value = float(logits[edge_idx].detach().item())
-        answer_probability = float(torch.sigmoid(logits[edge_idx].detach()).item())
-        message_type = "answer" if logit_value >= 0 else "reason"
+        reason_probability = float(torch.sigmoid(logits[edge_idx].detach()).item())
+        message_type = "reason" if logit_value >= 0 else "answer"
         return {
             "message_type": message_type,
             "message_type_logit": logit_value,
-            "answer_probability": answer_probability,
+            "reason_probability": reason_probability,
         }
 
     def get_retained_edge_message_summary(self) -> Dict[str, Any]:
@@ -517,7 +517,7 @@ class Graph(ABC):
                     "dst_role": dst_node.role or dst_node.agent_name or dst_node.id,
                     "message_type": src_node.spatial_message_types.get(dst_node.id, edge_info["message_type"]),
                     "message_type_logit": edge_info["message_type_logit"],
-                    "answer_probability": edge_info["answer_probability"],
+                    "reason_probability": edge_info["reason_probability"],
                 })
 
             for dst_node in src_node.temporal_successors:
@@ -530,7 +530,7 @@ class Graph(ABC):
                     "dst_role": dst_node.role or dst_node.agent_name or dst_node.id,
                     "message_type": src_node.temporal_message_types.get(dst_node.id, edge_info["message_type"]),
                     "message_type_logit": edge_info["message_type_logit"],
-                    "answer_probability": edge_info["answer_probability"],
+                    "reason_probability": edge_info["reason_probability"],
                 })
 
         return {
