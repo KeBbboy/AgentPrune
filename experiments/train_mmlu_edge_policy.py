@@ -88,6 +88,28 @@ def _slice_dataset(dataset, num_samples: int) -> List[Any]:
     return [dataset[i] for i in range(min(num_samples, len(dataset)))]
 
 
+def _format_sample_window(record_slots: List[int]) -> str:
+    if not record_slots:
+        return "samples n/a"
+
+    one_based_slots = [slot + 1 for slot in record_slots]
+    segments: List[str] = []
+    seg_start = one_based_slots[0]
+    seg_end = one_based_slots[0]
+
+    for slot in one_based_slots[1:]:
+        if slot == seg_end + 1:
+            seg_end = slot
+            continue
+        segments.append(f"{seg_start}" if seg_start == seg_end else f"{seg_start}-{seg_end}")
+        seg_start = slot
+        seg_end = slot
+
+    segments.append(f"{seg_start}" if seg_start == seg_end else f"{seg_start}-{seg_end}")
+    wrapped_suffix = " (wrapped)" if len(segments) > 1 else ""
+    return f"samples {','.join(segments)}{wrapped_suffix}"
+
+
 def _node_label(graph: Graph, node_id: str) -> str:
     node = graph.find_node(node_id)
     label = node.role or node.agent_name or node.node_name
@@ -361,10 +383,12 @@ async def train_joint_policy(
 
     for iter_idx in range(iterations):
         start_ts = time.time()
-        batch_records = [
-            records[(iter_idx * batch_size + offset) % len(records)]
+        batch_record_slots = [
+            (iter_idx * batch_size + offset) % len(records)
             for offset in range(batch_size)
         ]
+        batch_records = [records[record_slot] for record_slot in batch_record_slots]
+        batch_label = f"Batch {iter_idx} ({_format_sample_window(batch_record_slots)})"
         lambda_t = _lambda_at(iter_idx, iterations, lambda_warmup_ratio, lambda_max)
         step_lambda_t = _lambda_at(
             iter_idx,
@@ -565,7 +589,7 @@ async def train_joint_policy(
         )
         print(
             "[JointTrain][Iter] "
-            f"{iter_idx + 1}/{iterations} time={time.time() - start_ts:.3f}s "
+            f"{iter_idx + 1}/{iterations} {batch_label} time={time.time() - start_ts:.3f}s "
             f"lambda={lambda_t:.4f} step_lambda={step_lambda_t:.4f} "
             f"step_prob_lambda={step_probability_lambda_t:.4f} beta={beta_t:.4f} "
             f"acc={sum(correct_flags) / len(correct_flags):.3f} "

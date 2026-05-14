@@ -191,7 +191,6 @@ async def main():
         print("No remaining samples for inference after training.")
 
     for i_batch in range(inference_num_batches):
-        print(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
         answer_log_probs = []
         tests = []
@@ -200,6 +199,14 @@ async def main():
         if not current_batch:
             print("No more data available.")
             break
+
+        batch_start_index = inference_start_index + i_batch * args.batch_size
+        batch_end_index = batch_start_index + len(current_batch) - 1
+        batch_label = (
+            f"Batch {batch_start_index // args.batch_size} "
+            f"(samples {batch_start_index + 1}-{batch_end_index + 1})"
+        )
+        print(batch_label, 80 * '-')
         
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
