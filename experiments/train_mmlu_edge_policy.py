@@ -20,18 +20,18 @@ DEFAULT_EDGE_POLICY_CONFIG: Dict[str, Any] = {
     "lr": 0.001,
     "hidden_dim": 32,
     "initial_answer_bias": 0.0,
-    "initial_step_bias": 0.0,
+    "initial_step_bias": 0.3,
     "min_spatial_step_edges_eval": 2,
     "min_temporal_step_edges_eval": 4,
     "token_budget_mode": "fixed_total_average",
     "token_budget": 917000,
     "token_budget_num_samples": 153,
     "lambda_max": 0.5,
-    "step_token_lambda_max": 0.3,
-    "step_probability_penalty_max": 0.05,
+    "step_token_lambda_max": 0.1,
+    "step_probability_penalty_max": 0.0,
     "lambda_warmup_ratio": 0.2,
-    "entropy_beta_start": 0.02,
-    "entropy_beta_end": 0.005,
+    "entropy_beta_start": 0.05,
+    "entropy_beta_end": 0.01,
     "baseline_momentum": 0.9,
     "save_path": None,
 }
@@ -394,8 +394,8 @@ async def train_joint_policy(
             realized_graph.edge_content_policy = policy
             realized_graph.edge_message_mode = "rl_policy" if use_content_policy else "full"
             realized_graph.edge_policy_training = use_content_policy
-            realized_graph.edge_policy_min_spatial_step_edges = 0
-            realized_graph.edge_policy_min_temporal_step_edges = 0
+            realized_graph.edge_policy_min_spatial_step_edges = min_spatial_step_edges_eval
+            realized_graph.edge_policy_min_temporal_step_edges = min_temporal_step_edges_eval
             realized_graph.optimized_spatial = graph.optimized_spatial
             realized_graph.optimized_temporal = graph.optimized_temporal
             realized_graph.set_eval_mode(use_content_policy)
