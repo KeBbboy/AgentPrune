@@ -149,7 +149,7 @@ class AQuADataset:
         )
         return {"task": demo_question}
 
-    def postprocess_answer(self, answer) -> str:
+    def postprocess_answer(self, answer, record: Dict[str, Any] | None = None) -> str:
         if isinstance(answer, list):
             answer = answer[0] if len(answer) > 0 else ""
         if not isinstance(answer, str):
