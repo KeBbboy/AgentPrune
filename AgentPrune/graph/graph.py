@@ -540,6 +540,19 @@ class Graph(ABC):
             "temporal_edge_count": len(temporal_edges),
         }
 
+    def get_retained_mask_counts(self) -> Dict[str, int]:
+        return {
+            "spatial_mask_count": int((self.spatial_masks > 0).sum().item()),
+            "temporal_mask_count": int((self.temporal_masks > 0).sum().item()),
+        }
+
+    def get_realized_edge_counts(self) -> Dict[str, int]:
+        summary = self.get_retained_edge_message_summary()
+        return {
+            "spatial_edge_count": summary["spatial_edge_count"],
+            "temporal_edge_count": summary["temporal_edge_count"],
+        }
+
 
     def run(self, inputs: Any, 
                   num_rounds:int = 3, 

@@ -120,6 +120,8 @@ def print_phase_agent_token_summary(phase_name: str, phase_metrics: List[Dict[st
 
 def print_retained_edge_message_summary(graph: Graph):
     summary = graph.get_retained_edge_message_summary()
+    mask_counts = graph.get_retained_mask_counts()
+    realized_counts = graph.get_realized_edge_counts()
     def count_message_types(edges: List[Dict[str, Any]]) -> Dict[str, int]:
         counts = {"answer": 0, "reason": 0, "full": 0}
         for edge in edges:
@@ -137,6 +139,16 @@ def print_retained_edge_message_summary(graph: Graph):
         "full": spatial_counts.get("full", 0) + temporal_counts.get("full", 0),
     }
 
+    print("Retained Mask Counts:")
+    print(
+        f"  spatial_masks={mask_counts['spatial_mask_count']}, "
+        f"temporal_masks={mask_counts['temporal_mask_count']}"
+    )
+    print("Realized Edge Counts:")
+    print(
+        f"  spatial_edges={realized_counts['spatial_edge_count']}, "
+        f"temporal_edges={realized_counts['temporal_edge_count']}"
+    )
     print("Retained Spatial Edge Message Counts:")
     print(f"  answer={spatial_counts.get('answer', 0)}, reason={spatial_counts.get('reason', 0)}, full={spatial_counts.get('full', 0)}")
     print("Retained Temporal Edge Message Counts:")

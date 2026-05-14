@@ -26,7 +26,7 @@ class CodeWriting(Node):
         spatial_str = ""
         temporal_str = ""
         for id, info in spatial_info.items():
-            answer_payload = self._extract_answer_tag_content(info['output'])
+            answer_payload = self._extract_answer_content(info['output'])
             candidate_output = answer_payload if answer_payload else info['output'].strip()
             if candidate_output.startswith("```python") and candidate_output.endswith("```") and self.role != 'Normal Programmer' and self.role != 'Stupid Programmer':
                 output = candidate_output.lstrip("```python\n").rstrip("\n```")
@@ -37,7 +37,7 @@ class CodeWriting(Node):
             else:
                 spatial_str += f"Agent {id} as a {info['role']} provides the following info: {info['output']}\n\n"
         for id, info in temporal_info.items():
-            answer_payload = self._extract_answer_tag_content(info['output'])
+            answer_payload = self._extract_answer_content(info['output'])
             candidate_output = answer_payload if answer_payload else info['output'].strip()
             if candidate_output.startswith("```python") and candidate_output.endswith("```") and self.role != 'Normal Programmer' and self.role != 'Stupid Programmer':
                 output = candidate_output.lstrip("```python\n").rstrip("\n```")

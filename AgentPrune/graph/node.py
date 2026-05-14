@@ -121,26 +121,71 @@ class Node(ABC):
     def update_memory(self):
         self.last_memory['outputs'] = self.outputs
 
-    def _extract_answer_tag_content(self, predecessor_output: str) -> str:
+    def _split_answer_and_reasoning(self, predecessor_output: str) -> tuple[str, str]:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
+        if self.domain == "humaneval":
+            answer, reasoning = self._split_humaneval_answer_and_reasoning(predecessor_output)
+            return answer, reasoning
+        if self.domain == "mmlu_pro":
+            answer, reasoning = self._split_mmlu_pro_answer_and_reasoning(predecessor_output)
+            return answer, reasoning
+        lines = predecessor_output.splitlines()
+        non_empty_indices = [idx for idx, line in enumerate(lines) if line.strip()]
+        if len(non_empty_indices) == 0:
+            return "", ""
+
+        answer_idx = non_empty_indices[0]
+        answer = lines[answer_idx].strip()
+        reasoning_lines = lines[answer_idx + 1:]
+        reasoning = "\n".join(reasoning_lines).strip()
+        return answer, reasoning
+
+    def _split_humaneval_answer_and_reasoning(self, predecessor_output: str) -> tuple[str, str]:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
         answer_match = re.search(
             r"<answer>\s*(.*?)\s*</answer>",
             predecessor_output,
             flags=re.IGNORECASE | re.DOTALL,
         )
-        if answer_match is None:
-            return ""
-        return answer_match.group(1).strip()
+        if answer_match is not None:
+            answer = answer_match.group(1).strip()
+            reasoning = (
+                predecessor_output[:answer_match.start()] + "\n" + predecessor_output[answer_match.end():]
+            ).strip()
+            return answer, reasoning
+        return predecessor_output.strip(), ""
 
-    def _extract_reasoning_content(self, predecessor_output: str) -> str:
+    def _split_mmlu_pro_answer_and_reasoning(self, predecessor_output: str) -> tuple[str, str]:
         if not isinstance(predecessor_output, str):
             predecessor_output = str(predecessor_output)
-        reasoning = re.sub(
-            r"<answer>\s*.*?\s*</answer>",
-            "",
+        answer_match = re.search(
+            r"answer is\s*\(?([A-J])\)?",
             predecessor_output,
-            flags=re.IGNORECASE | re.DOTALL,
-        ).strip()
+            flags=re.IGNORECASE,
+        )
+        if answer_match is not None:
+            answer = answer_match.group(0).strip()
+            reasoning = (
+                predecessor_output[:answer_match.start()] + "\n" + predecessor_output[answer_match.end():]
+            ).strip()
+            return answer, reasoning
+        return predecessor_output.strip(), ""
+
+    def _extract_answer_content(self, predecessor_output: str) -> str:
+        answer, _ = self._split_answer_and_reasoning(predecessor_output)
+        return answer
+
+    def _extract_reasoning_content(self, predecessor_output: str) -> str:
+        _, reasoning = self._split_answer_and_reasoning(predecessor_output)
         return reasoning
+
+    def _extract_answer_tag_content(self, predecessor_output: str) -> str:
+        answer = self._extract_answer_content(predecessor_output)
+        if answer == "":
+            return ""
+        return answer
 
     def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
         message_type = "full"
@@ -152,11 +197,14 @@ class Node(ABC):
 
         if isinstance(output, str):
             if message_type == "answer":
-                answer_payload = self._extract_answer_tag_content(output)
+                answer_payload = self._extract_answer_content(output)
                 selected_output = answer_payload if answer_payload else output.strip()
             elif message_type == "reason":
                 reasoning_payload = self._extract_reasoning_content(output)
-                selected_output = reasoning_payload if reasoning_payload else output.strip()
+                if self.domain in {"humaneval", "mmlu_pro"}:
+                    selected_output = reasoning_payload
+                else:
+                    selected_output = reasoning_payload if reasoning_payload else output.strip()
 
         return message_type, selected_output
 

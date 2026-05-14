@@ -37,7 +37,7 @@ class FinalWriteCode(Node):
         system_prompt = f"{self.role}.\n {self.constraint}"
         spatial_str = ""
         for id, info in spatial_info.items():
-            answer_payload = self._extract_answer_tag_content(info['output'])
+            answer_payload = self._extract_answer_content(info['output'])
             candidate_output = answer_payload if answer_payload else info['output'].strip()
             if candidate_output.startswith("```python") and candidate_output.endswith("```"):  # is python code
                 self.internal_tests = self.extract_example(raw_inputs)
