@@ -421,8 +421,11 @@ async def train_joint_policy(
             zip(realized_graphs, raw_answers, correct_answers, structure_log_probs)
         ):
             record_slot = (iter_idx * batch_size + sample_idx) % len(records)
-            predicted_answer = dataset.postprocess_answer(raw_answer)
-            correct = float(predicted_answer == correct_answer)
+            predicted_answer = dataset.postprocess_answer(raw_answer, record=batch_records[sample_idx])
+            if hasattr(dataset, "compute_reward"):
+                correct = float(dataset.compute_reward(raw_answer, batch_records[sample_idx]))
+            else:
+                correct = float(predicted_answer == correct_answer)
             tokens_used = int(realized_graph.current_run_total_tokens)
             step_tokens = int(realized_graph.current_run_step_tokens)
             action_counts = realized_graph.get_edge_policy_action_counts()
