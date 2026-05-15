@@ -140,6 +140,10 @@ class SVAMPDataset:
                 self._dataset_dir / f"SVAMP_{split_name}.json",
                 self._dataset_dir / f"SVAMP_{split_name}.jsonl",
             ])
+        candidates.extend([
+            self._dataset_dir / "SVAMP.json",
+            self._dataset_dir / "svamp.json",
+        ])
         return candidates
 
     def _resolve_dataset_path(self) -> Path:
