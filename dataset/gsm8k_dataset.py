@@ -1,4 +1,9 @@
 import re
+import random
+from pathlib import Path
+from typing import Dict, Iterator, List
+
+from AgentPrune.tools.reader.readers import JSONLReader
 
 def gsm_data_process(dataset):
     # extract the question, step and answer
@@ -79,6 +84,93 @@ def gsm_get_predict(pred_str):
     else:
         matches = re.findall(r'\d+', pred)
         return matches[-1] if matches else '0'
+
+
+class GSM8KDataset:
+    def __init__(
+        self,
+        split: str,
+        dataset_dir: str = "dataset/gsm8k",
+        dataset_path: str | None = "dataset/gsm8k/gsm8k.jsonl",
+        shuffle_seed: int = 888,
+    ) -> None:
+        self._split = split
+        self._dataset_dir = Path(dataset_dir)
+        self._dataset_path = Path(dataset_path) if dataset_path is not None else None
+        self._shuffle_seed = shuffle_seed
+        self._records = self._load_data()
+
+    @staticmethod
+    def get_domain() -> str:
+        return "gsm8k"
+
+    @property
+    def split(self) -> str:
+        return self._split
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __getitem__(self, index: int) -> Dict[str, str]:
+        return self._records[index]
+
+    def __iter__(self) -> Iterator[Dict[str, str]]:
+        return iter(self._records)
+
+    def _candidate_paths(self) -> List[Path]:
+        split_aliases = {
+            "train": ["train", "dev"],
+            "dev": ["dev", "train"],
+            "val": ["val", "validation", "test"],
+            "validation": ["validation", "val", "test"],
+            "test": ["test", "val", "validation"],
+        }
+        split_names = split_aliases.get(self._split, [self._split])
+        candidates: List[Path] = []
+        for split_name in split_names:
+            candidates.append(self._dataset_dir / f"{split_name}.jsonl")
+            candidates.append(self._dataset_dir / f"gsm8k_{split_name}.jsonl")
+        return candidates
+
+    def _resolve_dataset_path(self) -> Path:
+        for path in self._candidate_paths():
+            if path.exists():
+                return path
+        if self._dataset_path is not None and self._dataset_path.exists():
+            print(
+                f"No split-specific file found for '{self._split}'. "
+                f"Falling back to {self._dataset_path}."
+            )
+            return self._dataset_path
+        raise FileNotFoundError(
+            f"No dataset split file found for '{self._split}'. Tried: "
+            + ", ".join(str(path) for path in self._candidate_paths())
+        )
+
+    def _load_data(self) -> List[Dict[str, str]]:
+        dataset = JSONLReader.parse_file(self._resolve_dataset_path())
+        records = gsm_data_process(dataset)
+        random.Random(self._shuffle_seed).shuffle(records)
+        print("Total number of questions: ", len(records))
+        return records
+
+    @staticmethod
+    def record_to_input(record: Dict[str, str]) -> Dict[str, str]:
+        return {"task": record["task"]}
+
+    def postprocess_answer(self, answer) -> str:
+        if isinstance(answer, list):
+            answer = answer[0] if len(answer) > 0 else ""
+        return gsm_get_predict(answer)
+
+    @staticmethod
+    def record_to_target_answer(record: Dict[str, str]) -> str:
+        return str(record["answer"])
+
+
+def load_gsm8k_dataset(dataset_path: str) -> list[dict[str, str]]:
+    dataset = JSONLReader.parse_file(dataset_path)
+    return gsm_data_process(dataset)
 
 
 def _fix_sqrt(string):

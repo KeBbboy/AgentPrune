@@ -15,10 +15,13 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentPrune.utils.const import AgentPrune_ROOT
 from AgentPrune.graph.graph import Graph
-from AgentPrune.tools.reader.readers import JSONLReader
 from AgentPrune.utils.globals import Time
 from AgentPrune.utils.globals import Cost, PromptTokens, CompletionTokens
-from dataset.gsm8k_dataset import gsm_data_process, gsm_get_predict
+from dataset.gsm8k_dataset import GSM8KDataset
+from experiments.evaluate_mmlu import evaluate
+from experiments.run_humaneval import print_retained_edge_message_summary
+from experiments.run_mmlu import freeze_graph_for_evaluation
+from experiments.train_mmlu import train
 
 def print_agent_token_summary(graph: Graph):
     print("Per-Agent Token Usage:")
@@ -112,7 +115,14 @@ def load_config(config_path):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on gsm8k")
+    parser.add_argument("--dataset_dir", type=str, default="dataset/gsm8k")
     parser.add_argument("--dataset_json", type=str, default="dataset/gsm8k/gsm8k.jsonl")
+    parser.add_argument("--train_split", type=str, default="train",
+                        choices=["train", "dev", "val", "validation", "test"],
+                        help="Dataset split used for training/pruning. Default 'train'.")
+    parser.add_argument("--eval_split", type=str, default="test",
+                        choices=["train", "dev", "val", "validation", "test"],
+                        help="Dataset split used for evaluation. Default 'test'.")
     parser.add_argument("--result_file", type=str, default=None)
     parser.add_argument("--llm_name", type=str, default="gpt-4-1106-preview")
     parser.add_argument('--mode', type=str, default='FullConnected',
@@ -131,8 +141,16 @@ def parse_args():
                         help='Specify the number of agents for each name in agent_names')
     parser.add_argument('--decision_method', type=str, default='FinalRefer',
                         help='The decison method of the agentprune')
+    parser.add_argument('--log_agent_outputs', action='store_true',
+                        help="Print each agent's raw output and extracted answer to stdout/logs.")
+    parser.add_argument('--limit_questions', type=int, default=None,
+                        help="Maximum number of evaluation questions to run.")
+    parser.add_argument('--temperature', type=float, default=0.0,
+                        help="LLM generation temperature. Default 0.0 for near-deterministic output.")
+    parser.add_argument('--seed', type=int, default=42,
+                        help="Random seed for Python, NumPy, and PyTorch. Default 42.")
     parser.add_argument('--freeze_after_training', action='store_true', default=True,
-                        help="After the optimization batches finish, switch the graph to evaluation message-sharing mode for the remaining batches.")
+                        help="After training/pruning, freeze the learned graph for evaluation so kept edges are no longer resampled.")
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--learn_message_type', action='store_true',
@@ -146,9 +164,11 @@ def parse_args():
 
 async def main():
     args = parse_args()
-    result_file = None
-    dataset = JSONLReader.parse_file(args.dataset_json)
-    dataset = gsm_data_process(dataset)
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
     current_time = Time.instance().value or time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     Time.instance().value = current_time
     result_dir = Path(f"{AgentPrune_ROOT}/result/gsm8k")
@@ -165,130 +185,67 @@ async def main():
                   llm_name=args.llm_name,
                   agent_names=agent_names,
                   decision_method=decision_method,
+                  log_node_outputs=args.log_agent_outputs,
+                  llm_temperature=args.temperature,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
                   **kwargs)
     graph.set_message_type_learning_mode(args.learn_message_type)
-    graph.set_eval_mode(False)
-    optimizer_params = [graph.spatial_logits, graph.temporal_logits]
-    if args.learn_message_type:
-        optimizer_params.extend([graph.spatial_message_type_logits, graph.temporal_message_type_logits])
-    optimizer = torch.optim.Adam(optimizer_params, lr=args.lr)
-    
-    num_batches = int(len(dataset)/args.batch_size)
-    total_solved, total_executed = (0, 0)
-    train_mode_enabled = args.optimized_spatial or args.optimized_temporal
-    training_batch_limit = min(num_batches, args.num_iterations) if train_mode_enabled else 0
-    no_training_mode = training_batch_limit == 0
-    train_prompt_start, train_completion_start = get_token_snapshot()
-    train_agent_start = get_agent_token_snapshot(graph)
-    inference_prompt_start = train_prompt_start if no_training_mode else None
-    inference_completion_start = train_completion_start if no_training_mode else None
-    inference_agent_start = train_agent_start if no_training_mode else None
-    training_phase_closed = no_training_mode
-    
-    for i_batch in range(num_batches):
-        print(f"Batch {i_batch}",80*'-')
-        start_ts = time.time()
-        answer_log_probs = []
-        answers = []
-        
-        current_batch = dataloader(dataset,args.batch_size,i_batch)
-        if current_batch is None:
-            print("No more data available.")
-            break
-        
-        for i_record, record in enumerate(current_batch):
-            realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.spatial_message_type_logits = graph.spatial_message_type_logits
-            realized_graph.temporal_logits = graph.temporal_logits
-            realized_graph.temporal_message_type_logits = graph.temporal_message_type_logits
-            realized_graph.share_cost_state(graph)
-            task = record["task"]
-            step = record["step"]
-            answer = record["answer"]
-            answers.append(answer)
-            input_dict = {"task": task}
-            answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds)))
-        raw_results = await asyncio.gather(*answer_log_probs)
-        raw_answers, log_probs = zip(*raw_results)
-        loss_list: List[torch.Tensor] = []
-        utilities: List[float] = []
-        data = load_result(result_file)
-        
-        for task, answer, log_prob, true_answer in zip(current_batch, raw_answers, log_probs, answers):
-            predict_answer = gsm_get_predict(answer[0])
-            is_solved = float(predict_answer)==float(true_answer)
-            total_solved = total_solved + is_solved
-            total_executed = total_executed + 1
-            accuracy = total_solved/ total_executed
-            utility = is_solved
-            utilities.append(utility)
-            single_loss = -log_prob * utility
-            loss_list.append(single_loss)
-            updated_item = {
-                "Question": task,
-                "Answer": true_answer,
-                "Step": step,
-                "Response": answer,
-                "Attempt answer": predict_answer,
-                "Solved": is_solved,
-                "Total solved": total_solved,
-                "Total executed": total_executed,
-                "Accuracy": accuracy
-            }
-            data.append(updated_item)
-        with open(result_file, 'w',encoding='utf-8') as file:
-            json.dump(data, file, indent=4)
-        
-        total_loss = torch.mean(torch.stack(loss_list))
-        if args.optimized_spatial or args.optimized_temporal:
-            optimizer.zero_grad()
-            total_loss.backward()
-            optimizer.step()
-        spatial_probs = torch.sigmoid(graph.spatial_logits)
-        temporal_probs = torch.sigmoid(graph.temporal_logits)
-        
-        print(f"Batch time {time.time() - start_ts:.3f}")
-        print(f"Accuracy: {accuracy}")
-        print("utilities:", utilities)
-        
-        if (i_batch+1)%args.imp_per_iterations == 0 and i_batch < args.num_iterations and (args.optimized_spatial or args.optimized_temporal):
-            spatial_masks, temporal_masks = graph.update_masks(args.pruning_rate)
-        if i_batch+1 == args.num_iterations:
-            args.optimized_spatial = False
-            args.optimized_temporal = False
-            graph.set_eval_mode(True)
-        if (not training_phase_closed) and (i_batch + 1 == training_batch_limit):
-            train_prompt_used = PromptTokens.instance().value - train_prompt_start
-            train_completion_used = CompletionTokens.instance().value - train_completion_start
-            train_agent_metrics = get_phase_agent_token_metrics(graph, train_agent_start)
-            if training_batch_limit > 0:
-                print_phase_token_summary("Training", train_prompt_used, train_completion_used)
-                print_phase_agent_token_summary("Training", train_agent_metrics)
-            else:
-                print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
-                print_phase_token_summary("Training", 0.0, 0.0)
-                print_phase_agent_token_summary("Training", [])
-            inference_prompt_start, inference_completion_start = get_token_snapshot()
-            inference_agent_start = get_agent_token_snapshot(graph)
-            training_phase_closed = True
 
-    if no_training_mode:
+    dataset_train = GSM8KDataset(args.train_split, dataset_dir=args.dataset_dir, dataset_path=args.dataset_json)
+    dataset_eval = GSM8KDataset(args.eval_split, dataset_dir=args.dataset_dir, dataset_path=args.dataset_json)
+
+    train_prompt_used = 0.0
+    train_completion_used = 0.0
+    train_agent_metrics: List[Dict[str, Any]] = []
+
+    if args.optimized_spatial or args.optimized_temporal:
+        graph.set_eval_mode(False)
+        train_prompt_start, train_completion_start = get_token_snapshot()
+        train_agent_start = get_agent_token_snapshot(graph)
+        await train(
+            graph=graph,
+            dataset=dataset_train,
+            num_iters=args.num_iterations,
+            num_rounds=args.num_rounds,
+            lr=args.lr,
+            batch_size=args.batch_size,
+            imp_per_iters=args.imp_per_iterations,
+            pruning_rate=args.pruning_rate,
+        )
+        train_prompt_used = PromptTokens.instance().value - train_prompt_start
+        train_completion_used = CompletionTokens.instance().value - train_completion_start
+        train_agent_metrics = get_phase_agent_token_metrics(graph, train_agent_start)
+        print_phase_token_summary("Training", train_prompt_used, train_completion_used)
+        print_phase_agent_token_summary("Training", train_agent_metrics)
+    else:
         print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
-        print_phase_token_summary("Training", 0.0, 0.0)
-        print_phase_agent_token_summary("Training", [])
+        print_phase_token_summary("Training", train_prompt_used, train_completion_used)
+        print_phase_agent_token_summary("Training", train_agent_metrics)
 
-    if inference_prompt_start is None or inference_completion_start is None or inference_agent_start is None:
-        inference_prompt_start, inference_completion_start = get_token_snapshot()
-        inference_agent_start = get_agent_token_snapshot(graph)
+    print_retained_edge_message_summary(graph)
 
-    inference_prompt_used = PromptTokens.instance().value - inference_prompt_start
-    inference_completion_used = CompletionTokens.instance().value - inference_completion_start
-    inference_agent_metrics = get_phase_agent_token_metrics(graph, inference_agent_start)
-    print_phase_token_summary("Inference", inference_prompt_used, inference_completion_used)
-    print_phase_agent_token_summary("Inference", inference_agent_metrics)
+    if args.freeze_after_training:
+        freeze_graph_for_evaluation(graph)
+        print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
+
+    graph.set_eval_mode(True)
+    eval_agent_start = get_agent_token_snapshot(graph)
+    eval_prompt_start, eval_completion_start = get_token_snapshot()
+    score = await evaluate(
+        graph=graph,
+        dataset=dataset_eval,
+        num_rounds=args.num_rounds,
+        limit_questions=args.limit_questions,
+        eval_batch_size=args.batch_size,
+    )
+    eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
+    eval_completion_used = CompletionTokens.instance().value - eval_completion_start
+
+    eval_agent_metrics = get_phase_agent_token_metrics(graph, eval_agent_start)
+    print_phase_token_summary("Inference", eval_prompt_used, eval_completion_used)
+    print_phase_agent_token_summary("Inference", eval_agent_metrics)
+    print(f"Score: {score}")
     print(f"Prompt Tokens: {PromptTokens.instance().value}")
     print(f"Completion Tokens: {CompletionTokens.instance().value}")
     print(f"Total Tokens: {PromptTokens.instance().value + CompletionTokens.instance().value}")

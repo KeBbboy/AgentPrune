@@ -1,6 +1,9 @@
 import json
+import random
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, Iterator, List
+
+from dataset.gsm8k_dataset import gsm_get_predict
 
 
 def _read_records(dataset_path: str | Path) -> List[Dict[str, Any]]:
@@ -86,7 +89,94 @@ def load_multiarith_dataset(dataset_path: str | Path) -> List[Dict[str, str]]:
             {
                 "task": _extract_question(raw_record),
                 "step": _extract_step(raw_record),
-                "answer": _extract_answer(raw_record),
+                "answer": gsm_get_predict(_extract_answer(raw_record)),
             }
         )
     return processed_records
+
+
+class MultiArithDataset:
+    def __init__(
+        self,
+        split: str,
+        dataset_dir: str = "dataset/multiarith",
+        dataset_path: str | Path | None = None,
+        shuffle_seed: int = 888,
+    ) -> None:
+        self._split = split
+        self._dataset_dir = Path(dataset_dir)
+        self._dataset_path = Path(dataset_path) if dataset_path is not None else None
+        self._shuffle_seed = shuffle_seed
+        self._records = self._load_data()
+
+    @staticmethod
+    def get_domain() -> str:
+        return "multiarith"
+
+    @property
+    def split(self) -> str:
+        return self._split
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __getitem__(self, index: int) -> Dict[str, str]:
+        return self._records[index]
+
+    def __iter__(self) -> Iterator[Dict[str, str]]:
+        return iter(self._records)
+
+    def _candidate_paths(self) -> List[Path]:
+        split_aliases = {
+            "train": ["train", "dev"],
+            "dev": ["dev", "train"],
+            "val": ["val", "validation", "test"],
+            "validation": ["validation", "val", "test"],
+            "test": ["test", "val", "validation"],
+        }
+        split_names = split_aliases.get(self._split, [self._split])
+        candidates: List[Path] = []
+        for split_name in split_names:
+            candidates.extend([
+                self._dataset_dir / f"{split_name}.json",
+                self._dataset_dir / f"{split_name}.jsonl",
+                self._dataset_dir / f"multiarith_{split_name}.json",
+                self._dataset_dir / f"multiarith_{split_name}.jsonl",
+                self._dataset_dir / f"MultiArith_{split_name}.json",
+                self._dataset_dir / f"MultiArith_{split_name}.jsonl",
+            ])
+        return candidates
+
+    def _resolve_dataset_path(self) -> Path:
+        for path in self._candidate_paths():
+            if path.exists():
+                return path
+        if self._dataset_path is not None and self._dataset_path.exists():
+            print(
+                f"No split-specific file found for '{self._split}'. "
+                f"Falling back to {self._dataset_path}."
+            )
+            return self._dataset_path
+        raise FileNotFoundError(
+            f"No dataset split file found for '{self._split}'. Tried: "
+            + ", ".join(str(path) for path in self._candidate_paths())
+        )
+
+    def _load_data(self) -> List[Dict[str, str]]:
+        records = load_multiarith_dataset(self._resolve_dataset_path())
+        random.Random(self._shuffle_seed).shuffle(records)
+        print("Total number of questions: ", len(records))
+        return records
+
+    @staticmethod
+    def record_to_input(record: Dict[str, str]) -> Dict[str, str]:
+        return {"task": record["task"]}
+
+    def postprocess_answer(self, answer) -> str:
+        if isinstance(answer, list):
+            answer = answer[0] if len(answer) > 0 else ""
+        return gsm_get_predict(answer)
+
+    @staticmethod
+    def record_to_target_answer(record: Dict[str, str]) -> str:
+        return str(record["answer"])
