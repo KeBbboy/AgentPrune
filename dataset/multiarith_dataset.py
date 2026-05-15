@@ -54,7 +54,10 @@ def _extract_question(record: Dict[str, Any]) -> str:
 
 
 def _extract_answer(record: Dict[str, Any]) -> str:
-    direct_answer = _first_non_empty(record, ("answer", "Answer", "target", "Target"))
+    direct_answer = _first_non_empty(
+        record,
+        ("answer", "Answer", "target", "Target", "final_ans", "Final_ans", "final_answer"),
+    )
     if direct_answer:
         return direct_answer.replace(",", "")
 
