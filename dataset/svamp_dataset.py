@@ -1,5 +1,6 @@
 import json
 import random
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List
 
@@ -77,6 +78,31 @@ def _extract_step(record: Dict[str, Any]) -> str:
     return ""
 
 
+def _normalize_numeric_answer(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else format(value, ".15g")
+
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return "0"
+
+    matches = re.findall(r"-?\d+(?:\.\d+)?", text)
+    if not matches:
+        fallback = gsm_get_predict(text)
+        return fallback if fallback else "0"
+
+    candidate = matches[-1]
+    try:
+        numeric = float(candidate)
+    except ValueError:
+        return candidate
+    return str(int(numeric)) if numeric.is_integer() else format(numeric, ".15g")
+
+
 def load_svamp_dataset(dataset_path: str | Path) -> List[Dict[str, str]]:
     processed_records: List[Dict[str, str]] = []
     for raw_record in _read_records(dataset_path):
@@ -84,7 +110,7 @@ def load_svamp_dataset(dataset_path: str | Path) -> List[Dict[str, str]]:
             {
                 "task": _extract_question(raw_record),
                 "step": _extract_step(raw_record),
-                "answer": gsm_get_predict(_extract_answer(raw_record)),
+                "answer": _normalize_numeric_answer(_extract_answer(raw_record)),
             }
         )
     return processed_records
@@ -174,7 +200,7 @@ class SVAMPDataset:
     def postprocess_answer(self, answer) -> str:
         if isinstance(answer, list):
             answer = answer[0] if len(answer) > 0 else ""
-        return gsm_get_predict(answer)
+        return _normalize_numeric_answer(answer)
 
     @staticmethod
     def record_to_target_answer(record: Dict[str, str]) -> str:
