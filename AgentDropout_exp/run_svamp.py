@@ -75,6 +75,8 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if args.learn_message_type and not (args.optimized_spatial or args.optimized_temporal):
+        parser.error("--learn_message_type requires --optimized_spatial and/or --optimized_temporal.")
 
     return args
 
@@ -242,9 +244,11 @@ async def main():
     
     
     if args.optimized_temporal or args.optimized_spatial:
-        # graph.optimized_spatial=True
-        # graph.optimized_temporal=True
-        for i_batch in range(0):
+        graph.optimized_spatial=True
+        graph.optimized_temporal=True
+        graph.set_message_type_learning_mode(args.learn_message_type)
+        optimizer = torch.optim.Adam(graph.second_stage_optimizer_parameters(), lr=args.lr)
+        for i_batch in range(2):
             print(f"Train batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []

@@ -73,6 +73,8 @@ def parse_args():
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
+    if args.learn_message_type and not (args.optimized_spatial or args.optimized_temporal):
+        parser.error("--learn_message_type requires --optimized_spatial and/or --optimized_temporal.")
 
     return args
 
