@@ -65,6 +65,8 @@ def parse_args():
                         help='The decison method of the agentprune')
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
+    parser.add_argument('--learn_message_type', action='store_true',
+                        help="Enable answer/reason message-type learning in AgentDropout second-stage training.")
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
@@ -256,8 +258,7 @@ async def main():
             
             for i_record, record in enumerate(current_batch):
                 realized_graph = copy.deepcopy(graph)
-                realized_graph.spatial_logits = graph.spatial_logits
-                realized_graph.temporal_logits = graph.temporal_logits
+                realized_graph.share_second_stage_parameters(graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -402,8 +403,7 @@ async def main():
         print(11111111)
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_second_stage_parameters(graph)
             
             if not graph.diff:
                 spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))

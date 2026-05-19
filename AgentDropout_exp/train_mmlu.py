@@ -146,15 +146,10 @@ async def train(graph:Graph,
 
     loader = infinite_data_loader()
 
-    if not graph.diff:
-        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=lr)
-    # elif graph.diff and graph.dec_1:
-    #     optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters())+[graph.decision_logits],lr=lr)
-    else:
-        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=lr)
-    
     graph.optimized_spatial=True
     graph.optimized_temporal=True
+    graph.set_message_type_learning_mode(getattr(args, "learn_message_type", False))
+    optimizer = torch.optim.Adam(graph.second_stage_optimizer_parameters(), lr=lr)
 
     for i_iter in range(2):
         print(f"Train {i_iter}", 80*'-')
@@ -164,8 +159,7 @@ async def train(graph:Graph,
         add_losses = []
         for i_record, record in zip(range(10), loader):
             realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_second_stage_parameters(graph)
             # if graph.dec_1:
             #     realized_graph.decision_logits = graph.decision_logits
             

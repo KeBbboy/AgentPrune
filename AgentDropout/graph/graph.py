@@ -66,6 +66,10 @@ class Graph(ABC):
         self.agent_names:List[str] = agent_names
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
+        self.optimized_spatial_message_type = False
+        self.optimized_temporal_message_type = False
+        self.enable_spatial_message_type_action = False
+        self.enable_temporal_message_type_action = False
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
         self.nodes:Dict[str,Node] = {}
         self.potential_spatial_edges:List[List[str, str]] = []
@@ -82,6 +86,7 @@ class Graph(ABC):
         
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
+        init_message_type_logit = 0.0
 
         print(self.potential_spatial_edges)
         if dec:
@@ -93,7 +98,15 @@ class Graph(ABC):
         if not diff:
             self.spatial_masks = torch.nn.Parameter(fixed_spatial_masks,requires_grad=False)  # fixed edge masks
             self.spatial_logits = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial) # trainable edge logits
+            self.spatial_message_type_logits = torch.nn.Parameter(
+                torch.ones(len(self.potential_spatial_edges), requires_grad=False) * init_message_type_logit,
+                requires_grad=False,
+            )
             self.temporal_logits = torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) # trainable edge logits
+            self.temporal_message_type_logits = torch.nn.Parameter(
+                torch.ones(len(self.potential_temporal_edges), requires_grad=False) * init_message_type_logit,
+                requires_grad=False,
+            )
             self.temporal_masks = torch.nn.Parameter(fixed_temporal_masks,requires_grad=False)  # fixed edge masks
             if dec:
                 self.spatial_logits_1 = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial)
@@ -106,7 +119,15 @@ class Graph(ABC):
                 self.temporal_logits_1 = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) for _ in range(rounds-1)])
             self.spatial_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_spatial_masks.clone(), requires_grad=False) for _ in range(rounds)])  # fixed edge masks
             self.spatial_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial) for _ in range(rounds)])
+            self.spatial_message_type_logits = torch.nn.ParameterList([
+                torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=False) * init_message_type_logit, requires_grad=False)
+                for _ in range(rounds)
+            ])
             self.temporal_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) for _ in range(rounds-1)])
+            self.temporal_message_type_logits = torch.nn.ParameterList([
+                torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=False) * init_message_type_logit, requires_grad=False)
+                for _ in range(rounds-1)
+            ])
             self.temporal_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_temporal_masks.clone(), requires_grad=False) for _ in range(rounds-1)])
         
     @property
@@ -162,6 +183,9 @@ class Graph(ABC):
                 kwargs["llm_name"] = self.llm_name
                 agent_instance = AgentRegistry.get(agent_name, **kwargs)
                 self.add_node(agent_instance)
+        for node in self.nodes.values():
+            node.spatial_message_types = {}
+            node.temporal_message_types = {}
     
     def init_potential_edges(self):
         """
@@ -179,8 +203,10 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].spatial_predecessors = []
             self.nodes[node_id].spatial_successors = []
+            self.nodes[node_id].spatial_message_types = {}
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
+        self.decision_node.spatial_message_types = {}
     
     def clear_temporal_connection(self):
         """
@@ -189,6 +215,82 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].temporal_predecessors = []
             self.nodes[node_id].temporal_successors = []
+            self.nodes[node_id].temporal_message_types = {}
+
+    def _iter_parameters(self, value):
+        if isinstance(value, torch.nn.Parameter):
+            return [value]
+        if isinstance(value, torch.nn.ParameterList):
+            return list(value)
+        return list(value)
+
+    def _message_type_logits_for(self, edge_kind: str, round: int = 0):
+        if edge_kind == "spatial":
+            logits = self.spatial_message_type_logits
+            return logits[round] if self.diff else logits
+        if edge_kind == "temporal":
+            logits = self.temporal_message_type_logits
+            return logits[round - 1] if self.diff else logits
+        raise ValueError(f"Unknown edge_kind: {edge_kind}")
+
+    def sample_message_type(self, edge_kind: str, edge_idx: int, round: int = 0, return_log_prob: bool = False):
+        if edge_kind == "spatial":
+            enabled = self.enable_spatial_message_type_action
+            optimized = self.optimized_spatial_message_type
+        elif edge_kind == "temporal":
+            enabled = self.enable_temporal_message_type_action
+            optimized = self.optimized_temporal_message_type
+        else:
+            raise ValueError(f"Unknown edge_kind: {edge_kind}")
+
+        logits = self._message_type_logits_for(edge_kind, round)
+        if not enabled:
+            if return_log_prob:
+                return "full", torch.tensor(0.0, device=logits.device)
+            return "full"
+
+        if not optimized:
+            message_type = "reason" if logits[edge_idx].item() >= 0 else "answer"
+            if return_log_prob:
+                return message_type, torch.tensor(0.0, device=logits.device)
+            return message_type
+
+        reason_prob = torch.sigmoid(logits[edge_idx])
+        if torch.rand(1, device=reason_prob.device) < reason_prob:
+            message_type = "reason"
+            log_prob = torch.log(reason_prob)
+        else:
+            message_type = "answer"
+            log_prob = torch.log(1 - reason_prob)
+        if return_log_prob:
+            return message_type, log_prob
+        return message_type
+
+    def second_stage_optimizer_parameters(self):
+        params = []
+        params.extend(self._iter_parameters(self.spatial_logits))
+        params.extend(self._iter_parameters(self.temporal_logits))
+        if self.enable_spatial_message_type_action:
+            params.extend(self._iter_parameters(self.spatial_message_type_logits))
+        if self.enable_temporal_message_type_action:
+            params.extend(self._iter_parameters(self.temporal_message_type_logits))
+        return params
+
+    def share_second_stage_parameters(self, source: "Graph"):
+        self.spatial_logits = source.spatial_logits
+        self.temporal_logits = source.temporal_logits
+        self.spatial_message_type_logits = source.spatial_message_type_logits
+        self.temporal_message_type_logits = source.temporal_message_type_logits
+
+    def set_message_type_learning_mode(self, enabled: bool):
+        self.enable_spatial_message_type_action = enabled
+        self.enable_temporal_message_type_action = enabled
+        self.optimized_spatial_message_type = enabled and self.optimized_spatial
+        self.optimized_temporal_message_type = enabled and self.optimized_temporal
+        for param in self._iter_parameters(self.spatial_message_type_logits):
+            param.requires_grad_(self.optimized_spatial_message_type)
+        for param in self._iter_parameters(self.temporal_message_type_logits):
+            param.requires_grad_(self.optimized_temporal_message_type)
 
     def connect_decision_node(self):
         for node_id in self.nodes.keys():
@@ -198,9 +300,9 @@ class Graph(ABC):
 
     def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
         self.clear_spatial_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial or self.optimized_spatial_message_type)]
         
-        for potential_connection, edge_logit, edge_mask in zip(self.potential_spatial_edges, self.spatial_logits, self.spatial_masks):
+        for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_logits, self.spatial_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             # print(out_node)
@@ -209,6 +311,7 @@ class Graph(ABC):
             elif edge_mask == 1.0 and self.optimized_spatial==False:
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'spatial')
+                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx)
                     # print(potential_connection)
                 continue
             if not self.check_cycle(in_node, {out_node}):
@@ -219,6 +322,9 @@ class Graph(ABC):
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
                     log_probs.append(torch.log(edge_prob))
+                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, return_log_prob=True)
+                    out_node.spatial_message_types[in_node.id] = message_type
+                    log_probs.append(message_type_log_prob)
                 else:
                     log_probs.append(torch.log(1 - edge_prob))
                     
@@ -228,9 +334,9 @@ class Graph(ABC):
     
     def construct_spatial_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
         self.clear_spatial_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial or self.optimized_spatial_message_type)]
         
-        for potential_connection, edge_logit, edge_mask in zip(self.potential_spatial_edges, self.spatial_logits[round], self.spatial_masks[round]):
+        for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_logits[round], self.spatial_masks[round])):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             out_id = list(self.nodes).index(out_node.id)
@@ -243,6 +349,7 @@ class Graph(ABC):
                 #     continue
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'spatial')
+                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx, round=round)
                     # print(potential_connection)
                 continue
             if not self.check_cycle(in_node, {out_node}):
@@ -252,6 +359,9 @@ class Graph(ABC):
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
                     log_probs.append(torch.log(edge_prob))
+                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, round=round, return_log_prob=True)
+                    out_node.spatial_message_types[in_node.id] = message_type
+                    log_probs.append(message_type_log_prob)
                 else:
                     log_probs.append(torch.log(1 - edge_prob))
                     
@@ -259,10 +369,10 @@ class Graph(ABC):
     
     def construct_temporal_connection(self, round:int = 0, temperature: float = 1.0, threshold: float = None,):  # temperature must >= 1.0
         self.clear_temporal_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal)]
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal or self.optimized_temporal_message_type)]
         if round == 0:
             return torch.sum(torch.stack(log_probs))  
-        for potential_connection, edge_logit, edge_mask in zip(self.potential_temporal_edges, self.temporal_logits, self.temporal_masks):
+        for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_logits, self.temporal_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
@@ -270,6 +380,7 @@ class Graph(ABC):
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
+                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx)
                     # print(potential_connection)
                 continue
             
@@ -279,6 +390,9 @@ class Graph(ABC):
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
                 log_probs.append(torch.log(edge_prob))
+                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, return_log_prob=True)
+                out_node.temporal_message_types[in_node.id] = message_type
+                log_probs.append(message_type_log_prob)
             else:
                 log_probs.append(torch.log(1 - edge_prob))
                     
@@ -287,10 +401,10 @@ class Graph(ABC):
 
     def construct_temporal_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None,):  # temperature must >= 1.0
         self.clear_temporal_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal)]
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal or self.optimized_temporal_message_type)]
         if round == 0:
             return torch.sum(torch.stack(log_probs))  
-        for potential_connection, edge_logit, edge_mask in zip(self.potential_temporal_edges, self.temporal_logits[round-1], self.temporal_masks[round-1]):
+        for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_logits[round-1], self.temporal_masks[round-1])):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
@@ -298,6 +412,7 @@ class Graph(ABC):
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
+                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx, round=round)
                 continue
             
             edge_prob = torch.sigmoid(edge_logit / temperature)
@@ -306,6 +421,9 @@ class Graph(ABC):
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
                 log_probs.append(torch.log(edge_prob))
+                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, round=round, return_log_prob=True)
+                out_node.temporal_message_types[in_node.id] = message_type
+                log_probs.append(message_type_log_prob)
             else:
                 log_probs.append(torch.log(1 - edge_prob))
                     

@@ -65,6 +65,8 @@ def parse_args():
                         help='The decison method of the agentprune')
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
+    parser.add_argument('--learn_message_type', action='store_true',
+                        help="Enable answer/reason message-type learning in AgentDropout second-stage training.")
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
@@ -230,11 +232,6 @@ async def main():
             print(f"CompletionTokens {CompletionTokens.instance().value}")
         graph.update_masks_dec()
 
-    if not graph.diff:
-        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
-    else:
-        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=args.lr)  
-    
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
     
@@ -242,6 +239,8 @@ async def main():
     if args.optimized_temporal or args.optimized_spatial:
         graph.optimized_spatial=True
         graph.optimized_temporal=True
+        graph.set_message_type_learning_mode(args.learn_message_type)
+        optimizer = torch.optim.Adam(graph.second_stage_optimizer_parameters(), lr=args.lr)
         for i_batch in range(4):
             print(f"Train batch {i_batch}",80*'-')
             start_ts = time.time()
@@ -256,8 +255,7 @@ async def main():
             
             for i_record, record in enumerate(current_batch):
                 realized_graph = copy.deepcopy(graph)
-                realized_graph.spatial_logits = graph.spatial_logits
-                realized_graph.temporal_logits = graph.temporal_logits
+                realized_graph.share_second_stage_parameters(graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -402,8 +400,7 @@ async def main():
         print(11111111)
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_second_stage_parameters(graph)
             
             if not graph.diff:
                 spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))

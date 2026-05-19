@@ -64,8 +64,7 @@ async def evaluate(
         
         for record in record_batch:
             realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_second_stage_parameters(graph)
             input_dict = dataset.record_to_input(record)
             # print(input_dict)
             # if dec:
