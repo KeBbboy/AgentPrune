@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 from AgentPrune.graph.graph import Graph
 from AgentPrune.utils.globals import CompletionTokens, PromptTokens
+from AgentPrune_exp.train_hotpotqa import train_hotpotqa
 from dataset.hotpotqa_dataset import CENTRALIZED_INPUT, FULL_BROADCAST, HotpotQADataset
 
 
@@ -50,6 +51,42 @@ class HotpotQAAnswerMetrics:
         )
 
 
+def get_agent_token_snapshot(graph: Graph) -> Dict[str, Dict[str, Any]]:
+    return copy.deepcopy(graph.agent_token_stats)
+
+
+def get_phase_agent_token_metrics(
+    graph: Graph,
+    start_snapshot: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    phase_metrics: List[Dict[str, Any]] = []
+
+    for node_id, current_stats in graph.agent_token_stats.items():
+        previous_stats = start_snapshot.get(node_id, {})
+        prompt_tokens = current_stats["prompt_tokens"] - previous_stats.get("prompt_tokens", 0)
+        completion_tokens = current_stats["completion_tokens"] - previous_stats.get("completion_tokens", 0)
+        total_tokens = current_stats["total_tokens"] - previous_stats.get("total_tokens", 0)
+        calls = current_stats["calls"] - previous_stats.get("calls", 0)
+
+        if prompt_tokens == 0 and completion_tokens == 0 and total_tokens == 0 and calls == 0:
+            continue
+
+        phase_metrics.append({
+            "id": current_stats["id"],
+            "agent_name": current_stats["agent_name"],
+            "role": current_stats["role"],
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "calls": calls,
+        })
+
+    return sorted(
+        phase_metrics,
+        key=lambda item: (-item["total_tokens"], item["role"], item["id"]),
+    )
+
+
 def get_token_snapshot() -> tuple[float, float]:
     return PromptTokens.instance().value, CompletionTokens.instance().value
 
@@ -59,6 +96,20 @@ def print_phase_token_summary(phase_name: str, prompt_used: float, completion_us
     print(f"{phase_name} Prompt Tokens: {prompt_used}")
     print(f"{phase_name} Completion Tokens: {completion_used}")
     print(f"{phase_name} Total Tokens: {total_used}")
+
+
+def print_phase_agent_token_summary(phase_name: str, phase_metrics: List[Dict[str, Any]]) -> None:
+    print(f"{phase_name} Per-Agent Token Usage:")
+    if len(phase_metrics) == 0:
+        print("  No agent token usage recorded.")
+        return
+
+    for item in phase_metrics:
+        print(
+            f"  {item['role']} ({item['id']}, {item['agent_name']}): "
+            f"input={item['prompt_tokens']}, output={item['completion_tokens']}, "
+            f"total={item['total_tokens']}, calls={item['calls']}"
+        )
 
 
 def print_agent_token_summary(graph: Graph) -> None:
@@ -77,6 +128,25 @@ def print_agent_token_summary(graph: Graph) -> None:
             f"output={item['completion_tokens']}, total={item['total_tokens']}, "
             f"calls={item['calls']}, agents={item['agents']}"
         )
+
+
+def print_retained_edge_message_summary(graph: Graph) -> None:
+    summary = graph.get_retained_edge_message_summary()
+    print(
+        f"Retained Spatial Edges: {summary['spatial_edge_count']}, "
+        f"Retained Temporal Edges: {summary['temporal_edge_count']}"
+    )
+
+    for edge_kind, edge_key in [("Spatial", "spatial_edges"), ("Temporal", "temporal_edges")]:
+        print(f"{edge_kind} Edge Messages:")
+        if len(summary[edge_key]) == 0:
+            print("  None")
+            continue
+        for edge in summary[edge_key]:
+            print(
+                f"  {edge['src_role']} ({edge['src_id']}) -> "
+                f"{edge['dst_role']} ({edge['dst_id']}): {edge['message_type']}"
+            )
 
 
 def get_kwargs(mode: str, node_count: int) -> Dict[str, Any]:
@@ -261,6 +331,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AgentPrune experiments on HotpotQA")
     parser.add_argument("--dataset_dir", type=str, default="dataset/hotpotqa",
                         help="Directory containing official HotpotQA json/jsonl/parquet files.")
+    parser.add_argument("--train_split", type=str, default="train",
+                        choices=["train", "dev", "validation", "val", "dev_distractor", "dev_fullwiki"],
+                        help="HotpotQA split used for AgentPrune training/pruning.")
     parser.add_argument("--eval_split", type=str, default="dev_distractor",
                         choices=["train", "dev", "validation", "val", "dev_distractor", "dev_fullwiki", "test", "test_fullwiki"],
                         help="HotpotQA split to evaluate. Default uses the labeled distractor dev set.")
@@ -280,15 +353,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", type=str, default="FullConnected",
                         choices=["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"],
                         help="Communication topology.")
+    parser.add_argument("--lr", type=float, default=0.1, help="Learning rate for AgentPrune edge optimization.")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--agent_names", nargs="+", type=str, default=["AnalyzeAgent"])
     parser.add_argument("--agent_nums", nargs="+", type=int, default=[5])
+    parser.add_argument("--num_iterations", type=int, default=10,
+                        help="Number of AgentPrune optimization iterations.")
+    parser.add_argument("--imp_per_iterations", type=int, default=5,
+                        help="Prune every N optimization iterations.")
+    parser.add_argument("--pruning_rate", type=float, default=0.25,
+                        help="Fraction of currently active edges pruned at each pruning step.")
     parser.add_argument("--num_rounds", type=int, default=1)
     parser.add_argument("--llm_name", type=str, default="gpt-4-1106-preview")
     parser.add_argument("--domain", type=str, default="hotpotqa")
     parser.add_argument("--decision_method", type=str, default="FinalRefer")
     parser.add_argument("--log_agent_outputs", action="store_true")
-    parser.add_argument("--limit_questions", type=int, default=None)
+    parser.add_argument("--limit_questions", type=int, default=200,
+                        help="Maximum number of evaluation questions to run. Default 200.")
+    parser.add_argument("--optimized_spatial", action="store_true",
+                        help="Enable AgentPrune optimization and pruning of spatial edges.")
+    parser.add_argument("--optimized_temporal", action="store_true",
+                        help="Enable AgentPrune optimization and pruning of temporal edges.")
+    parser.add_argument("--learn_message_type", action="store_true",
+                        help="Learn answer/reason/full message type policy on retained edges.")
+    parser.add_argument("--freeze_after_training", action="store_true", default=True,
+                        help="Freeze the learned graph before evaluation.")
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -319,11 +408,18 @@ async def main() -> None:
         decision_method=args.decision_method,
         log_node_outputs=args.log_agent_outputs,
         llm_temperature=args.temperature,
-        optimized_spatial=False,
-        optimized_temporal=False,
+        optimized_spatial=args.optimized_spatial,
+        optimized_temporal=args.optimized_temporal,
         **kwargs,
     )
+    graph.set_message_type_learning_mode(args.learn_message_type)
 
+    dataset_train = HotpotQADataset(
+        args.train_split,
+        dataset_dir=args.dataset_dir,
+        max_context_paragraphs=args.max_context_paragraphs,
+        max_sentences_per_paragraph=args.max_sentences_per_paragraph,
+    )
     dataset_eval = HotpotQADataset(
         args.eval_split,
         dataset_dir=args.dataset_dir,
@@ -331,7 +427,43 @@ async def main() -> None:
         max_sentences_per_paragraph=args.max_sentences_per_paragraph,
     )
 
+    train_prompt_used = 0.0
+    train_completion_used = 0.0
+    train_agent_metrics: List[Dict[str, Any]] = []
+
+    if args.optimized_spatial or args.optimized_temporal:
+        graph.set_eval_mode(False)
+        train_prompt_start, train_completion_start = get_token_snapshot()
+        train_agent_start = get_agent_token_snapshot(graph)
+        await train_hotpotqa(
+            graph=graph,
+            dataset=dataset_train,
+            num_iters=args.num_iterations,
+            num_rounds=args.num_rounds,
+            lr=args.lr,
+            batch_size=args.batch_size,
+            imp_per_iters=args.imp_per_iterations,
+            pruning_rate=args.pruning_rate,
+            info_setting=args.info_setting,
+        )
+        train_prompt_used = PromptTokens.instance().value - train_prompt_start
+        train_completion_used = CompletionTokens.instance().value - train_completion_start
+        train_agent_metrics = get_phase_agent_token_metrics(graph, train_agent_start)
+        print_phase_token_summary("Training", train_prompt_used, train_completion_used)
+        print_phase_agent_token_summary("Training", train_agent_metrics)
+    else:
+        print("Training skipped: both optimized_spatial and optimized_temporal are disabled.")
+        print_phase_token_summary("Training", train_prompt_used, train_completion_used)
+        print_phase_agent_token_summary("Training", train_agent_metrics)
+
+    print_retained_edge_message_summary(graph)
+
+    if args.freeze_after_training:
+        freeze_graph(graph)
+        print("Evaluation graph frozen: kept edges use the learned masks/logits without resampling.")
+
     graph.set_eval_mode(True)
+    eval_agent_start = get_agent_token_snapshot(graph)
     eval_prompt_start, eval_completion_start = get_token_snapshot()
     prediction_file = Path(args.prediction_file) if args.prediction_file else None
     scores = await evaluate_hotpotqa(
@@ -346,7 +478,9 @@ async def main() -> None:
     eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
     eval_completion_used = CompletionTokens.instance().value - eval_completion_start
 
+    eval_agent_metrics = get_phase_agent_token_metrics(graph, eval_agent_start)
     print_phase_token_summary("Inference", eval_prompt_used, eval_completion_used)
+    print_phase_agent_token_summary("Inference", eval_agent_metrics)
     print(f"Answer EM: {scores['em']}")
     print(f"Answer F1: {scores['f1']}")
     print(f"Answer Precision: {scores['prec']}")
