@@ -3,7 +3,7 @@ import random
 from pathlib import Path
 from typing import Dict, Iterator, List
 
-from AgentPrune.tools.reader.readers import JSONLReader
+from AgentDropout.tools.reader.readers import JSONLReader
 
 def gsm_data_process(dataset):
     # extract the question, step and answer
