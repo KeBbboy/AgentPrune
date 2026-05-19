@@ -103,23 +103,6 @@ HUMANEVAL_STRUCTURED_ROLE_DESCRIPTION = {
         "Keep your final response inside the required XML structure. ",
 }
 
-HUMANEVAL_STRUCTURED_OUTPUT_CONSTRAINT = """
-CRITICAL OUTPUT FORMAT — you MUST respond with exactly these three XML blocks,
-in this order, with no text before, between, or after them:
-
-<claim>One concise sentence stating your implementation direction.</claim>
-<steps>
-- One key implementation or debugging step
-</steps>
-<answer>Place the final deliverable here.</answer>
-
-For coding roles, the <answer> tag must contain exactly one fenced Python code block
-with the full final implementation.
-For non-coding roles, the <answer> tag should contain the most actionable short conclusion.
-Keep <steps> brief: use 1-2 short bullet points only.
-Do not output any text outside these three blocks.
-"""
-
 
 @PromptSetRegistry.register('humaneval')
 class HumanEvalPromptSet(PromptSet):
@@ -130,9 +113,6 @@ class HumanEvalPromptSet(PromptSet):
 
     @staticmethod
     def get_constraint(role, use_structured_output: bool = True):
-        if use_structured_output:
-            role_instruction = HUMANEVAL_STRUCTURED_ROLE_DESCRIPTION.get(role, ROLE_DESCRIPTION[role])
-            return role_instruction + "\n" + HUMANEVAL_STRUCTURED_OUTPUT_CONSTRAINT
         return ROLE_DESCRIPTION[role]
     
     @staticmethod
