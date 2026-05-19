@@ -8,14 +8,21 @@ from typing import Union, Literal, List, Dict, Any
 import argparse
 import random
 import copy
+import importlib
 import numpy as np
 import torch
 
 from AgentPrune.graph.graph import Graph
 from dataset.aqua_dataset import AQuADataset
-from experiments.train_mmlu import train
-from experiments.evaluate_mmlu import evaluate
-from experiments.run_mmlu import (
+
+sys.modules.setdefault("experiments.accuracy", importlib.import_module("AgentPrune_exp.accuracy"))
+sys.modules.setdefault("experiments.train_mmlu", importlib.import_module("AgentPrune_exp.train_mmlu"))
+sys.modules.setdefault("experiments.evaluate_mmlu", importlib.import_module("AgentPrune_exp.evaluate_mmlu"))
+sys.modules.setdefault("experiments.run_humaneval", importlib.import_module("AgentPrune_exp.run_humaneval"))
+
+from AgentPrune_exp.train_mmlu import train
+from AgentPrune_exp.evaluate_mmlu import evaluate
+from AgentPrune_exp.run_mmlu import (
     print_agent_token_summary,
     get_agent_token_snapshot,
     get_phase_agent_token_metrics,
@@ -25,7 +32,7 @@ from experiments.run_mmlu import (
     freeze_graph_for_evaluation,
     get_kwargs,
 )
-from experiments.run_humaneval import print_retained_edge_message_summary
+from AgentPrune_exp.run_humaneval import print_retained_edge_message_summary
 from AgentPrune.utils.globals import PromptTokens, CompletionTokens
 
 
@@ -46,7 +53,7 @@ def parse_args():
                         help="Mode of operation. Default is 'FullConnected'.")
     parser.add_argument('--lr', type=float, default=0.1, help="learning rate")
     parser.add_argument('--batch_size', type=int, default=4, help="batch size")
-    parser.add_argument('--agent_names', nargs='+', type=str, default=['AnalyzeAgent'],
+    parser.add_argument('--agent_names', nargs='+', type=str, default=['MathSolver_aqua'],
                         help='Specify agent names as a list of strings')
     parser.add_argument('--agent_nums', nargs='+', type=int, default=[5],
                         help='Specify the number of agents for each name in agent_names')
@@ -62,7 +69,7 @@ def parse_args():
                         help="Model name")
     parser.add_argument('--domain', type=str, default="aqua",
                         help="Domain name, default 'aqua'")
-    parser.add_argument('--decision_method', type=str, default="FinalMajorVote",
+    parser.add_argument('--decision_method', type=str, default="FinalRefer",
                         help="the decision method of the final node")
     parser.add_argument('--log_agent_outputs', action='store_true',
                         help="Print each agent's raw output and extracted answer to stdout/logs.")
