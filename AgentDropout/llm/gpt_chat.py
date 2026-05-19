@@ -95,7 +95,7 @@ async def achat(model: str, msg: List[Dict],):
         
         if isinstance(response_message, str):
             prompt = "".join([item['content'] for item in msg])
-            cost_count(prompt, response_message, model)
+            cost_count(prompt, response_message, model, usage=completion.usage)
             return response_message
 
     except Exception as e:
@@ -115,7 +115,7 @@ async def achat_deepseek(model: str, msg: List[Dict],):
         
         if isinstance(response_message, str):
             prompt = "".join([item['content'] for item in msg])
-            cost_count_deepseek(prompt, response_message, model)
+            cost_count_deepseek(prompt, response_message, model, usage=completion.usage)
             return response_message
 
     except Exception as e:
@@ -136,7 +136,7 @@ async def achat_llama(model: str, msg: List[Dict]):
         
         if isinstance(response_message, str):
             prompt = "".join([item['content'] for item in msg])
-            cost_count_llama3(prompt, response_message, model)
+            cost_count_llama3(prompt, response_message, model, usage=completion.usage)
             return response_message
 
     except Exception as e:

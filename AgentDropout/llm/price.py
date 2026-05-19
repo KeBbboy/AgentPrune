@@ -16,22 +16,63 @@ def cal_token_llama3(tokenizer, text:str):
     num_tokens = len(tokenizer(text, return_tensors='pt')['input_ids'][0])
     return num_tokens
 
-def cost_count(prompt, response, model_name):
+def _usage_value(usage, names):
+    if usage is None:
+        return None
+    for name in names:
+        if isinstance(usage, dict):
+            value = usage.get(name)
+        else:
+            value = getattr(usage, name, None)
+        if value is not None:
+            return value
+    return None
+
+def _usage_int(usage, names):
+    value = _usage_value(usage, names)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+def _usage_token_counts(usage):
+    prompt_len = _usage_int(usage, ("prompt_tokens", "input_tokens"))
+    completion_len = _usage_int(usage, ("completion_tokens", "output_tokens"))
+    total_len = _usage_int(usage, ("total_tokens",))
+    if completion_len is None and prompt_len is not None and total_len is not None:
+        completion_len = max(total_len - prompt_len, 0)
+    return prompt_len, completion_len
+
+def cost_count(prompt, response, model_name, usage=None):
     branch: str
     prompt_len: int
     completion_len: int
     price: float
 
-    prompt_len = cal_token(model_name, prompt)
-    completion_len = cal_token(model_name, response)
+    usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    if usage_prompt_len is not None and usage_completion_len is not None:
+        prompt_len = usage_prompt_len
+        completion_len = usage_completion_len
+    else:
+        prompt_len = cal_token(model_name, prompt)
+        completion_len = cal_token(model_name, response)
+
     if "gpt-4" in model_name:
         branch = "gpt-4"
-        price = prompt_len * OPENAI_MODEL_INFO[branch][model_name]["input"] /1000 + \
-                completion_len * OPENAI_MODEL_INFO[branch][model_name]["output"] /1000
+        model_info = OPENAI_MODEL_INFO[branch].get(model_name)
+        price = 0.0 if model_info is None else (
+            prompt_len * model_info["input"] /1000 +
+            completion_len * model_info["output"] /1000
+        )
     elif "gpt-3.5" in model_name:
         branch = "gpt-3.5"
-        price = prompt_len * OPENAI_MODEL_INFO[branch][model_name]["input"] /1000 + \
-            completion_len * OPENAI_MODEL_INFO[branch][model_name]["output"] /1000
+        model_info = OPENAI_MODEL_INFO[branch].get(model_name)
+        price = 0.0 if model_info is None else (
+            prompt_len * model_info["input"] /1000 +
+            completion_len * model_info["output"] /1000
+        )
     elif "dall-e" in model_name:
         branch = "dall-e"
         price = 0.0
@@ -50,20 +91,25 @@ def cost_count(prompt, response, model_name):
     # print(f"Prompt Tokens: {prompt_len}, Completion Tokens: {completion_len}")
     return price, prompt_len, completion_len
 
-def cost_count_llama3(prompt, response, model):
+def cost_count_llama3(prompt, response, model, usage=None):
     branch: str
     prompt_len: int
     completion_len: int
     price: float
 
-    try:
-        tokenizer = Tokenizer.instance(model).tokenizer
-        prompt_len = cal_token_llama3(tokenizer, prompt)
-        completion_len = cal_token_llama3(tokenizer, response)
-    except Exception as exc:
-        print(f"Warning: failed to count tokens for {model}: {exc}")
-        prompt_len = 0
-        completion_len = 0
+    usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    if usage_prompt_len is not None and usage_completion_len is not None:
+        prompt_len = usage_prompt_len
+        completion_len = usage_completion_len
+    else:
+        try:
+            tokenizer = Tokenizer.instance(model).tokenizer
+            prompt_len = cal_token_llama3(tokenizer, prompt)
+            completion_len = cal_token_llama3(tokenizer, response)
+        except Exception as exc:
+            print(f"Warning: failed to count tokens for {model}: {exc}")
+            prompt_len = 0
+            completion_len = 0
     price = 0
 
     # Cost.instance().value += price
@@ -73,15 +119,20 @@ def cost_count_llama3(prompt, response, model):
     # print(f"Prompt Tokens: {prompt_len}, Completion Tokens: {completion_len}")
     return price, prompt_len, completion_len
 
-def cost_count_deepseek(prompt, response, model):
+def cost_count_deepseek(prompt, response, model, usage=None):
     branch: str
     prompt_len: int
     completion_len: int
     price: float
 
-    tokenizer = Deepseek_Tokenizer.instance(model).tokenizer
-    prompt_len = cal_token_llama3(tokenizer, prompt)
-    completion_len = cal_token_llama3(tokenizer, response)
+    usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    if usage_prompt_len is not None and usage_completion_len is not None:
+        prompt_len = usage_prompt_len
+        completion_len = usage_completion_len
+    else:
+        tokenizer = Deepseek_Tokenizer.instance(model).tokenizer
+        prompt_len = cal_token_llama3(tokenizer, prompt)
+        completion_len = cal_token_llama3(tokenizer, response)
     price = 0
 
     # Cost.instance().value += price
@@ -220,5 +271,4 @@ OPENAI_MODEL_INFO ={
         }
     }
 }
-
 
