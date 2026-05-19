@@ -6,6 +6,7 @@ from AgentPrune.prompt.multiarith_prompt_set import MultiArithPromptSet
 from AgentPrune.prompt.svamp_prompt_set import SVAMPPromptSet
 from AgentPrune.prompt.aqua_prompt_set import AQuAPromptSet
 from AgentPrune.prompt.mmlu_pro_prompt_set import MMLUProPromptSet
+from AgentPrune.prompt.hotpotqa_prompt_set import HotpotQAPromptSet
 
 __all__ = ['MMLUPromptSet',
            'HumanEvalPromptSet',
@@ -14,4 +15,5 @@ __all__ = ['MMLUPromptSet',
            'SVAMPPromptSet',
            'AQuAPromptSet',
            'MMLUProPromptSet',
+           'HotpotQAPromptSet',
            'PromptSetRegistry',]
