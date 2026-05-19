@@ -20,8 +20,8 @@ from AgentDropout.tools.reader.readers import JSONLReader, JSONReader
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
-from datasets.gsm8k_dataset import gsm_data_process,gsm_get_predict,svamp_data_process, multiarith_data_process
-from datasets.aqua_dataset import aqua_data_process,aqua_get_predict
+from dataset.gsm8k_dataset import gsm_data_process,gsm_get_predict,svamp_data_process, multiarith_data_process
+from dataset.aqua_dataset import aqua_data_process,aqua_get_predict
 from AgentDropout.utils.globals import PromptTokens, CompletionTokens
 from AgentDropout.agents.agent_registry import AgentRegistry
 
@@ -43,7 +43,7 @@ def load_config(config_path):
     
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on gsm8k")
-    parser.add_argument("--dataset_json", type=str, default="datasets/gsm8k/gsm8k.jsonl")
+    parser.add_argument("--dataset_json", type=str, default="dataset/gsm8k/gsm8k.jsonl")
     parser.add_argument("--result_file", type=str, default=None)
     parser.add_argument("--llm_name", type=str, default="gpt-3.5-turbo")
     parser.add_argument('--mode', type=str, default='FullConnected',
@@ -81,7 +81,7 @@ async def main():
     result_file = None
     dataset = JSONLReader.parse_file(args.dataset_json)
     dataset = gsm_data_process(dataset)
-    train_dataset = JSONLReader.parse_file('datasets/gsm8k/train.jsonl')
+    train_dataset = JSONLReader.parse_file('dataset/gsm8k/train.jsonl')
     train_dataset = gsm_data_process(train_dataset)
 
     current_time = Time.instance().value or time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())

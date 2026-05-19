@@ -40,7 +40,7 @@ def load_config(config_path):
     
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on HumanEval")
-    parser.add_argument("--dataset_json", type=str, default="datasets/humaneval/humaneval-py.jsonl")
+    parser.add_argument("--dataset_json", type=str, default="dataset/humaneval/humaneval-py.jsonl")
     parser.add_argument("--result_file", type=str, default=None)
     parser.add_argument("--llm_name", type=str, default="gpt-4-1106-preview")
     parser.add_argument('--mode', type=str, default='FullConnected',
@@ -82,7 +82,8 @@ async def main():
     Time.instance().value = current_time
     result_dir = Path(f"{AgentPrune_ROOT}/result/eval")
     result_dir.mkdir(parents=True, exist_ok=True)
-    result_file = result_dir / f"{args.llm_name}_{current_time}.json"
+    safe_llm_name = args.llm_name.replace("/", "_")
+    result_file = result_dir / f"{safe_llm_name}_{current_time}.json"
     
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     decision_method = args.decision_method

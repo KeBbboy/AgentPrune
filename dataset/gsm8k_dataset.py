@@ -173,6 +173,38 @@ def load_gsm8k_dataset(dataset_path: str) -> list[dict[str, str]]:
     return gsm_data_process(dataset)
 
 
+def svamp_data_process(dataset):
+    from dataset import svamp_dataset as _svamp_dataset
+
+    list_data_dict = []
+    for data in dataset:
+        list_data_dict.append(
+            {
+                "task": _svamp_dataset._extract_question(data),
+                "step": _svamp_dataset._extract_step(data),
+                "answer": _svamp_dataset._normalize_numeric_answer(
+                    _svamp_dataset._extract_answer(data)
+                ),
+            }
+        )
+    return list_data_dict
+
+
+def multiarith_data_process(dataset):
+    from dataset import multiarith_dataset as _multiarith_dataset
+
+    list_data_dict = []
+    for data in dataset:
+        list_data_dict.append(
+            {
+                "task": _multiarith_dataset._extract_question(data),
+                "step": _multiarith_dataset._extract_step(data),
+                "answer": gsm_get_predict(_multiarith_dataset._extract_answer(data)),
+            }
+        )
+    return list_data_dict
+
+
 def _fix_sqrt(string):
     if "\\sqrt" not in string:
         return string

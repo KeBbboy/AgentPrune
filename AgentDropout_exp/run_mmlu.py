@@ -8,8 +8,8 @@ import argparse
 import random
 
 from AgentDropout.graph.graph import Graph
-from datasets.mmlu_dataset import MMLUDataset
-from datasets.MMLU.download import download
+from dataset.mmlu_dataset import MMLUDataset
+from dataset.MMLU.download import download
 from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
 from AgentDropout.utils.const import AgentPrune_ROOT
