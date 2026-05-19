@@ -7,6 +7,7 @@ from typing import Union,Literal,Optional,Iterator,List,Any,Dict
 from tqdm import tqdm
 import copy
 import time
+import torch
 from AgentDropout.utils.globals import Time
 from pathlib import Path
 import sys
@@ -17,6 +18,21 @@ from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.graph import Graph
 from experiments.accuracy import Accuracy
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
+
+
+def _set_requires_grad(value, enabled: bool):
+    if isinstance(value, torch.nn.Parameter):
+        value.requires_grad_(enabled)
+    elif isinstance(value, torch.nn.ParameterList):
+        for parameter in value:
+            parameter.requires_grad_(enabled)
+
+
+def _postprocess_answer(dataset, raw_answer, record):
+    try:
+        return dataset.postprocess_answer(raw_answer, record)
+    except TypeError:
+        return dataset.postprocess_answer(raw_answer)
 
 async def evaluate(
         graph:Graph,
@@ -30,8 +46,12 @@ async def evaluate(
 
     print(f"Evaluating AgentDropout on {dataset.__class__.__name__} split {dataset.split}")
     
-    graph.spatial_logits.requires_grad_ = False
-    graph.temporal_logits.requires_grad_ = False
+    _set_requires_grad(graph.spatial_logits, False)
+    _set_requires_grad(graph.temporal_logits, False)
+    if hasattr(graph, "spatial_message_type_logits"):
+        _set_requires_grad(graph.spatial_message_type_logits, False)
+    if hasattr(graph, "temporal_message_type_logits"):
+        _set_requires_grad(graph.temporal_message_type_logits, False)
     
     accuracy = Accuracy()
     def eval_loader(batch_size: int) -> Iterator[List[Any]]:
@@ -52,7 +72,7 @@ async def evaluate(
 
     data=[]
     current_time = Time.instance().value or time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-    result_dir = Path(f"{AgentPrune_ROOT}/result/mmlu")
+    result_dir = Path(f"{AgentPrune_ROOT}/result/{getattr(args, 'domain', 'mmlu')}")
     result_dir.mkdir(parents=True, exist_ok=True)
     result_file = result_dir / f"{args.domain}_llama3_{current_time}.json"
 
@@ -77,7 +97,7 @@ async def evaluate(
         print(f"Batch time {time.time() - start_ts:.3f}")
         for raw_answer, record, all_answer in zip(raw_answers, record_batch, all_answers):
             print("Raw answer:", raw_answer)
-            answer = dataset.postprocess_answer(raw_answer)
+            answer = _postprocess_answer(dataset, raw_answer, record)
             print("Postprocessed answer:", answer)
             correct_answer = dataset.record_to_target_answer(record)
             print("Correct answer:", correct_answer)

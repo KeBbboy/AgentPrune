@@ -118,6 +118,8 @@ class Node(ABC):
             predecessor_output = str(predecessor_output)
         if self.domain == "humaneval":
             return self._split_humaneval_answer_and_reasoning(predecessor_output)
+        if self.domain == "mmlu_pro":
+            return self._split_mmlu_pro_answer_and_reasoning(predecessor_output)
 
         lines = predecessor_output.splitlines()
         non_empty_indices = [idx for idx, line in enumerate(lines) if line.strip()]
@@ -139,6 +141,22 @@ class Node(ABC):
         )
         if answer_match is not None:
             answer = answer_match.group(1).strip()
+            reasoning = (
+                predecessor_output[:answer_match.start()] + "\n" + predecessor_output[answer_match.end():]
+            ).strip()
+            return answer, reasoning
+        return predecessor_output.strip(), ""
+
+    def _split_mmlu_pro_answer_and_reasoning(self, predecessor_output: str) -> tuple[str, str]:
+        if not isinstance(predecessor_output, str):
+            predecessor_output = str(predecessor_output)
+        answer_match = re.search(
+            r"answer is\s*\(?([A-J])\)?",
+            predecessor_output,
+            flags=re.IGNORECASE,
+        )
+        if answer_match is not None:
+            answer = answer_match.group(0).strip()
             reasoning = (
                 predecessor_output[:answer_match.start()] + "\n" + predecessor_output[answer_match.end():]
             ).strip()
@@ -167,7 +185,10 @@ class Node(ABC):
                 selected_output = answer_payload if answer_payload else output.strip()
             elif message_type == "reason":
                 reasoning_payload = self._extract_reasoning_content(output)
-                selected_output = reasoning_payload if reasoning_payload else output.strip()
+                if self.domain in {"humaneval", "mmlu_pro"}:
+                    selected_output = reasoning_payload
+                else:
+                    selected_output = reasoning_payload if reasoning_payload else output.strip()
 
         return message_type, selected_output
 
