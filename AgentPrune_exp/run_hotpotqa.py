@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from AgentPrune.graph.graph import Graph
 from AgentPrune.utils.globals import CompletionTokens, PromptTokens
-from dataset.hotpotqa_dataset import HotpotQADataset
+from dataset.hotpotqa_dataset import CENTRALIZED_INPUT, FULL_BROADCAST, HotpotQADataset
 
 
 class HotpotQAAnswerMetrics:
@@ -174,12 +174,17 @@ async def evaluate_hotpotqa(
     limit_questions: Optional[int],
     eval_batch_size: int,
     prediction_file: Optional[Path],
+    info_setting: str,
 ) -> Dict[str, float]:
-    print(f"Evaluating AgentPrune on {dataset.__class__.__name__} split {dataset.split}")
+    print(
+        f"Evaluating AgentPrune on {dataset.__class__.__name__} split {dataset.split} "
+        f"with information setting {info_setting}"
+    )
     freeze_graph(graph)
 
     metrics = HotpotQAAnswerMetrics()
     prediction_answers: Dict[str, str] = {}
+    agent_count = len(graph.nodes)
 
     def eval_loader(batch_size: int) -> Iterator[List[Any]]:
         records: List[Any] = []
@@ -209,7 +214,11 @@ async def evaluate_hotpotqa(
             realized_graph.temporal_message_type_logits = graph.temporal_message_type_logits
             realized_graph.share_cost_state(graph)
             realized_graph.current_sample_index = i_batch * eval_batch_size + record_offset + 1
-            input_dict = dataset.record_to_input(record)
+            input_dict = dataset.record_to_input(
+                record,
+                agent_count=agent_count,
+                info_setting=info_setting,
+            )
             answer_tasks.append(asyncio.create_task(realized_graph.arun(input_dict, num_rounds)))
 
         raw_results = await asyncio.gather(*answer_tasks)
@@ -257,6 +266,13 @@ def parse_args() -> argparse.Namespace:
                         help="HotpotQA split to evaluate. Default uses the labeled distractor dev set.")
     parser.add_argument("--prediction_file", type=str, default=None,
                         help="Optional path for HotpotQA-format predictions with answer and sp fields.")
+    parser.add_argument("--info_setting", type=str, default=FULL_BROADCAST,
+                        choices=[CENTRALIZED_INPUT, FULL_BROADCAST],
+                        help=(
+                            "HotpotQA document allocation mode. "
+                            "centralized_input: Agent 1 gets all 10 docs and other agents get no docs. "
+                            "full_broadcast: every agent gets all 10 docs."
+                        ))
     parser.add_argument("--max_context_paragraphs", type=int, default=None,
                         help="Optional cap on context paragraphs per question.")
     parser.add_argument("--max_sentences_per_paragraph", type=int, default=None,
@@ -325,6 +341,7 @@ async def main() -> None:
         limit_questions=args.limit_questions,
         eval_batch_size=args.batch_size,
         prediction_file=prediction_file,
+        info_setting=args.info_setting,
     )
     eval_prompt_used = PromptTokens.instance().value - eval_prompt_start
     eval_completion_used = CompletionTokens.instance().value - eval_completion_start

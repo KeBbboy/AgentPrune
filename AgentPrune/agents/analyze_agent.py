@@ -34,12 +34,21 @@ class AnalyzeAgent(Node):
 
     def _format_shared_output(self, info: Dict[str, str]) -> str:
         return info["output"]
+
+    def _resolve_task_prompt(self, raw_inputs: Dict[str, Any]) -> str:
+        task_prompt = raw_inputs["task"]
+        agent_tasks = raw_inputs.get("agent_tasks")
+        agent_index = getattr(self, "agent_index", None)
+        if isinstance(agent_tasks, dict) and agent_index is not None:
+            task_prompt = agent_tasks.get(str(agent_index), agent_tasks.get(agent_index, task_prompt))
+        return task_prompt
         
     async def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict], **kwargs)->List[Any]:
         """ To be overriden by the descendant class """
         """ Process the raw_inputs(most of the time is a List[Dict]) """              
         system_prompt = f"{self.constraint}"
-        user_prompt = f"The task is: {raw_inputs['task']}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
+        task_prompt = self._resolve_task_prompt(raw_inputs)
+        user_prompt = f"The task is: {task_prompt}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(task_prompt)
         spatial_str = ""
         temporal_str = ""
         for id, info in spatial_info.items():

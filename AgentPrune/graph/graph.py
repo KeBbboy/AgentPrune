@@ -185,11 +185,12 @@ class Graph(ABC):
         """
         Creates and adds new nodes to the graph.
         """
-        for agent_name,kwargs in zip(self.agent_names,self.node_kwargs):
+        for agent_index, (agent_name, kwargs) in enumerate(zip(self.agent_names, self.node_kwargs)):
             if agent_name in AgentRegistry.registry:
                 kwargs["domain"] = self.domain
                 kwargs["llm_name"] = self.llm_name
                 agent_instance = AgentRegistry.get(agent_name, **kwargs)
+                agent_instance.agent_index = agent_index
                 self.add_node(agent_instance)
         for node in self.nodes.values():
             node.spatial_message_types = {}

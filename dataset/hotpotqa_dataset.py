@@ -9,6 +9,10 @@ from typing import Any, Dict, Iterator, List, Optional
 import pandas as pd
 
 
+CENTRALIZED_INPUT = "centralized_input"
+FULL_BROADCAST = "full_broadcast"
+HOTPOTQA_INFO_SETTINGS = {CENTRALIZED_INPUT, FULL_BROADCAST}
+
 SPLIT_ALIASES = {
     "train": ["hotpot_train_v1.1", "train", "hotpot_train"],
     "dev": ["hotpot_dev_distractor_v1", "dev_distractor", "validation", "dev"],
@@ -249,14 +253,68 @@ class HotpotQADataset:
             )
         return "\n\n".join(paragraphs)
 
-    def record_to_input(self, record: Dict[str, Any]) -> Dict[str, str]:
+    def _format_agent_task(self, question: str, context: List[Dict[str, Any]]) -> str:
+        context_text = self._format_context(context)
+        if not context_text.strip():
+            context_text = (
+                "No private document context is assigned to this agent. "
+                "Use only the question and any messages received from other agents; do not invent evidence."
+            )
+        return (
+            "Question:\n"
+            f"{question}\n\n"
+            "Assigned documents:\n"
+            f"{context_text}"
+        )
+
+    @staticmethod
+    def _agent_contexts(
+        context: List[Dict[str, Any]],
+        agent_count: int,
+        info_setting: str,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        if agent_count <= 0:
+            raise ValueError("agent_count must be positive")
+        if info_setting not in HOTPOTQA_INFO_SETTINGS:
+            raise ValueError(
+                f"Unsupported HotpotQA information setting: {info_setting}. "
+                f"Expected one of {sorted(HOTPOTQA_INFO_SETTINGS)}"
+            )
+
+        if info_setting == CENTRALIZED_INPUT:
+            return {
+                str(agent_index): context if agent_index == 0 else []
+                for agent_index in range(agent_count)
+            }
+        if info_setting == FULL_BROADCAST:
+            return {
+                str(agent_index): context
+                for agent_index in range(agent_count)
+            }
+        raise ValueError(f"Unhandled HotpotQA information setting: {info_setting}")
+
+    def record_to_input(
+        self,
+        record: Dict[str, Any],
+        agent_count: int = 5,
+        info_setting: str = FULL_BROADCAST,
+    ) -> Dict[str, Any]:
+        agent_contexts = self._agent_contexts(record["context"], agent_count, info_setting)
+        agent_tasks = {
+            agent_index: self._format_agent_task(record["question"], context)
+            for agent_index, context in agent_contexts.items()
+        }
         task = (
             "Question:\n"
-            f"{record['question']}\n\n"
-            "Context:\n"
-            f"{self._format_context(record['context'])}"
+            f"{record['question']}"
         )
-        return {"task": task}
+        return {
+            "task": task,
+            "question": record["question"],
+            "info_setting": info_setting,
+            "agent_contexts": agent_contexts,
+            "agent_tasks": agent_tasks,
+        }
 
     @staticmethod
     def record_to_id(record: Dict[str, Any]) -> str:

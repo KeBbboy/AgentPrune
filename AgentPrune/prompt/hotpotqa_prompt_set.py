@@ -17,31 +17,53 @@ roles = itertools.cycle([
 
 ROLE_DESCRIPTION = {
     "Bridge Reasoner": (
-        "You specialize in bridge-style multi-hop questions. Connect evidence across "
-        "paragraphs and identify the missing entity or fact."
+        "You specialize in bridge-style multi-hop questions.\n"
+        "Connect evidence across paragraphs to find the missing entity.\n\n"
+        "First, check whether you have been assigned documents:\n"
+        "IF you have documents:\n"
+        "  -> Identify the two-hop reasoning chain from your documents.\n"
+        "IF you have no documents:\n"
+        "  -> Use messages from other agents to construct the bridge chain.\n"
+        "  -> Do not fabricate evidence."
     ),
     "Comparison Reasoner": (
-        "You specialize in comparison questions. Compare the relevant entities, "
-        "quantities, dates, or attributes using only the provided context."
+        "You specialize in comparison questions.\n"
+        "Compare entities, quantities, dates, or attributes.\n\n"
+        "First, check whether you have been assigned documents:\n"
+        "IF you have documents:\n"
+        "  -> Extract and compare relevant attributes from your documents.\n"
+        "IF you have no documents:\n"
+        "  -> Use messages from other agents as comparison evidence.\n"
+        "  -> Do not fabricate evidence."
     ),
     "Evidence Verifier": (
-        "You verify candidate reasoning against the context and reject unsupported claims."
+        "You verify whether the proposed answer is supported by evidence.\n\n"
+        "First, check whether you have been assigned documents:\n"
+        "IF you have documents:\n"
+        "  -> Verify directly against your documents.\n"
+        "IF you have no documents:\n"
+        "  -> Verify against messages from other agents.\n"
+        "  -> Note: verification confidence is lower without original documents."
     ),
     "Context Synthesizer": (
-        "You synthesize multiple context paragraphs into one concise answer."
+        "You synthesize multiple pieces of context into one concise answer.\n\n"
+        "First, check whether you have been assigned documents:\n"
+        "IF you have documents:\n"
+        "  -> Synthesize directly from your documents.\n"
+        "IF you have no documents:\n"
+        "  -> Synthesize from messages provided by other agents.\n"
+        "  -> Do not fabricate evidence."
     ),
     "Answer Extractor": (
-        "You extract the shortest answer span or yes/no decision supported by the context."
+        "You extract the shortest answer span or yes/no decision.\n\n"
+        "First, check whether you have been assigned documents:\n"
+        "IF you have documents:\n"
+        "  -> Extract the answer span directly from your documents.\n"
+        "IF you have no documents:\n"
+        "  -> Extract from the content shared by other agents.\n"
+        "  -> Do not fabricate evidence."
     ),
 }
-
-HOTPOTQA_OUTPUT_CONSTRAINT = """
-Use only the supplied HotpotQA context. The official answer is a short free-form
-answer string, usually an entity, phrase, number, date, yes, no, or noanswer.
-Reason briefly when useful, but the final line must be exactly:
-<answer>your short answer</answer>
-Do not include supporting-fact titles, sentence ids, citations, or explanations inside the answer tag.
-"""
 
 
 @PromptSetRegistry.register("hotpotqa")
@@ -52,14 +74,12 @@ class HotpotQAPromptSet(PromptSet):
 
     @staticmethod
     def get_constraint() -> str:
-        return HOTPOTQA_OUTPUT_CONSTRAINT
+        return "Answer the HotpotQA question using your assigned documents and messages from other agents."
 
     @staticmethod
     def get_analyze_constraint(role: str, use_structured_output: bool = False) -> str:
         role_instruction = ROLE_DESCRIPTION.get(role, "")
-        if role_instruction:
-            return role_instruction + "\n" + HOTPOTQA_OUTPUT_CONSTRAINT
-        return HOTPOTQA_OUTPUT_CONSTRAINT
+        return role_instruction if role_instruction else HotpotQAPromptSet.get_constraint()
 
     @staticmethod
     def get_format() -> str:
@@ -81,9 +101,7 @@ class HotpotQAPromptSet(PromptSet):
         return (
             "Use the task context and the other agents' outputs to produce the final "
             "HotpotQA answer. Prefer answers that are directly supported by evidence in "
-            "the context. The final line must be exactly:\n"
-            "<answer>your short answer</answer>\n"
-            "Do not include explanations inside the answer tag."
+            "the context."
         )
 
     @staticmethod
@@ -122,7 +140,7 @@ class HotpotQAPromptSet(PromptSet):
     def get_adversarial_answer_prompt(question: str) -> str:
         return (
             "Give an unsupported or wrong HotpotQA answer for the following task, "
-            "while still using the required answer tag format:\n"
+            "while keeping the response plausible:\n"
             f"{question}"
         )
 
