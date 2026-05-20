@@ -15,7 +15,6 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.graph import Graph
-from experiments.accuracy import Accuracy
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 
 
@@ -25,6 +24,27 @@ def _freeze_parameters(parameters):
         return
     for parameter in parameters:
         parameter.requires_grad_(False)
+
+
+def _compute_metrics(dataset, prediction: str, target: Any) -> Dict[str, float]:
+    if target is None:
+        return {}
+    answer_metrics = getattr(dataset, "answer_metrics", None)
+    if callable(answer_metrics):
+        metrics = answer_metrics(prediction, target)
+        if isinstance(metrics, dict):
+            return {key: float(value) for key, value in metrics.items()}
+    return {"accuracy": float(prediction == target)}
+
+
+def _print_metric_summary(metric_totals: Dict[str, float], count: int, prefix: str) -> None:
+    if count <= 0 or len(metric_totals) == 0:
+        return
+    summary = " ".join(
+        f"{name}={metric_totals[name] / count:.3f}"
+        for name in sorted(metric_totals)
+    )
+    print(f"{prefix}: {summary}")
 
 async def evaluate(
         graph:Graph,
@@ -37,11 +57,13 @@ async def evaluate(
         ) -> float:
 
     print(f"Evaluating AgentDropout on {dataset.__class__.__name__} split {dataset.split}")
-    
+
     _freeze_parameters(graph.spatial_logits)
     _freeze_parameters(graph.temporal_logits)
-    
-    accuracy = Accuracy()
+
+    metric_totals: Dict[str, float] = {}
+    metric_count = 0
+    primary_metric = "accuracy"
     def eval_loader(batch_size: int) -> Iterator[List[Any]]:
         records = []
         for i_record, record in enumerate(dataset):
@@ -90,11 +112,23 @@ async def evaluate(
             print("Postprocessed answer:", answer)
             correct_answer = dataset.record_to_target_answer(record)
             print("Correct answer:", correct_answer)
-            accuracy.update(answer, correct_answer)
-            accuracy.print()
+            metrics = _compute_metrics(dataset, answer, correct_answer)
+            if metrics:
+                if metric_count == 0:
+                    if "em" in metrics:
+                        primary_metric = "em"
+                    else:
+                        primary_metric = next(iter(metrics))
+                for key, value in metrics.items():
+                    metric_totals[key] = metric_totals.get(key, 0.0) + value
+                metric_count += 1
+                print("Metrics:", metrics)
+                _print_metric_summary(metric_totals, metric_count, "Running metrics")
             updated_item = {
                 "Question": dataset.record_to_input(record)['task'],
                 "Answer": correct_answer,
+                "Prediction": answer,
+                "Metrics": metrics,
                 "All_answers": all_answer,
                 "Response": raw_answer,
             }
@@ -107,10 +141,12 @@ async def evaluate(
         # if 'deepseek' in args.llm_name:
         #     print('sleep')
         #     time.sleep(60)
-    accuracy.print()
+    _print_metric_summary(metric_totals, metric_count, "Final metrics")
     print("Done!")
 
-    return accuracy.get()
+    if metric_count == 0:
+        return 0.0
+    return metric_totals.get(primary_metric, 0.0) / metric_count
 
 
 def dump_eval_results(self, dct: Dict[str, Any]) -> None:

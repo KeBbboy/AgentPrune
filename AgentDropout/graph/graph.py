@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import asyncio
 
+import AgentDropout.agents  # noqa: F401
+import AgentDropout.prompt  # noqa: F401
 from AgentDropout.graph.node import Node
 from AgentDropout.agents.agent_registry import AgentRegistry
 import random

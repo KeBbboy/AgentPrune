@@ -28,7 +28,7 @@ uv pip install -r requirements.txt
 
 ### 📊 Datasets
 
-Please download the `MMLU`, `HumanEval`, and `GSM8K` datasets and place them in the `dataset` folder. The file structure should be organized as follows:
+Please download the `MMLU`, `HumanEval`, `GSM8K`, and `HotpotQA` datasets and place them in the `dataset` folder. The file structure should be organized as follows:
 
 ```
 dataset
@@ -41,6 +41,9 @@ dataset
     └── humaneval-py.jsonl
 └── gsm8k
     └── gsm8k.jsonl
+└── hotpotqa
+    ├── hotpot_train_v1.1.json|train.json
+    └── hotpot_dev_distractor_v1.json|dev.json
 ...
 ```
 
@@ -63,6 +66,15 @@ python experiments/run_mmlu.py --agent_nums 6 --mode FakeAGFull --batch_size 4 -
 The above code verifies the experimental results of the `mmlu` dataset under different topologies.
 
 We also provide experimental code for other datasets and topologies.You can refer to `experiments/run_humaneval.py` and `experiments/run_gsm8k.py`.
+
+### ▶️ Run AgentPrune on HotpotQA
+
+Place the HotpotQA files under `dataset/hotpotqa/`. Then run:
+
+```bash
+python experiments/run_hotpotqa.py --agent_nums 5 --mode FullConnected --batch_size 4 --limit_questions 200
+python experiments/run_hotpotqa.py --agent_nums 5 --mode FullConnected --batch_size 4 --info_setting centralized_input
+```
 
 ### ▶️ Run AgentPrune on MMLU-Pro
 

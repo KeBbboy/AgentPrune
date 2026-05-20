@@ -13,11 +13,19 @@ def find_strings_between_pluses(text):
 
 @AgentRegistry.register('AnalyzeAgent')
 class AnalyzeAgent(Node):
-    def __init__(self, id: str | None =None, role:str = None,  domain: str = "", llm_name: str = "",):
+    def __init__(
+        self,
+        id: str | None = None,
+        role: str = None,
+        domain: str = "",
+        llm_name: str = "",
+        agent_index: int | None = None,
+    ):
         super().__init__(id, "AnalyzeAgent" ,domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
         self.prompt_set = PromptSetRegistry.get(domain)
         self.role = self.prompt_set.get_role() if role is None else role
+        self.agent_index = agent_index
         print("****************")
         print(self.role)
         self.constraint = self.prompt_set.get_analyze_constraint(self.role)
@@ -28,7 +36,11 @@ class AnalyzeAgent(Node):
         """ To be overriden by the descendant class """
         """ Process the raw_inputs(most of the time is a List[Dict]) """              
         system_prompt = f"{self.constraint}"
-        user_prompt = f"The task is: {raw_inputs['task']}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
+        task = raw_inputs["task"]
+        agent_tasks = raw_inputs.get("agent_tasks")
+        if self.agent_index is not None and isinstance(agent_tasks, dict):
+            task = agent_tasks.get(str(self.agent_index), task)
+        user_prompt = f"The task is: {task}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(task)
         spatial_str = ""
         temporal_str = ""
         for id, info in spatial_info.items():

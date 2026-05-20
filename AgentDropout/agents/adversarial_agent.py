@@ -11,11 +11,19 @@ from AgentDropout.tools.search.wiki import search_wiki_main
 
 @AgentRegistry.register('AdverarialAgent')
 class AdverarialAgent(Node):
-    def __init__(self, id: str | None =None, role:str = None,  domain: str = "", llm_name: str = "",):
+    def __init__(
+        self,
+        id: str | None = None,
+        role: str = None,
+        domain: str = "",
+        llm_name: str = "",
+        agent_index: int | None = None,
+    ):
         super().__init__(id, "AdverarialAgent" ,domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
         self.prompt_set = PromptSetRegistry.get(domain)
         self.role = 'Normal' if role is None else role
+        self.agent_index = agent_index
         self.constraint = self.prompt_set.get_constraint()
         
     async def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict], **kwargs)->List[Any]:
@@ -24,7 +32,11 @@ class AdverarialAgent(Node):
  
         system_prompt = f"{self.constraint}" if self.role == "Normal" else "You are a liar who only tells lies."
         # system_prompt = f"{self.constraint}" if self.role == "Normal" else "You are a gibbering idiot"
-        user_prompt = f"The task is: {raw_inputs['task']}\n" if self.role == 'Normal' else self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
+        task = raw_inputs["task"]
+        agent_tasks = raw_inputs.get("agent_tasks")
+        if self.agent_index is not None and isinstance(agent_tasks, dict):
+            task = agent_tasks.get(str(self.agent_index), task)
+        user_prompt = f"The task is: {task}\n" if self.role == 'Normal' else self.prompt_set.get_adversarial_answer_prompt(task)
         if self.role == 'Fake':
             return system_prompt, user_prompt
         spatial_str = ""

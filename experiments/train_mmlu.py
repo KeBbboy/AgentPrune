@@ -10,9 +10,24 @@ import copy
 import random
 
 from AgentDropout.graph.graph import Graph
-from experiments.accuracy import Accuracy
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
+
+
+def _compute_utility(dataset, prediction: str, target) -> float:
+    if target is None:
+        return 0.0
+    answer_metrics = getattr(dataset, "answer_metrics", None)
+    if callable(answer_metrics):
+        metrics = answer_metrics(prediction, target)
+        if isinstance(metrics, dict):
+            if "f1" in metrics:
+                return float(metrics["f1"])
+            if "em" in metrics:
+                return float(metrics["em"])
+            if len(metrics) > 0:
+                return float(next(iter(metrics.values())))
+    return float(prediction == target)
 
 async def train(graph:Graph,
             dataset,
@@ -105,11 +120,7 @@ async def train(graph:Graph,
             for raw_answer, log_prob, add_loss, correct_answer in zip(raw_answers, log_probs, add_losses, correct_answers):
                 answer = dataset.postprocess_answer(raw_answer)
                 answers.append(answer)
-                assert isinstance(correct_answer, str), \
-                        f"String expected but got {correct_answer} of type {type(correct_answer)} (1)"
-                accuracy = Accuracy()
-                accuracy.update(answer, correct_answer)
-                utility = accuracy.get()
+                utility = _compute_utility(dataset, answer, correct_answer)
                 utilities.append(utility)
                 single_loss = - log_prob * utility
                 loss_list.append(single_loss+add_loss)
@@ -227,11 +238,7 @@ async def train(graph:Graph,
         for raw_answer, log_prob, add_loss, correct_answer in zip(raw_answers, log_probs, add_losses, correct_answers):
             answer = dataset.postprocess_answer(raw_answer)
             answers.append(answer)
-            assert isinstance(correct_answer, str), \
-                    f"String expected but got {correct_answer} of type {type(correct_answer)} (1)"
-            accuracy = Accuracy()
-            accuracy.update(answer, correct_answer)
-            utility = accuracy.get()
+            utility = _compute_utility(dataset, answer, correct_answer)
             utilities.append(utility)
             single_loss = - log_prob * utility
             loss_list.append(single_loss+add_loss)

@@ -84,12 +84,16 @@ class HotpotQADataset:
         split: str,
         dataset_dir: str = "dataset/hotpotqa",
         shuffle_seed: int = 888,
+        agent_count: int = 5,
+        info_setting: str = FULL_BROADCAST,
         max_context_paragraphs: Optional[int] = None,
         max_sentences_per_paragraph: Optional[int] = None,
     ) -> None:
         self._split = split
         self._dataset_dir = Path(dataset_dir)
         self._shuffle_seed = shuffle_seed
+        self._agent_count = agent_count
+        self._info_setting = info_setting
         self._max_context_paragraphs = max_context_paragraphs
         self._max_sentences_per_paragraph = max_sentences_per_paragraph
         self._records = self._load_data()
@@ -296,18 +300,19 @@ class HotpotQADataset:
     def record_to_input(
         self,
         record: Dict[str, Any],
-        agent_count: int = 5,
-        info_setting: str = FULL_BROADCAST,
+        agent_count: Optional[int] = None,
+        info_setting: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if agent_count is None:
+            agent_count = self._agent_count
+        if info_setting is None:
+            info_setting = self._info_setting
         agent_contexts = self._agent_contexts(record["context"], agent_count, info_setting)
         agent_tasks = {
             agent_index: self._format_agent_task(record["question"], context)
             for agent_index, context in agent_contexts.items()
         }
-        task = (
-            "Question:\n"
-            f"{record['question']}"
-        )
+        task = self._format_agent_task(record["question"], record["context"])
         return {
             "task": task,
             "question": record["question"],
