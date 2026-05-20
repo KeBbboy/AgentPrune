@@ -7,7 +7,6 @@ from typing import List
 
 from AgentDropout.tools.coding.executor_utils import function_with_timeout
 from AgentDropout.tools.coding.executor_types import ExecuteResult, Executor
-import timeout_decorator
 
 def get_call_str(assert_statement: str) -> str:
     ast_parsed = ast.parse(assert_statement)
@@ -29,17 +28,16 @@ def get_output(func: str, assert_statement: str, timeout: int = 5) -> str:
     except Exception as e:
         return str(e)
 
-@timeout_decorator.timeout(5, timeout_exception=StopIteration)
-def execute_code_get_return(code: str):
+def _execute_code_get_return(code: str):
     local_vars = {}
+    exec(code, {}, local_vars)
+    return local_vars.get('answer')
+
+def execute_code_get_return(code: str, timeout: int = 5):
     try:
-        exec(code, {}, local_vars)
-        if 'answer' in local_vars:
-            return local_vars['answer']
-        else:
-            return None
-    except StopIteration:
-        return None  # 超时时返回 None
+        return function_with_timeout(_execute_code_get_return, (code,), timeout)
+    except TimeoutError:
+        return None
     except Exception as e:
         return f"Error occurred: {e}"
 

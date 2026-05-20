@@ -7,6 +7,7 @@ from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
 from AgentDropout.tools.coding.python_executor import execute_code_get_return
 from dataset.gsm8k_dataset import gsm_get_predict
 
+@AgentRegistry.register('MathSolverAG')
 @AgentRegistry.register('MathSolver')
 class MathSolver(Node):
     def __init__(self, id: str | None =None, role:str = None ,domain: str = "", llm_name: str = "",):

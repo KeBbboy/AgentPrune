@@ -6,6 +6,7 @@ from AgentDropout.llm.llm_registry import LLMRegistry
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
 from AgentDropout.tools.coding.python_executor import PyExecutor
 
+@AgentRegistry.register('CodeWritingAG')
 @AgentRegistry.register('CodeWriting')
 class CodeWriting(Node):
     def __init__(self, id: str | None =None, role:str = None ,domain: str = "", llm_name: str = "",):

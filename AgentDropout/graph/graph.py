@@ -48,14 +48,14 @@ class Graph(ABC):
                 node_kwargs:List[Dict] = None,
                 ):
         
-        self.fixed_spatial_masks = torch.tensor(fixed_spatial_masks)
-        self.fixed_temporal_masks = torch.tensor(fixed_temporal_masks)
         if fixed_spatial_masks is None:
             fixed_spatial_masks = [[1 if i!=j else 0 for j in range(len(agent_names))] for i in range(len(agent_names))]
         if fixed_temporal_masks is None:
             fixed_temporal_masks = [[1 for j in range(len(agent_names))] for i in range(len(agent_names))]
-        fixed_spatial_masks = torch.tensor(fixed_spatial_masks).view(-1)
-        fixed_temporal_masks = torch.tensor(fixed_temporal_masks).view(-1)
+        self.fixed_spatial_masks = torch.tensor(fixed_spatial_masks)
+        self.fixed_temporal_masks = torch.tensor(fixed_temporal_masks)
+        fixed_spatial_masks = self.fixed_spatial_masks.view(-1)
+        fixed_temporal_masks = self.fixed_temporal_masks.view(-1)
         # print(fixed_temporal_masks)
         assert len(fixed_spatial_masks)==len(agent_names)*len(agent_names),"The fixed_spatial_masks doesn't match the number of agents"
         assert len(fixed_temporal_masks)==len(agent_names)*len(agent_names),"The fixed_temporal_masks doesn't match the number of agents"

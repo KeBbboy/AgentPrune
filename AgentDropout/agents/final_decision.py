@@ -6,6 +6,7 @@ from AgentDropout.llm.llm_registry import LLMRegistry
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
 from AgentDropout.tools.coding.python_executor import PyExecutor
 
+@AgentRegistry.register('FinalWriteCodeAG')
 @AgentRegistry.register('FinalWriteCode')
 class FinalWriteCode(Node):
     def __init__(self, id: str | None =None,  domain: str = "", llm_name: str = "",):
@@ -65,6 +66,7 @@ class FinalWriteCode(Node):
         return response
 
 
+@AgentRegistry.register('FinalReferAG')
 @AgentRegistry.register('FinalRefer')
 class FinalRefer(Node):
     def __init__(self, id: str | None =None,  domain: str = "", llm_name: str = "",):

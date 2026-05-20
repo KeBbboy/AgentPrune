@@ -13,11 +13,11 @@ import random
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
 
-from AgentPrune.utils.const import AgentPrune_ROOT
-from AgentPrune.graph.autogen_graph import GraphAutoGen
-from AgentPrune.tools.reader.readers import JSONLReader
-from AgentPrune.utils.globals import Time
-from AgentPrune.utils.globals import Cost, PromptTokens, CompletionTokens
+from AgentDropout.utils.const import AgentPrune_ROOT
+from AgentDropout.graph.autogen_graph import GraphAutoGen
+from AgentDropout.tools.reader.readers import JSONLReader
+from AgentDropout.utils.globals import Time
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 from dataset.gsm8k_dataset import gsm_data_process, gsm_get_predict
 
 def load_result(result_file):

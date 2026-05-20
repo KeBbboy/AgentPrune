@@ -13,12 +13,12 @@ import random
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
 
-from AgentPrune.graph.autogen_graph import GraphAutoGen
-from AgentPrune.tools.reader.readers import JSONLReader
-from AgentPrune.tools.coding.python_executor import PyExecutor
-from AgentPrune.utils.globals import Time
-from AgentPrune.utils.const import AgentPrune_ROOT
-from AgentPrune.utils.globals import Cost, PromptTokens, CompletionTokens
+from AgentDropout.graph.autogen_graph import GraphAutoGen
+from AgentDropout.tools.reader.readers import JSONLReader
+from AgentDropout.tools.coding.python_executor import PyExecutor
+from AgentDropout.utils.globals import Time
+from AgentDropout.utils.const import AgentPrune_ROOT
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 
 def load_result(result_file):
     if not result_file.exists():
