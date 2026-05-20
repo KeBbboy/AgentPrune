@@ -43,7 +43,7 @@ def load_config(config_path):
     
 def parse_args():
     parser = argparse.ArgumentParser(description="Experiments on gsm8k")
-    parser.add_argument("--dataset_json", type=str, default="dataset/svamp/test.json")
+    parser.add_argument("--dataset_json", type=str, default="dataset/svamp/SVAMP.json")
     parser.add_argument("--result_file", type=str, default=None)
     parser.add_argument("--llm_name", type=str, default="gpt-3.5-turbo")
     parser.add_argument('--mode', type=str, default='FullConnected',
@@ -81,7 +81,7 @@ async def main():
     result_file = None
     dataset = JSONReader.parse_file(args.dataset_json)
     dataset = svamp_data_process(dataset)
-    train_dataset_path = Path('dataset/svamp/train.json')
+    train_dataset_path = Path('dataset/svamp/SVAMP.json')
     if not train_dataset_path.exists():
         train_dataset_path = Path(args.dataset_json)
     train_dataset = JSONReader.parse_file(train_dataset_path)

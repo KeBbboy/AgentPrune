@@ -3,8 +3,8 @@
 
 
 from AgentDropout.utils.log import logger
-from AgentDropout.environment.tools.coding.python_executor import PyExecutor
-from AgentDropout.environment.tools.coding.executor_types import Executor
+from AgentDropout.tools.coding.python_executor import PyExecutor
+from AgentDropout.tools.coding.executor_types import Executor
 
 EXECUTOR_MAPPING = {
     "py": PyExecutor,
