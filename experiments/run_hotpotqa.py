@@ -120,7 +120,7 @@ async def main():
             num_iters=args.num_iterations,
             num_rounds=args.num_rounds,
             lr=args.lr,
-            batch_size=20,
+            batch_size=args.batch_size,
             imp_per_iters=args.imp_per_iterations,
             pruning_rate=args.pruning_rate,
             args=args,

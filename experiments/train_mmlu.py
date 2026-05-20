@@ -40,6 +40,13 @@ async def train(graph:Graph,
             args=None,
             kwargs=None,
           ) -> None:
+
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if num_iters <= 0:
+        raise ValueError("num_iters must be positive")
+    if imp_per_iters <= 0:
+        raise ValueError("imp_per_iters must be positive")
     
     def infinite_data_loader() -> Iterator[pd.DataFrame]:
         while True:
@@ -58,13 +65,13 @@ async def train(graph:Graph,
         #     optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters())+[graph.decision_logits],lr=lr)
         else:
             optimizer = torch.optim.Adam(list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),lr=lr)
-        for i_iter in range(2):
+        for i_iter in range(num_iters):
             print(f"Train {i_iter}", 80*'-')
             start_ts = time.time()
             correct_answers = []
             answer_log_probs = []
             add_losses = []
-            for i_record, record in zip(range(20), loader):
+            for i_record, record in zip(range(batch_size), loader):
                 realized_graph = copy.deepcopy(graph)
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
@@ -153,7 +160,8 @@ async def train(graph:Graph,
             print(f"Cost {Cost.instance().value}")
             print(f"PromptTokens {PromptTokens.instance().value}")
             print(f"CompletionTokens {CompletionTokens.instance().value}")
-        graph.update_masks_dec()
+            if (i_iter + 1) % imp_per_iters == 0:
+                graph.update_masks_dec()
 
     loader = infinite_data_loader()
 
@@ -167,13 +175,13 @@ async def train(graph:Graph,
     graph.optimized_spatial=True
     graph.optimized_temporal=True
 
-    for i_iter in range(2):
+    for i_iter in range(num_iters):
         print(f"Train {i_iter}", 80*'-')
         start_ts = time.time()
         correct_answers = []
         answer_log_probs = []
         add_losses = []
-        for i_record, record in zip(range(10), loader):
+        for i_record, record in zip(range(batch_size), loader):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
@@ -272,7 +280,7 @@ async def train(graph:Graph,
         print(f"PromptTokens {PromptTokens.instance().value}")
         print(f"CompletionTokens {CompletionTokens.instance().value}")
         
-        if (i_iter+1)%2 == 0:
+        if (i_iter + 1) % imp_per_iters == 0:
             if not graph.diff:
                 spatial_masks, temporal_masks = graph.update_masks(pruning_rate)
             else:
