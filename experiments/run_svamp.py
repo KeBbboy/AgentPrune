@@ -68,6 +68,7 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
+    parser.add_argument('--learn_message_type', action='store_true')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -107,10 +108,12 @@ async def main():
                     diff=args.diff,
                     dec=args.dec,
                     **kwargs)
+    graph.set_message_type_learning_mode(args.learn_message_type)
     
     if args.dec:
         graph.optimized_spatial=False
         graph.optimized_temporal=False
+        graph.set_message_type_learning_mode(False)
         total_solved, total_executed = (0, 0)
         if not graph.diff:
             optimizer = torch.optim.Adam([graph.spatial_logits_1,graph.temporal_logits_1], lr=args.lr)
@@ -233,10 +236,10 @@ async def main():
             print(f"CompletionTokens {CompletionTokens.instance().value}")
         graph.update_masks_dec()
 
-    if not graph.diff:
-        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
-    else:
-        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=args.lr)  
+    graph.optimized_spatial = args.optimized_spatial
+    graph.optimized_temporal = args.optimized_temporal
+    graph.set_message_type_learning_mode(args.learn_message_type)
+    optimizer = torch.optim.Adam(graph.second_stage_optimizer_parameters(), lr=args.lr)
     
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
@@ -259,8 +262,7 @@ async def main():
             
             for i_record, record in enumerate(current_batch):
                 realized_graph = copy.deepcopy(graph)
-                realized_graph.spatial_logits = graph.spatial_logits
-                realized_graph.temporal_logits = graph.temporal_logits
+                realized_graph.share_second_stage_parameters(graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -405,8 +407,7 @@ async def main():
         print(11111111)
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_second_stage_parameters(graph)
             
             if not graph.diff:
                 spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
