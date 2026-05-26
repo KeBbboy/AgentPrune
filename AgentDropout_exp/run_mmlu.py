@@ -7,14 +7,11 @@ from typing import Union, Literal, List
 import argparse
 import random
 
-from AgentDropout.graph.graph import Graph
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
-from experiments.train_mmlu import train
-from experiments.evaluate_mmlu import evaluate
+from AgentDropout_exp.need_aware_pull_mmlu import evaluate_need_aware_pull
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import PromptTokens, CompletionTokens
-import torch
 
 
 
@@ -53,6 +50,24 @@ def parse_args():
     parser.add_argument('--optimized_temporal',action='store_true')
     parser.add_argument('--learn_message_type', action='store_true',
                         help="Enable answer/reason message-type learning in AgentDropout second-stage training.")
+    parser.add_argument('--need_aware_pull', action='store_true',
+                        help="Run Need-Aware Pull Communication on MMLU instead of the graph baseline.")
+    parser.add_argument('--pull_confidence_threshold', type=float, default=0.7,
+                        help="Requester confidence below this value triggers pull communication.")
+    parser.add_argument('--pull_entropy_threshold', type=float, default=0.8,
+                        help="Normalized vote entropy above this value can trigger pull communication.")
+    parser.add_argument('--pull_max_requesters', type=int, default=2,
+                        help="Maximum uncertain agents that can issue pull requests for one question.")
+    parser.add_argument('--pull_helpers_per_request', type=int, default=1,
+                        help="Number of helpers selected for each pull request.")
+    parser.add_argument('--pull_max_response_words', type=int, default=45,
+                        help="Word budget for each contrastive evidence response.")
+    parser.add_argument('--pull_fallback_entropy_threshold', type=float, default=0.45,
+                        help="Use plain majority vote when normalized answer entropy is at or below this value.")
+    parser.add_argument('--pull_evidence_weight', type=float, default=0.35,
+                        help="Weight assigned to each accepted pull evidence vote.")
+    parser.add_argument('--pull_limit_questions', type=int, default=None,
+                        help="Optional number of MMLU validation questions for pull-communication evaluation.")
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
@@ -68,6 +83,13 @@ def parse_args():
 
 async def main():
     args = parse_args()
+
+    if args.need_aware_pull:
+        download()
+        dataset_val = MMLUDataset('val')
+        score = await evaluate_need_aware_pull(dataset=dataset_val,args=args)
+        print(f"Score: {score}")
+        return
     
     mode = args.mode
     decision_method = args.decision_method
@@ -75,6 +97,11 @@ async def main():
     # print(agent_names)
     kwargs = get_kwargs(mode,len(agent_names))
     limit_questions = 153
+
+    from AgentDropout.graph.graph import Graph
+    from experiments.train_mmlu import train
+    from experiments.evaluate_mmlu import evaluate
+    import torch
     
     graph = Graph(domain=args.domain,
                   llm_name=args.llm_name,

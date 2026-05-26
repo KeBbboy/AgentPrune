@@ -1,4 +1,5 @@
 import glob
+import os
 import pandas as pd
 from typing import Union, List, Literal, Any, Dict
 import numpy as np
@@ -35,6 +36,9 @@ class MMLUDataset(ABC):
         for path in csv_paths:
             single_df = pd.read_csv(path, header=None,
                             names=names,encoding='utf-8')
+            split_name = data_path.rstrip("/").split("/")[-1]
+            subject = os.path.basename(path).replace(f"_{split_name}.csv", "").replace(".csv", "")
+            single_df["subject"] = subject
             total_df = pd.concat([total_df, single_df])
 
         total_df = total_df.reset_index(drop=True)
@@ -67,7 +71,7 @@ class MMLUDataset(ABC):
             f"Option C: {record['C']}\n"
             f"Option D: {record['D']}\n"
             )
-        input_dict = {"task": demo_question}
+        input_dict = {"task": demo_question, "subject": record.get("subject", "")}
         return input_dict
 
     def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
