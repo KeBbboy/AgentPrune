@@ -64,6 +64,9 @@ async def evaluate(
     _freeze_parameters(graph.temporal_message_type_logits)
     _freeze_parameters(graph.message_action_gat)
     _freeze_parameters(graph.message_complexity_action_bias)
+    if getattr(args, "message_selection_policy", "none") != "none":
+        graph.optimized_spatial_message_type = False
+        graph.optimized_temporal_message_type = False
 
     metric_totals: Dict[str, float] = {}
     metric_count = 0

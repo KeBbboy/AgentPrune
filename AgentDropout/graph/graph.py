@@ -306,9 +306,9 @@ class Graph(ABC):
 
     def _message_complexity_bias(self, action: str) -> float:
         return {
-            "answer": -0.30,
-            "reason": 0.20,
-            "full": 0.35,
+            "answer": -0.40,
+            "reason": 0.10,
+            "full": 0.45,
         }[action]
 
     def _role_prior_for_message_action(self, sender: Node, receiver: Node, action: str) -> float:
@@ -563,9 +563,9 @@ class Graph(ABC):
             loss = loss - entropy_weight * entropy
         if balance_weight > 0.0:
             target_values = {
-                "answer": 0.30,
-                "reason": 0.40,
-                "full": 0.30,
+                "answer": 0.15,
+                "reason": 0.30,
+                "full": 0.55,
             }
             target_distribution = torch.tensor(
                 [

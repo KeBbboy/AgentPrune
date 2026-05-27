@@ -34,6 +34,13 @@ def _message_selection_enabled(args) -> bool:
     return getattr(args, "message_selection_policy", "none") != "none"
 
 
+def _message_selection_enabled_for_iteration(args, i_iter: int) -> bool:
+    if not _message_selection_enabled(args):
+        return False
+    warmup_iters = max(0, int(getattr(args, "message_selection_warmup_iterations", 0)))
+    return i_iter >= warmup_iters
+
+
 def _message_selection_regularization(graph: Graph, args) -> torch.Tensor:
     return graph.message_selection_regularization(
         cost_weight=getattr(args, "message_cost_weight", 0.0),
@@ -307,6 +314,10 @@ async def train(graph:Graph,
 
     for i_iter in range(num_iters):
         print(f"Train {i_iter}", 80*'-')
+        message_selection_enabled = _message_selection_enabled_for_iteration(args, i_iter)
+        graph.set_message_type_learning_mode(message_selection_enabled)
+        if _message_selection_enabled(args) and not message_selection_enabled:
+            print("AIMS+ warmup: using full messages and training topology only")
         start_ts = time.time()
         correct_answers = []
         answer_log_probs = []
