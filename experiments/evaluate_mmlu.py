@@ -60,6 +60,10 @@ async def evaluate(
 
     _freeze_parameters(graph.spatial_logits)
     _freeze_parameters(graph.temporal_logits)
+    _freeze_parameters(graph.spatial_message_type_logits)
+    _freeze_parameters(graph.temporal_message_type_logits)
+    _freeze_parameters(graph.message_action_mlp)
+    _freeze_parameters(graph.message_complexity_action_bias)
 
     metric_totals: Dict[str, float] = {}
     metric_count = 0
@@ -94,8 +98,7 @@ async def evaluate(
         
         for record in record_batch:
             realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_second_stage_parameters(graph)
             input_dict = dataset.record_to_input(record)
             # print(input_dict)
             # if dec:

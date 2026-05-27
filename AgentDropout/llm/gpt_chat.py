@@ -7,7 +7,24 @@ from typing import Dict, Any
 from dotenv import load_dotenv
 import os
 from openai import AsyncOpenAI
-import async_timeout
+try:
+    import async_timeout
+except ModuleNotFoundError:
+    class _NoopAsyncTimeout:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _AsyncTimeoutCompat:
+        @staticmethod
+        def timeout(delay):
+            if hasattr(asyncio, "timeout"):
+                return asyncio.timeout(delay)
+            return _NoopAsyncTimeout()
+
+    async_timeout = _AsyncTimeoutCompat()
 from transformers import AutoTokenizer
 
 from AgentDropout.llm.format import Message

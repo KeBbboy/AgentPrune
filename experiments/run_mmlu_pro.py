@@ -43,6 +43,12 @@ def parse_args():
     parser.add_argument('--diff', action='store_true')
     parser.add_argument('--dec', action='store_true')
     parser.add_argument('--cot', action='store_true')
+    parser.add_argument('--message_selection_policy', type=str, default='none', choices=['none', 'binary', 'aims', 'aims_plus'])
+    parser.add_argument('--message_selection_temperature', type=float, default=1.0)
+    parser.add_argument('--message_cost_weight', type=float, default=0.02)
+    parser.add_argument('--message_entropy_weight', type=float, default=0.005)
+    parser.add_argument('--message_diversity_weight', type=float, default=0.005)
+    parser.add_argument('--message_context_weight_decay', type=float, default=0.001)
     parser.add_argument('--limit_questions', type=int, default=153)
     args = parser.parse_args()
 
@@ -67,8 +73,11 @@ async def main():
         rounds=args.num_rounds,
         diff=args.diff,
         dec=args.dec,
+        message_selection_policy=args.message_selection_policy,
+        message_selection_temperature=args.message_selection_temperature,
         **kwargs,
     )
+    graph.set_message_type_learning_mode(args.message_selection_policy != 'none')
 
     dataset_train = MMLUProDataset('dev')
     dataset_val = MMLUProDataset('val')

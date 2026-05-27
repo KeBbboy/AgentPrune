@@ -85,6 +85,27 @@ python experiments/run_mmlu_pro.py --agent_nums 6 --mode FakeAGFull --batch_size
 python experiments/run_mmlu_pro.py --agent_nums 1 --mode DirectAnswer --decision_method FinalMajorVote --agent_names AdverarialAgent --batch_size 4
 ```
 
+### 🧠 Research-grade message selection: AIMS/AIMS+
+
+This branch adds Adaptive Information-granularity Message Selection (AIMS/AIMS+),
+a trainable message-level policy on top of AgentPrune's topology optimizer. AIMS
+chooses among `full`, `answer`, and `reason`; AIMS+ adds a content-aware
+receiver-contextual per-edge policy over `answer`, `reason`, and `full`. For
+each receiver, AIMS+ selects one message action for every retained incoming edge
+from a 384-dimensional MiniLM-style embedding of `[task, sender role, receiver
+role, message]`. The contextual action selector is a two-layer MLP and no
+longer applies a hard receiver-level budget constraint.
+
+```bash
+python experiments/run_mmlu.py --mode FakeAGFull --agent_nums 6 --batch_size 4 --num_iterations 10 --imp_per_iterations 5 --pruning_rate 0.25 --num_rounds 1 --optimized_spatial --optimized_temporal --aims_plus
+```
+
+Use `--message_selection_policy none` for the original behavior, `binary` for
+the previous two-action answer/reason policy, `aims` for role-aware static
+granularity selection, and `--aims_plus` for contextual message gating. See
+`docs/aims_message_selection.md` for the objective, implementation details, and
+ablation suggestions.
+
 ### 🔗 Integrate into other multi-agent systems frameworks
 
 We demonstrate the integration of AgentPrune with the widely-used `AutoGen` and `GPTSwarm` frameworks. Although the integration is not based on their original codebase, the underlying logic remains consistent with the frameworks' core principles. Specifically, the integration with `GPTSwarm` aligns with its edge-optimized mode, while the integration with `AutoGen` corresponds to its RoundRobinGroupChat mode.

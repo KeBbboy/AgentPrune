@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from typing import Iterator
+from typing import Any, Iterator
 import pandas as pd
 import numpy as np
 import time
@@ -28,6 +28,124 @@ def _compute_utility(dataset, prediction: str, target) -> float:
             if len(metrics) > 0:
                 return float(next(iter(metrics.values())))
     return float(prediction == target)
+
+
+def _message_selection_enabled(args) -> bool:
+    return getattr(args, "message_selection_policy", "none") != "none"
+
+
+def _message_selection_regularization(graph: Graph, args) -> torch.Tensor:
+    return graph.message_selection_regularization(
+        cost_weight=getattr(args, "message_cost_weight", 0.0),
+        entropy_weight=getattr(args, "message_entropy_weight", 0.0),
+        diversity_weight=getattr(args, "message_diversity_weight", 0.0),
+        context_weight_decay=getattr(args, "message_context_weight_decay", 0.0),
+    )
+
+def _message_action_penalty(graph: Graph, args) -> float:
+    if getattr(args, "message_selection_policy", "none") != "aims_plus":
+        return 0.0
+    counts = getattr(graph, "message_action_counts", {}).get("total", {})
+    return (
+        float(getattr(args, "message_reason_penalty_weight", 0.0)) * counts.get("reason", 0)
+        + float(getattr(args, "message_full_penalty_weight", 0.0)) * counts.get("full", 0)
+    )
+
+
+def _max_resample_attempts(args) -> int:
+    return max(1, int(getattr(args, "max_resample_attempts", 1)))
+
+
+def _training_regularization_loss(graph: Graph, args, kwargs) -> torch.Tensor:
+    agent_num = sum(args.agent_nums)
+    if not graph.diff:
+        spatial_matrix_train = graph.spatial_logits.reshape((agent_num, agent_num))
+        temporal_matrix_train = graph.temporal_logits.reshape((agent_num, agent_num))
+    else:
+        spatial_matrix_train = [
+            param.reshape((agent_num, agent_num))
+            for param in graph.spatial_logits
+        ]
+        temporal_matrix_train = [
+            param.reshape((agent_num, agent_num))
+            for param in graph.temporal_logits
+        ]
+
+    spatial_matrix_fixed = torch.tensor(
+        kwargs["fixed_spatial_masks"],
+        dtype=torch.float32,
+        device=graph.message_complexity_action_bias.device,
+    ).reshape((agent_num, agent_num))
+    temporal_matrix_fixed = torch.tensor(
+        kwargs["fixed_temporal_masks"],
+        dtype=torch.float32,
+        device=graph.message_complexity_action_bias.device,
+    ).reshape((agent_num, agent_num))
+
+    if not graph.diff:
+        loss_s = nuclear_norm(spatial_matrix_train)
+        loss_t = nuclear_norm(temporal_matrix_train)
+        frob_loss_s = frobenius_norm(spatial_matrix_fixed, spatial_matrix_train)
+        frob_loss_t = frobenius_norm(temporal_matrix_fixed, temporal_matrix_train)
+    else:
+        loss_s = torch.mean(torch.stack([
+            nuclear_norm(matrix)
+            for matrix in spatial_matrix_train
+        ]))
+        loss_t = torch.mean(torch.stack([
+            nuclear_norm(matrix)
+            for matrix in temporal_matrix_train
+        ]))
+        frob_loss_s = torch.mean(torch.stack([
+            frobenius_norm(spatial_matrix_fixed, matrix)
+            for matrix in spatial_matrix_train
+        ]))
+        frob_loss_t = torch.mean(torch.stack([
+            frobenius_norm(temporal_matrix_fixed, matrix)
+            for matrix in temporal_matrix_train
+        ]))
+
+    add_loss = loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
+    return add_loss + _message_selection_regularization(graph, args)
+
+
+async def _run_record_with_resampling(
+        graph: Graph,
+        dataset,
+        record: Any,
+        correct_answer: Any,
+        num_rounds: int,
+        args,
+        ):
+    max_attempts = _max_resample_attempts(args)
+    input_dict = dataset.record_to_input(record)
+    attempt_results = []
+
+    for attempt_idx in range(max_attempts):
+        realized_graph = copy.deepcopy(graph)
+        realized_graph.share_second_stage_parameters(graph)
+        raw_answer, log_prob = await realized_graph.arun(input_dict, num_rounds)
+        answer = dataset.postprocess_answer(raw_answer)
+        utility = _compute_utility(dataset, answer, correct_answer)
+        attempt_results.append((
+            raw_answer,
+            log_prob,
+            realized_graph,
+            answer,
+            utility,
+            attempt_idx + 1,
+        ))
+        if utility > 0.0:
+            break
+        if attempt_idx + 1 < max_attempts:
+            print(
+                "Resampling wrong training sample "
+                f"({attempt_idx + 1}/{max_attempts}) "
+                f"answer:{answer} correct:{correct_answer}"
+            )
+
+    return attempt_results
+
 
 async def train(graph:Graph,
             dataset,
@@ -165,94 +283,54 @@ async def train(graph:Graph,
 
     loader = infinite_data_loader()
 
-    if not graph.diff:
-        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=lr)
-    # elif graph.diff and graph.dec_1:
-    #     optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters())+[graph.decision_logits],lr=lr)
-    else:
-        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=lr)
-    
     graph.optimized_spatial=True
     graph.optimized_temporal=True
+    graph.set_message_type_learning_mode(_message_selection_enabled(args))
+    optimizer = torch.optim.Adam(graph.second_stage_optimizer_parameters(), lr=lr)
 
     for i_iter in range(num_iters):
         print(f"Train {i_iter}", 80*'-')
         start_ts = time.time()
         correct_answers = []
         answer_log_probs = []
-        add_losses = []
         for i_record, record in zip(range(batch_size), loader):
-            realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
-            # if graph.dec_1:
-            #     realized_graph.decision_logits = graph.decision_logits
-            
-            # print(graph.spatial_logits)
-            if not graph.diff:
-                spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
-                temporal_matrix_train = realized_graph.temporal_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
-                # spatial_matrix_train = remove_zero_rows_and_columns(spatial_matrix_train)
-                # temporal_matrix_train = remove_zero_rows_and_columns(temporal_matrix_train)
-            else:
-                spatial_matrix_train = [param.reshape((sum(args.agent_nums), sum(args.agent_nums))) for param in realized_graph.spatial_logits]
-                temporal_matrix_train = [param.reshape((sum(args.agent_nums), sum(args.agent_nums))) for param in realized_graph.temporal_logits]
-                # spatial_matrix_train = [remove_zero_rows_and_columns(param,i,i) for param,i in zip(spatial_matrix_train,graph.skip_nodes)]
-                # # temporal_matrix_train = [remove_zero_rows_and_columns(param) for param in temporal_matrix_train]
-                # for i in range(len(temporal_matrix_train)):
-                #     temporal_matrix_train[i] = remove_zero_rows_and_columns(temporal_matrix_train[i],graph.skip_nodes[i],graph.skip_nodes[i+1])
-
-            spatial_matrix_fixed = torch.tensor(kwargs["fixed_spatial_masks"],dtype=torch.float32).reshape((sum(args.agent_nums),sum(args.agent_nums)))
-            temporal_matrix_fixed = torch.tensor(kwargs["fixed_temporal_masks"],dtype=torch.float32).reshape((sum(args.agent_nums),sum(args.agent_nums)))
-            # spatial_matrix_fixed = spatial_matrix_fixed[:4,:4]
-            # temporal_matrix_fixed = temporal_matrix_fixed[:4,:4]
-            if not graph.diff:
-                loss_s = nuclear_norm(spatial_matrix_train)
-                loss_t = nuclear_norm(temporal_matrix_train)
-                frob_loss_s = frobenius_norm(spatial_matrix_fixed, spatial_matrix_train)
-                frob_loss_t = frobenius_norm(temporal_matrix_fixed, temporal_matrix_train)
-                loss_cs = connectivity_loss(spatial_matrix_train)
-                loss_ct = connectivity_loss(temporal_matrix_train)
-                # print(loss_cs)
-            else:
-                # loss_s = sum(nuclear_norm(matrix) for matrix in spatial_matrix_train)
-                # loss_t = sum(nuclear_norm(matrix) for matrix in temporal_matrix_train)
-                # frob_loss_s = sum(frobenius_norm(spatial_matrix_fixed, matrix) for matrix in spatial_matrix_train)
-                # frob_loss_t = sum(frobenius_norm(temporal_matrix_fixed, matrix) for matrix in temporal_matrix_train)
-                loss_s = torch.mean(torch.stack([nuclear_norm(matrix) for matrix in spatial_matrix_train]))
-                loss_t = torch.mean(torch.stack([nuclear_norm(matrix) for matrix in temporal_matrix_train]))
-                loss_cs = torch.mean(torch.stack([connectivity_loss(matrix) for matrix in spatial_matrix_train]))
-                loss_ct = torch.mean(torch.stack([connectivity_loss(matrix) for matrix in temporal_matrix_train]))
-                frob_loss_s = torch.mean(torch.stack([frobenius_norm(spatial_matrix_fixed, matrix) for matrix in spatial_matrix_train]))
-                frob_loss_t = torch.mean(torch.stack([frobenius_norm(temporal_matrix_fixed, matrix) for matrix in temporal_matrix_train]))
-            add_loss = loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
-            # if graph.diff:
-            # add_loss = 0
-            input_dict = dataset.record_to_input(record)
-            if args.dec:
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
-            else:
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
             correct_answer = dataset.record_to_target_answer(record)
             correct_answers.append(correct_answer)
-            add_losses.append(add_loss)
+            answer_log_probs.append(asyncio.create_task(
+                _run_record_with_resampling(
+                    graph=graph,
+                    dataset=dataset,
+                    record=record,
+                    correct_answer=correct_answer,
+                    num_rounds=num_rounds,
+                    args=args,
+                )
+            ))
             
-        raw_results = await asyncio.gather(*answer_log_probs)
-        raw_answers, log_probs = zip(*raw_results)
+        raw_attempt_batches = await asyncio.gather(*answer_log_probs)
         loss_list: List[torch.Tensor] = []
         utilities: List[float] = []
         answers: List[str] = []
+        raw_answers = []
+        attempt_counts = []
         
-        for raw_answer, log_prob, add_loss, correct_answer in zip(raw_answers, log_probs, add_losses, correct_answers):
-            answer = dataset.postprocess_answer(raw_answer)
-            answers.append(answer)
-            utility = _compute_utility(dataset, answer, correct_answer)
-            utilities.append(utility)
-            single_loss = - log_prob * utility
-            loss_list.append(single_loss+add_loss)
+        for attempt_results, correct_answer in zip(raw_attempt_batches, correct_answers):
+            attempt_counts.append(len(attempt_results))
             print(f"correct answer:{correct_answer}")
+            for raw_answer, log_prob, realized_graph, answer, utility, attempt_idx in attempt_results:
+                action_penalty = _message_action_penalty(realized_graph, args)
+                effective_utility = utility - action_penalty
+                utilities.append(utility)
+                answers.append(answer)
+                raw_answers.append(raw_answer)
+                single_loss = - log_prob * effective_utility
+                loss_list.append(single_loss)
+                if attempt_idx > 1:
+                    print(f"resample attempt:{attempt_idx} answer:{answer} utility:{utility:.4f}")
+                if action_penalty > 0.0:
+                    print(f"AIMS+ action penalty:{action_penalty:.4f} effective utility:{effective_utility:.4f}")
     
-        total_loss = torch.mean(torch.stack(loss_list))
+        total_loss = torch.mean(torch.stack(loss_list)) + _training_regularization_loss(graph, args, kwargs)
         optimizer.zero_grad() 
         total_loss.backward()
         optimizer.step()
@@ -265,6 +343,7 @@ async def train(graph:Graph,
         
         print("raw_answers:",raw_answers)
         print("answers:",answers)
+        print("resample attempts:", attempt_counts)
         print(f"Batch time {time.time() - start_ts:.3f}")
         print("utilities:", utilities)
         print("loss:", total_loss.item()) 

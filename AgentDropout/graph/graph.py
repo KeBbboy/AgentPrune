@@ -4,12 +4,20 @@ from abc import ABC
 import numpy as np
 import torch
 import asyncio
+import re
+import hashlib
 
 import AgentDropout.agents  # noqa: F401
 import AgentDropout.prompt  # noqa: F401
 from AgentDropout.graph.node import Node
 from AgentDropout.agents.agent_registry import AgentRegistry
 import random
+
+
+MESSAGE_SELECTION_POLICIES = {"none", "binary", "aims", "aims_plus"}
+MESSAGE_EMBEDDING_MODEL = None
+MESSAGE_EMBEDDING_MODEL_FAILED = False
+
 
 class Graph(ABC):
     """
@@ -48,6 +56,8 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                message_selection_policy: str = "none",
+                message_selection_temperature: float = 1.0,
                 ):
         
         if fixed_spatial_masks is None:
@@ -79,16 +89,43 @@ class Graph(ABC):
         self.node_kwargs = node_kwargs if node_kwargs is not None else [{} for _ in agent_names]
         self.diff=diff
         self.rounds=rounds
+        self.message_selection_policy = self._normalize_message_selection_policy(message_selection_policy)
+        self.message_selection_temperature = max(float(message_selection_temperature), 1e-6)
+        self.message_actions = self._message_actions_for_policy(self.message_selection_policy)
+        self.message_action_costs = torch.tensor(
+            [self._message_action_cost(action) for action in self.message_actions],
+            dtype=torch.float32,
+        )
+        self.message_action_counts = self._empty_message_action_counts()
+        self.message_embedding_dim = 384
+        self.message_mlp_hidden_dim = 64
+        self.message_embedding_model = None
+        self.message_embedding_model_failed = False
+        self.message_embedding_cache = {}
+        self.message_action_mlp = self._build_two_layer_mlp(
+            self.message_embedding_dim,
+            len(self.message_actions),
+        )
+        self.message_complexity_action_bias = torch.nn.Parameter(
+            torch.tensor(
+                [self._message_complexity_bias(action) for action in self.message_actions],
+                dtype=torch.float32,
+            ),
+            requires_grad=False,
+        )
         # self.dec=False
         self.dec_1=False
         self.skip_nodes = []
         
         self.init_nodes() # add nodes to the self.nodes
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
+        self.spatial_edge_index = self._build_edge_index(self.potential_spatial_edges)
+        self.temporal_edge_index = self._build_edge_index(self.potential_temporal_edges)
         
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
-        init_message_type_logit = 0.0
+        init_spatial_message_type_logits = self._initial_message_type_logits("spatial")
+        init_temporal_message_type_logits = self._initial_message_type_logits("temporal")
 
         print(self.potential_spatial_edges)
         if dec:
@@ -101,12 +138,12 @@ class Graph(ABC):
             self.spatial_masks = torch.nn.Parameter(fixed_spatial_masks,requires_grad=False)  # fixed edge masks
             self.spatial_logits = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial) # trainable edge logits
             self.spatial_message_type_logits = torch.nn.Parameter(
-                torch.ones(len(self.potential_spatial_edges), requires_grad=False) * init_message_type_logit,
+                init_spatial_message_type_logits.clone(),
                 requires_grad=False,
             )
             self.temporal_logits = torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) # trainable edge logits
             self.temporal_message_type_logits = torch.nn.Parameter(
-                torch.ones(len(self.potential_temporal_edges), requires_grad=False) * init_message_type_logit,
+                init_temporal_message_type_logits.clone(),
                 requires_grad=False,
             )
             self.temporal_masks = torch.nn.Parameter(fixed_temporal_masks,requires_grad=False)  # fixed edge masks
@@ -122,15 +159,150 @@ class Graph(ABC):
             self.spatial_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_spatial_masks.clone(), requires_grad=False) for _ in range(rounds)])  # fixed edge masks
             self.spatial_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial) for _ in range(rounds)])
             self.spatial_message_type_logits = torch.nn.ParameterList([
-                torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=False) * init_message_type_logit, requires_grad=False)
+                torch.nn.Parameter(init_spatial_message_type_logits.clone(), requires_grad=False)
                 for _ in range(rounds)
             ])
             self.temporal_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) for _ in range(rounds-1)])
             self.temporal_message_type_logits = torch.nn.ParameterList([
-                torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=False) * init_message_type_logit, requires_grad=False)
+                torch.nn.Parameter(init_temporal_message_type_logits.clone(), requires_grad=False)
                 for _ in range(rounds-1)
             ])
             self.temporal_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_temporal_masks.clone(), requires_grad=False) for _ in range(rounds-1)])
+
+    def _normalize_message_selection_policy(self, policy: str) -> str:
+        normalized_policy = (policy or "none").lower()
+        if normalized_policy not in MESSAGE_SELECTION_POLICIES:
+            raise ValueError(
+                f"Unknown message_selection_policy: {policy}. "
+                f"Expected one of {sorted(MESSAGE_SELECTION_POLICIES)}"
+            )
+        return normalized_policy
+
+    def _message_actions_for_policy(self, policy: str):
+        if policy == "aims_plus":
+            return ("answer", "reason", "full")
+        if policy == "aims":
+            return ("full", "answer", "reason")
+        return ("answer", "reason")
+
+    def _message_action_cost(self, action: str) -> float:
+        return {
+            "answer": 0.25,
+            "reason": 0.70,
+            "full": 1.00,
+        }[action]
+
+    def _empty_message_action_counts(self):
+        return {
+            "total": {action: 0 for action in self.message_actions},
+            "spatial": {action: 0 for action in self.message_actions},
+            "temporal": {action: 0 for action in self.message_actions},
+        }
+
+    def reset_message_action_counts(self):
+        self.message_action_counts = self._empty_message_action_counts()
+
+    def _record_message_action(self, edge_kind: str, action: str):
+        if action not in self.message_actions:
+            return
+        self.message_action_counts["total"][action] += 1
+        if edge_kind in self.message_action_counts:
+            self.message_action_counts[edge_kind][action] += 1
+
+    def message_action_count_summary(self) -> str:
+        def format_counts(scope: str) -> str:
+            counts = self.message_action_counts.get(scope, {})
+            return ", ".join(
+                f"{action}={counts.get(action, 0)}"
+                for action in self.message_actions
+            )
+
+        return (
+            f"total({format_counts('total')}) "
+            f"spatial({format_counts('spatial')}) "
+            f"temporal({format_counts('temporal')})"
+        )
+
+    def _print_message_action_counts(self):
+        if self._active_message_selection_policy() == "aims_plus":
+            print(f"AIMS+ action counts: {self.message_action_count_summary()}")
+
+    def _message_complexity_bias(self, action: str) -> float:
+        return {
+            "answer": -0.30,
+            "reason": 0.20,
+            "full": 0.35,
+        }[action]
+
+    def _build_two_layer_mlp(self, input_dim: int, output_dim: int) -> torch.nn.Sequential:
+        mlp = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, self.message_mlp_hidden_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(self.message_mlp_hidden_dim, output_dim),
+        )
+        for module in mlp:
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight, gain=0.1)
+                torch.nn.init.zeros_(module.bias)
+        mlp.requires_grad_(False)
+        return mlp
+
+    def _role_prior_for_message_action(self, sender: Node, receiver: Node, action: str) -> float:
+        sender_role = (sender.role or "").lower()
+        receiver_role = (receiver.role or "").lower()
+        prior = 0.0
+
+        if action == "answer":
+            prior += 0.35 if "math solver" in receiver_role else 0.0
+            prior -= 0.25 if any(role in receiver_role for role in ("inspector", "analyst", "programming")) else 0.0
+        elif action == "reason":
+            prior += 0.35 if any(role in receiver_role for role in ("inspector", "analyst")) else 0.0
+            prior += 0.20 if any(role in sender_role for role in ("analyst", "inspector")) else 0.0
+        elif action == "full":
+            prior += 0.40 if self.domain == "humaneval" else 0.0
+            prior += 0.25 if "programming" in sender_role or "programming" in receiver_role else 0.0
+            prior += 0.15 if any(role in receiver_role for role in ("inspector", "decision")) else 0.0
+        return prior
+
+    def _build_edge_index(self, edges):
+        return {
+            (sender_id, receiver_id): edge_idx
+            for edge_idx, (sender_id, receiver_id) in enumerate(edges)
+        }
+
+    def _initial_message_type_logits(self, edge_kind: str) -> torch.Tensor:
+        edges = self.potential_spatial_edges if edge_kind == "spatial" else self.potential_temporal_edges
+        if self.message_selection_policy in {"aims", "aims_plus"}:
+            priors = []
+            for sender_id, receiver_id in edges:
+                sender = self.find_node(sender_id)
+                receiver = self.find_node(receiver_id)
+                priors.append([
+                    self._role_prior_for_message_action(sender, receiver, action)
+                    for action in self.message_actions
+                ])
+            return torch.tensor(priors, dtype=torch.float32)
+        return torch.zeros(len(edges), dtype=torch.float32)
+
+    def _task_complexity(self, inputs: Any) -> float:
+        if isinstance(inputs, dict):
+            task_text = str(inputs.get("task", ""))
+        else:
+            task_text = str(inputs)
+        if not task_text:
+            return 0.0
+        token_count = len(task_text.split())
+        line_count = max(1, task_text.count("\n") + 1)
+        return min(1.0, (token_count / 160.0) + (line_count / 80.0))
+
+    def _active_message_selection_policy(self) -> str:
+        if not (self.enable_spatial_message_type_action or self.enable_temporal_message_type_action):
+            return "none"
+        if self.message_selection_policy == "aims_plus":
+            return "aims_plus"
+        if self.message_selection_policy == "aims":
+            return "aims"
+        return "binary"
         
     @property
     def spatial_adj_matrix(self):
@@ -220,10 +392,14 @@ class Graph(ABC):
             self.nodes[node_id].temporal_message_types = {}
 
     def _iter_parameters(self, value):
+        if value is None:
+            return []
         if isinstance(value, torch.nn.Parameter):
             return [value]
         if isinstance(value, torch.nn.ParameterList):
             return list(value)
+        if isinstance(value, torch.nn.Module):
+            return list(value.parameters())
         return list(value)
 
     def _message_type_logits_for(self, edge_kind: str, round: int = 0):
@@ -235,7 +411,15 @@ class Graph(ABC):
             return logits[round - 1] if self.diff else logits
         raise ValueError(f"Unknown edge_kind: {edge_kind}")
 
-    def sample_message_type(self, edge_kind: str, edge_idx: int, round: int = 0, return_log_prob: bool = False):
+    def sample_message_type(
+            self,
+            edge_kind: str,
+            edge_idx: int,
+            round: int = 0,
+            return_log_prob: bool = False,
+            task_complexity: float = 0.0,
+            context_features: Optional[torch.Tensor] = None,
+            ):
         if edge_kind == "spatial":
             enabled = self.enable_spatial_message_type_action
             optimized = self.optimized_spatial_message_type
@@ -250,6 +434,33 @@ class Graph(ABC):
             if return_log_prob:
                 return "full", torch.tensor(0.0, device=logits.device)
             return "full"
+
+        active_policy = self._active_message_selection_policy()
+        if active_policy == "aims_plus" and context_features is None:
+            if return_log_prob:
+                return "full", torch.tensor(0.0, device=logits.device)
+            return "full"
+
+        if active_policy in {"aims", "aims_plus"}:
+            action_logits = logits[edge_idx]
+            if active_policy == "aims_plus":
+                context_features = context_features.to(action_logits.device)
+                action_logits = action_logits + self.message_action_mlp(context_features)
+            action_logits = action_logits + self.message_complexity_action_bias.to(action_logits.device) * float(task_complexity)
+            action_logits = action_logits / self.message_selection_temperature
+            if not optimized:
+                action_index = torch.argmax(action_logits)
+                message_type = self.message_actions[int(action_index.item())]
+                if return_log_prob:
+                    return message_type, torch.tensor(0.0, device=action_logits.device)
+                return message_type
+
+            distribution = torch.distributions.Categorical(logits=action_logits)
+            action_index = distribution.sample()
+            message_type = self.message_actions[int(action_index.item())]
+            if return_log_prob:
+                return message_type, distribution.log_prob(action_index)
+            return message_type
 
         if not optimized:
             message_type = "reason" if logits[edge_idx].item() >= 0 else "answer"
@@ -276,6 +487,10 @@ class Graph(ABC):
             params.extend(self._iter_parameters(self.spatial_message_type_logits))
         if self.enable_temporal_message_type_action:
             params.extend(self._iter_parameters(self.temporal_message_type_logits))
+        if self._active_message_selection_policy() in {"aims", "aims_plus"}:
+            params.extend(self._iter_parameters(self.message_complexity_action_bias))
+        if self._active_message_selection_policy() == "aims_plus":
+            params.extend(self._iter_parameters(self.message_action_mlp))
         return params
 
     def share_second_stage_parameters(self, source: "Graph"):
@@ -283,6 +498,8 @@ class Graph(ABC):
         self.temporal_logits = source.temporal_logits
         self.spatial_message_type_logits = source.spatial_message_type_logits
         self.temporal_message_type_logits = source.temporal_message_type_logits
+        self.message_action_mlp = source.message_action_mlp
+        self.message_complexity_action_bias = source.message_complexity_action_bias
 
     def set_message_type_learning_mode(self, enabled: bool):
         self.enable_spatial_message_type_action = enabled
@@ -293,6 +510,241 @@ class Graph(ABC):
             param.requires_grad_(self.optimized_spatial_message_type)
         for param in self._iter_parameters(self.temporal_message_type_logits):
             param.requires_grad_(self.optimized_temporal_message_type)
+        self.message_complexity_action_bias.requires_grad_(
+            enabled
+            and self._active_message_selection_policy() in {"aims", "aims_plus"}
+            and (self.optimized_spatial or self.optimized_temporal)
+        )
+        self.message_action_mlp.requires_grad_(
+            enabled
+            and self._active_message_selection_policy() == "aims_plus"
+            and (self.optimized_spatial or self.optimized_temporal)
+        )
+
+    def message_selection_regularization(
+            self,
+            cost_weight: float = 0.0,
+            entropy_weight: float = 0.0,
+            diversity_weight: float = 0.0,
+            context_weight_decay: float = 0.0,
+            ) -> torch.Tensor:
+        if self._active_message_selection_policy() not in {"aims", "aims_plus"}:
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+        if cost_weight == 0.0 and entropy_weight == 0.0 and diversity_weight == 0.0 and context_weight_decay == 0.0:
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+
+        cost_vector = self.message_action_costs.to(self.message_complexity_action_bias.device)
+        cost_terms = []
+        entropy_terms = []
+        diversity_terms = []
+
+        def collect(logits, masks, edges):
+            active_mask = masks.to(logits.device).float()
+            active_count = active_mask.sum().clamp_min(1.0)
+            probs = torch.softmax(logits / self.message_selection_temperature, dim=-1)
+            expected_cost = (probs * cost_vector.to(logits.device)).sum(dim=-1)
+            entropy = -(probs * torch.log(probs.clamp_min(1e-8))).sum(dim=-1)
+            cost_terms.append((expected_cost * active_mask).sum() / active_count)
+            entropy_terms.append((entropy * active_mask).sum() / active_count)
+
+            receiver_ids = {receiver_id for _, receiver_id in edges}
+            for receiver_id in receiver_ids:
+                receiver_edge_indices = [
+                    idx
+                    for idx, (_, candidate_receiver_id) in enumerate(edges)
+                    if candidate_receiver_id == receiver_id and float(active_mask[idx].detach().cpu()) > 0.0
+                ]
+                if len(receiver_edge_indices) < 2:
+                    continue
+                receiver_probs = probs[receiver_edge_indices].mean(dim=0)
+                receiver_entropy = -(
+                    receiver_probs * torch.log(receiver_probs.clamp_min(1e-8))
+                ).sum()
+                diversity_terms.append(receiver_entropy)
+
+        if not self.diff:
+            if self.enable_spatial_message_type_action:
+                collect(self.spatial_message_type_logits, self.spatial_masks, self.potential_spatial_edges)
+            if self.enable_temporal_message_type_action:
+                collect(self.temporal_message_type_logits, self.temporal_masks, self.potential_temporal_edges)
+        else:
+            if self.enable_spatial_message_type_action:
+                for logits, masks in zip(self.spatial_message_type_logits, self.spatial_masks):
+                    collect(logits, masks, self.potential_spatial_edges)
+            if self.enable_temporal_message_type_action:
+                for logits, masks in zip(self.temporal_message_type_logits, self.temporal_masks):
+                    collect(logits, masks, self.potential_temporal_edges)
+
+        device = self.message_complexity_action_bias.device
+        loss = torch.tensor(0.0, device=device)
+        if cost_terms:
+            loss = loss + cost_weight * torch.mean(torch.stack(cost_terms))
+        if entropy_terms:
+            loss = loss - entropy_weight * torch.mean(torch.stack(entropy_terms))
+        if diversity_terms:
+            loss = loss - diversity_weight * torch.mean(torch.stack(diversity_terms))
+        if self._active_message_selection_policy() == "aims_plus":
+            if context_weight_decay > 0.0:
+                loss = loss + context_weight_decay * self._module_l2(self.message_action_mlp)
+        return loss
+
+    def _module_l2(self, module: torch.nn.Module) -> torch.Tensor:
+        params = [param.pow(2).mean() for param in module.parameters()]
+        if not params:
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+        return torch.mean(torch.stack(params))
+
+    def _latest_output(self, outputs):
+        if isinstance(outputs, list) and len(outputs):
+            return outputs[-1]
+        if isinstance(outputs, list):
+            return None
+        return outputs
+
+    def _incoming_message_candidates(self, receiver: Node):
+        candidates = []
+        for predecessor in receiver.spatial_predecessors:
+            output = self._latest_output(predecessor.outputs)
+            if output is not None:
+                candidates.append(("spatial", predecessor, output))
+        for predecessor in receiver.temporal_predecessors:
+            output = self._latest_output(predecessor.last_memory["outputs"])
+            if output is not None:
+                candidates.append(("temporal", predecessor, output))
+        return candidates
+
+    def _sentence_embedding(self, text: Any) -> torch.Tensor:
+        global MESSAGE_EMBEDDING_MODEL, MESSAGE_EMBEDDING_MODEL_FAILED
+        text = str(text or "")
+        cache_key = hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+        if cache_key in self.message_embedding_cache:
+            return self.message_embedding_cache[cache_key].clone()
+
+        embedding = None
+        if not MESSAGE_EMBEDDING_MODEL_FAILED:
+            try:
+                if MESSAGE_EMBEDDING_MODEL is None:
+                    from sentence_transformers import SentenceTransformer
+                    MESSAGE_EMBEDDING_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+                embedding_array = MESSAGE_EMBEDDING_MODEL.encode(
+                    text,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
+                embedding = torch.tensor(embedding_array, dtype=torch.float32)
+            except Exception:
+                MESSAGE_EMBEDDING_MODEL_FAILED = True
+                self.message_embedding_model_failed = True
+
+        if embedding is None:
+            embedding = self._hashed_sentence_embedding(text)
+
+        if embedding.numel() != self.message_embedding_dim:
+            fixed_embedding = torch.zeros(self.message_embedding_dim, dtype=torch.float32)
+            copy_len = min(self.message_embedding_dim, embedding.numel())
+            fixed_embedding[:copy_len] = embedding[:copy_len]
+            embedding = fixed_embedding
+        self.message_embedding_cache[cache_key] = embedding.detach().cpu()
+        return embedding.clone()
+
+    def _hashed_sentence_embedding(self, text: str) -> torch.Tensor:
+        embedding = torch.zeros(self.message_embedding_dim, dtype=torch.float32)
+        tokens = re.findall(r"[a-zA-Z0-9_]+", text.lower())
+        for token in tokens:
+            digest = hashlib.md5(token.encode("utf-8", errors="ignore")).digest()
+            token_hash = int.from_bytes(digest, byteorder="little", signed=False)
+            index = token_hash % self.message_embedding_dim
+            sign = 1.0 if ((token_hash >> 8) & 1) else -1.0
+            embedding[index] += sign
+        norm = torch.norm(embedding)
+        if norm > 0:
+            embedding = embedding / norm
+        return embedding
+
+    def _task_text(self, inputs: Any) -> str:
+        if isinstance(inputs, dict):
+            for key in ("task", "question", "prompt", "input"):
+                if key in inputs and inputs[key] is not None:
+                    return str(inputs[key])
+        return str(inputs or "")
+
+    def _message_context_text(self, inputs: Any, predecessor: Node, receiver: Node, output: Any) -> str:
+        sender_role = predecessor.role or predecessor.__class__.__name__
+        receiver_role = receiver.role or receiver.__class__.__name__
+        return (
+            "Task:\n"
+            f"{self._task_text(inputs)}\n\n"
+            "Sender role:\n"
+            f"{sender_role}\n\n"
+            "Receiver role:\n"
+            f"{receiver_role}\n\n"
+            "Message:\n"
+            f"{output}"
+        )
+
+    def _message_context_input(self, inputs: Any, predecessor: Node, receiver: Node, output: Any) -> torch.Tensor:
+        context_text = self._message_context_text(inputs, predecessor, receiver, output)
+        embedding = self._sentence_embedding(context_text)
+        return embedding.to(self.message_complexity_action_bias.device)
+
+    def _edge_idx_for_message(self, edge_kind: str, predecessor: Node, receiver: Node):
+        if edge_kind == "spatial":
+            return self.spatial_edge_index.get((predecessor.id, receiver.id))
+        if edge_kind == "temporal":
+            return self.temporal_edge_index.get((predecessor.id, receiver.id))
+        return None
+
+    def apply_contextual_message_selection(self, receiver: Node, inputs: Any, round: int, task_complexity: float):
+        if self._active_message_selection_policy() != "aims_plus":
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+
+        candidates = self._incoming_message_candidates(receiver)
+        if not candidates:
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+
+        candidate_entries = []
+        for edge_kind, predecessor, output in candidates:
+            edge_idx = self._edge_idx_for_message(edge_kind, predecessor, receiver)
+            if edge_idx is None:
+                continue
+            context_input = self._message_context_input(inputs, predecessor, receiver, output)
+            candidate_entries.append({
+                "edge_kind": edge_kind,
+                "predecessor": predecessor,
+                "edge_idx": edge_idx,
+                "context_features": context_input,
+            })
+
+        if not candidate_entries:
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+
+        log_probs = [
+            torch.tensor(
+                0.0,
+                device=self.message_complexity_action_bias.device,
+                requires_grad=self.optimized_spatial_message_type or self.optimized_temporal_message_type,
+            )
+        ]
+        for candidate_entry in candidate_entries:
+            edge_kind = candidate_entry["edge_kind"]
+            predecessor = candidate_entry["predecessor"]
+            context_features = candidate_entry["context_features"]
+            message_type, message_type_log_prob = self.sample_message_type(
+                edge_kind=edge_kind,
+                edge_idx=candidate_entry["edge_idx"],
+                round=round,
+                return_log_prob=True,
+                task_complexity=task_complexity,
+                context_features=context_features,
+            )
+            if edge_kind == "spatial":
+                predecessor.spatial_message_types[receiver.id] = message_type
+            else:
+                predecessor.temporal_message_types[receiver.id] = message_type
+            self._record_message_action(edge_kind, message_type)
+            log_probs.append(message_type_log_prob)
+
+        return torch.sum(torch.stack(log_probs))
 
     def connect_decision_node(self):
         for node_id in self.nodes.keys():
@@ -300,7 +752,7 @@ class Graph(ABC):
 
 
 
-    def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
+    def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None, task_complexity: float = 0.0,): # temperature must >= 1.0
         self.clear_spatial_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial or self.optimized_spatial_message_type)]
         
@@ -313,7 +765,7 @@ class Graph(ABC):
             elif edge_mask == 1.0 and self.optimized_spatial==False:
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'spatial')
-                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx)
+                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx, task_complexity=task_complexity)
                     # print(potential_connection)
                 continue
             if not self.check_cycle(in_node, {out_node}):
@@ -324,7 +776,7 @@ class Graph(ABC):
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
                     log_probs.append(torch.log(edge_prob))
-                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, return_log_prob=True)
+                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, return_log_prob=True, task_complexity=task_complexity)
                     out_node.spatial_message_types[in_node.id] = message_type
                     log_probs.append(message_type_log_prob)
                 else:
@@ -334,7 +786,7 @@ class Graph(ABC):
     
     
     
-    def construct_spatial_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
+    def construct_spatial_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None, task_complexity: float = 0.0,): # temperature must >= 1.0
         self.clear_spatial_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial or self.optimized_spatial_message_type)]
         
@@ -351,7 +803,7 @@ class Graph(ABC):
                 #     continue
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'spatial')
-                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx, round=round)
+                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx, round=round, task_complexity=task_complexity)
                     # print(potential_connection)
                 continue
             if not self.check_cycle(in_node, {out_node}):
@@ -361,7 +813,7 @@ class Graph(ABC):
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
                     log_probs.append(torch.log(edge_prob))
-                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, round=round, return_log_prob=True)
+                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, round=round, return_log_prob=True, task_complexity=task_complexity)
                     out_node.spatial_message_types[in_node.id] = message_type
                     log_probs.append(message_type_log_prob)
                 else:
@@ -369,7 +821,7 @@ class Graph(ABC):
                     
         return torch.sum(torch.stack(log_probs))
     
-    def construct_temporal_connection(self, round:int = 0, temperature: float = 1.0, threshold: float = None,):  # temperature must >= 1.0
+    def construct_temporal_connection(self, round:int = 0, temperature: float = 1.0, threshold: float = None, task_complexity: float = 0.0,):  # temperature must >= 1.0
         self.clear_temporal_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal or self.optimized_temporal_message_type)]
         if round == 0:
@@ -382,7 +834,7 @@ class Graph(ABC):
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
-                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx)
+                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx, task_complexity=task_complexity)
                     # print(potential_connection)
                 continue
             
@@ -392,7 +844,7 @@ class Graph(ABC):
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
                 log_probs.append(torch.log(edge_prob))
-                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, return_log_prob=True)
+                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, return_log_prob=True, task_complexity=task_complexity)
                 out_node.temporal_message_types[in_node.id] = message_type
                 log_probs.append(message_type_log_prob)
             else:
@@ -401,7 +853,7 @@ class Graph(ABC):
         return torch.sum(torch.stack(log_probs))
 
 
-    def construct_temporal_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None,):  # temperature must >= 1.0
+    def construct_temporal_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None, task_complexity: float = 0.0,):  # temperature must >= 1.0
         self.clear_temporal_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal or self.optimized_temporal_message_type)]
         if round == 0:
@@ -414,7 +866,7 @@ class Graph(ABC):
             elif edge_mask == 1.0 and self.optimized_temporal==False:
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
-                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx, round=round)
+                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx, round=round, task_complexity=task_complexity)
                 continue
             
             edge_prob = torch.sigmoid(edge_logit / temperature)
@@ -423,7 +875,7 @@ class Graph(ABC):
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
                 log_probs.append(torch.log(edge_prob))
-                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, round=round, return_log_prob=True)
+                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, round=round, return_log_prob=True, task_complexity=task_complexity)
                 out_node.temporal_message_types[in_node.id] = message_type
                 log_probs.append(message_type_log_prob)
             else:
@@ -437,16 +889,24 @@ class Graph(ABC):
                   max_tries: int = 3, 
                   max_time: int = 600,) -> List[Any]:
         # inputs:{'task':"xxx"}
+        self.reset_message_action_counts()
         log_probs = 0
+        task_complexity = self._task_complexity(inputs)
         for round in range(num_rounds):
-            log_probs += self.construct_spatial_connection()
-            log_probs += self.construct_temporal_connection(round)
+            log_probs += self.construct_spatial_connection(task_complexity=task_complexity)
+            log_probs += self.construct_temporal_connection(round, task_complexity=task_complexity)
             
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
 
             while zero_in_degree_queue:
                 current_node_id = zero_in_degree_queue.pop(0)
+                log_probs += self.apply_contextual_message_selection(
+                    self.nodes[current_node_id],
+                    inputs,
+                    round,
+                    task_complexity,
+                )
                 tries = 0
                 while tries < max_tries:
                     try:
@@ -469,6 +929,7 @@ class Graph(ABC):
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
             final_answers.append("No answer of the decision node")
+        self._print_message_action_counts()
             
         return final_answers, log_probs
 
@@ -479,17 +940,19 @@ class Graph(ABC):
                   skip: bool=False,
                   case: bool=False) -> List[Any]:
         # inputs:{'task':"xxx"}
+        self.reset_message_action_counts()
         log_probs = 0
         log_probs_skip = 0
         all_answers = []
+        task_complexity = self._task_complexity(input)
         for round in range(num_rounds):
             round_answers = {}
             if not self.diff:
-                log_probs += self.construct_spatial_connection()
-                log_probs += self.construct_temporal_connection(round)
+                log_probs += self.construct_spatial_connection(task_complexity=task_complexity)
+                log_probs += self.construct_temporal_connection(round, task_complexity=task_complexity)
             else:
-                log_probs += self.construct_spatial_connection_diff(round)
-                log_probs += self.construct_temporal_connection_diff(round)
+                log_probs += self.construct_spatial_connection_diff(round, task_complexity=task_complexity)
+                log_probs += self.construct_temporal_connection_diff(round, task_complexity=task_complexity)
             
             # print(self.num_edges)
 
@@ -571,6 +1034,12 @@ class Graph(ABC):
                 # if round==1 and i<2:
                 #     continue
                 current_node_id = zero_in_degree_queue.pop(0)
+                log_probs += self.apply_contextual_message_selection(
+                    self.nodes[current_node_id],
+                    input,
+                    round,
+                    task_complexity,
+                )
                 tries = 0
                 while tries < max_tries:
                     try:
@@ -610,6 +1079,7 @@ class Graph(ABC):
             final_answers = list(self.nodes.values())[0].outputs
         if len(final_answers) == 0:
             final_answers.append("No answer of the decision node")
+        self._print_message_action_counts()
         # print(log_probs)
         # if skip:
         #     return final_answers, selected_index

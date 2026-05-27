@@ -124,9 +124,27 @@ class Node(ABC):
         if len(non_empty_indices) == 0:
             return "", ""
 
-        answer_idx = non_empty_indices[0]
+        answer_idx = non_empty_indices[-1]
         answer = lines[answer_idx].strip()
-        reasoning = "\n".join(lines[answer_idx + 1:]).strip()
+        answer_patterns = (
+            r"####\s*(.+)$",
+            r"(?:the\s+answer\s+is|answer\s*[:=]|final\s+answer\s*[:=])\s*(.+)$",
+            r"^\s*([A-J])[\).]?\s*$",
+        )
+        for idx in reversed(non_empty_indices):
+            candidate = lines[idx].strip()
+            for pattern in answer_patterns:
+                answer_match = re.search(pattern, candidate, flags=re.IGNORECASE)
+                if answer_match is not None:
+                    answer_idx = idx
+                    answer = answer_match.group(1).strip()
+                    break
+            else:
+                continue
+            break
+        reasoning = "\n".join(
+            line for idx, line in enumerate(lines) if idx != answer_idx
+        ).strip()
         return answer, reasoning
 
     def _split_humaneval_answer_and_reasoning(self, predecessor_output: str) -> tuple[str, str]:
@@ -184,6 +202,8 @@ class Node(ABC):
                 else:
                     predecessor_output = predecessor_outputs
                 message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="spatial")
+                if selected_output is None:
+                    continue
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": selected_output,
@@ -204,6 +224,8 @@ class Node(ABC):
                 else:
                     predecessor_output = predecessor_outputs
                 message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="temporal")
+                if selected_output is None:
+                    continue
                 temporal_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": selected_output,

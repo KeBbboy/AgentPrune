@@ -65,6 +65,12 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
+    parser.add_argument('--message_selection_policy', type=str, default='none', choices=['none', 'binary', 'aims', 'aims_plus'])
+    parser.add_argument('--message_selection_temperature', type=float, default=1.0)
+    parser.add_argument('--message_cost_weight', type=float, default=0.02)
+    parser.add_argument('--message_entropy_weight', type=float, default=0.005)
+    parser.add_argument('--message_diversity_weight', type=float, default=0.005)
+    parser.add_argument('--message_context_weight_decay', type=float, default=0.001)
     
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
@@ -96,7 +102,10 @@ async def main():
                   rounds=args.num_rounds,
                   diff=args.diff,
                   dec=args.dec,
+                  message_selection_policy=args.message_selection_policy,
+                  message_selection_temperature=args.message_selection_temperature,
                   **kwargs)
+    graph.set_message_type_learning_mode(args.message_selection_policy != 'none')
 
     if args.dec:
         graph.optimized_spatial=False
@@ -224,10 +233,7 @@ async def main():
             print(f"CompletionTokens {CompletionTokens.instance().value}")
         graph.update_masks_dec()
     
-    if not graph.diff:
-        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
-    else:
-        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=args.lr)  
+    optimizer = torch.optim.Adam(graph.second_stage_optimizer_parameters(), lr=args.lr)
 
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
@@ -249,8 +255,7 @@ async def main():
             
             for i_record, record in enumerate(current_batch):
                 realized_graph = copy.deepcopy(graph)
-                realized_graph.spatial_logits = graph.spatial_logits
-                realized_graph.temporal_logits = graph.temporal_logits
+                realized_graph.share_second_stage_parameters(graph)
             
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -275,6 +280,12 @@ async def main():
                     frob_loss_s = torch.mean(torch.stack([frobenius_norm(spatial_matrix_fixed, matrix) for matrix in spatial_matrix_train]))
                     frob_loss_t = torch.mean(torch.stack([frobenius_norm(temporal_matrix_fixed, matrix) for matrix in temporal_matrix_train]))
                 add_loss = loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
+                add_loss = add_loss + realized_graph.message_selection_regularization(
+                    cost_weight=args.message_cost_weight,
+                    entropy_weight=args.message_entropy_weight,
+                    diversity_weight=args.message_diversity_weight,
+                    context_weight_decay=args.message_context_weight_decay,
+                )
                 
                 task = record["prompt"]
                 test = record["test"]
@@ -374,8 +385,7 @@ async def main():
         
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
+            realized_graph.share_second_stage_parameters(graph)
         
             if not graph.diff:
                 spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))

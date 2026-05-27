@@ -31,6 +31,8 @@ def parse_args():
                         help="noise level")
     parser.add_argument('--batch_size', type=int, default=4,
                         help="batch size")
+    parser.add_argument('--max_resample_attempts', type=int, default=10,
+                        help="Maximum training resampling attempts for one record when the sampled graph gives a wrong answer.")
     parser.add_argument('--agent_names', nargs='+', type=str, default=['AnalyzeAgent'],
                         help='Specify agent names as a list of strings')
     parser.add_argument('--agent_nums', nargs='+', type=int, default=[5],
@@ -54,7 +56,28 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
+    parser.add_argument('--aims_plus', action='store_true',
+                        help="Enable the default AIMS+ message granularity method.")
+    parser.add_argument('--message_selection_policy', type=str, default='none',
+                        choices=['none', 'binary', 'aims', 'aims_plus'],
+                        help="Message granularity policy. 'aims_plus' adds contextual content-aware gating.")
+    parser.add_argument('--message_selection_temperature', type=float, default=1.0,
+                        help="Temperature for stochastic message granularity selection.")
+    parser.add_argument('--message_cost_weight', type=float, default=0.02,
+                        help="Expected token-cost penalty for AIMS message selection.")
+    parser.add_argument('--message_entropy_weight', type=float, default=0.005,
+                        help="Entropy bonus weight for AIMS exploration.")
+    parser.add_argument('--message_diversity_weight', type=float, default=0.005,
+                        help="Receiver-side granularity diversity bonus for AIMS.")
+    parser.add_argument('--message_context_weight_decay', type=float, default=0.001,
+                        help="Weight decay for the AIMS+ contextual action MLP.")
+    parser.add_argument('--message_reason_penalty_weight', type=float, default=0.01,
+                        help="Per-sample reward penalty for each AIMS+ reason action.")
+    parser.add_argument('--message_full_penalty_weight', type=float, default=0.03,
+                        help="Per-sample reward penalty for each AIMS+ full action.")
     args = parser.parse_args()
+    if args.aims_plus:
+        args.message_selection_policy = 'aims_plus'
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
@@ -81,14 +104,17 @@ async def main():
                   rounds=args.num_rounds,
                   diff=args.diff,
                   dec=args.dec,
+                  message_selection_policy=args.message_selection_policy,
+                  message_selection_temperature=args.message_selection_temperature,
                   **kwargs)
+    graph.set_message_type_learning_mode(args.message_selection_policy != 'none')
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')
     
     if args.optimized_spatial or args.optimized_temporal:
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
-                    lr=args.lr,batch_size=20,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
+                    lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
         
     print("Final spatial logits: ",graph.spatial_logits)
     print("Final temporal logits: ",graph.temporal_logits)
