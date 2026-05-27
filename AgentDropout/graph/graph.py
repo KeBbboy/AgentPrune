@@ -166,6 +166,7 @@ class Graph(ABC):
         )
         self.message_action_counts = self._empty_message_action_counts()
         self.message_action_prob_history = []
+        self.message_action_receiver_logit_history = []
         self.message_embedding_dim = 384
         self.message_gat_hidden_dim = 128
         self.message_gat_heads = 4
@@ -185,6 +186,10 @@ class Graph(ABC):
                 dtype=torch.float32,
             ),
             requires_grad=False,
+        )
+        self.message_action_log_prob = torch.tensor(
+            0.0,
+            device=self.message_complexity_action_bias.device,
         )
         # self.dec=False
         self.dec_1=False
@@ -253,7 +258,7 @@ class Graph(ABC):
 
     def _message_actions_for_policy(self, policy: str):
         if policy == "aims_plus":
-            return ("answer", "reason", "full")
+            return ("answer", "reason")
         if policy == "aims":
             return ("full", "answer", "reason")
         return ("answer", "reason")
@@ -275,6 +280,11 @@ class Graph(ABC):
     def reset_message_action_counts(self):
         self.message_action_counts = self._empty_message_action_counts()
         self.message_action_prob_history = []
+        self.message_action_receiver_logit_history = []
+        self.message_action_log_prob = torch.tensor(
+            0.0,
+            device=self.message_complexity_action_bias.device,
+        )
 
     def _record_message_action(self, edge_kind: str, action: str):
         if action not in self.message_actions:
@@ -285,6 +295,10 @@ class Graph(ABC):
 
     def _record_message_action_probs(self, action_probs: torch.Tensor):
         self.message_action_prob_history.append(action_probs)
+
+    def _record_receiver_message_action_logits(self, action_logits: torch.Tensor):
+        if action_logits.size(0) > 1:
+            self.message_action_receiver_logit_history.append(action_logits)
 
     def message_action_count_summary(self) -> str:
         def format_counts(scope: str) -> str:
@@ -306,9 +320,9 @@ class Graph(ABC):
 
     def _message_complexity_bias(self, action: str) -> float:
         return {
-            "answer": -0.40,
-            "reason": 0.10,
-            "full": 0.45,
+            "answer": 0.0,
+            "reason": 0.0,
+            "full": 0.0,
         }[action]
 
     def _role_prior_for_message_action(self, sender: Node, receiver: Node, action: str) -> float:
@@ -563,9 +577,8 @@ class Graph(ABC):
             loss = loss - entropy_weight * entropy
         if balance_weight > 0.0:
             target_values = {
-                "answer": 0.15,
-                "reason": 0.30,
-                "full": 0.55,
+                "answer": 0.75,
+                "reason": 0.25,
             }
             target_distribution = torch.tensor(
                 [
@@ -579,6 +592,26 @@ class Graph(ABC):
             average_probs = action_probs.mean(dim=0)
             balance_loss = torch.sum((average_probs - target_distribution) ** 2)
             loss = loss + balance_weight * balance_loss
+            receiver_specialization_terms = []
+            action_indices = {
+                action: idx
+                for idx, action in enumerate(self.message_actions)
+            }
+            answer_idx = action_indices.get("answer")
+            reason_idx = action_indices.get("reason")
+            for receiver_logits in self.message_action_receiver_logit_history:
+                if answer_idx is None or receiver_logits.size(0) < 2:
+                    continue
+                if reason_idx is not None:
+                    best_reason_margin = torch.max(
+                        receiver_logits[:, reason_idx] - receiver_logits[:, answer_idx]
+                    )
+                    receiver_specialization_terms.append(
+                        F.relu(0.05 - best_reason_margin).pow(2)
+                    )
+            if receiver_specialization_terms:
+                specialization_loss = torch.mean(torch.stack(receiver_specialization_terms))
+                loss = loss + balance_weight * specialization_loss
         return loss
 
     def second_stage_optimizer_parameters(self):
@@ -833,9 +866,9 @@ class Graph(ABC):
                 requires_grad=self.optimized_spatial_message_type or self.optimized_temporal_message_type,
             )
         ]
+        receiver_action_logits = []
         for candidate_idx, candidate_entry in enumerate(candidate_entries):
             edge_kind = candidate_entry["edge_kind"]
-            predecessor = candidate_entry["predecessor"]
             action_logits = self._message_type_logits_for(
                 edge_kind,
                 round,
@@ -843,21 +876,55 @@ class Graph(ABC):
             action_logits = action_logits + gat_action_logits[candidate_idx].to(action_logits.device)
             action_logits = action_logits + self.message_complexity_action_bias.to(action_logits.device) * float(task_complexity)
             action_logits = action_logits / self.message_selection_temperature
+            receiver_action_logits.append(action_logits)
             self._record_message_action_probs(torch.softmax(action_logits, dim=-1))
-            message_type, message_type_log_prob = self.sample_message_type(
-                edge_kind=edge_kind,
-                edge_idx=candidate_entry["edge_idx"],
-                round=round,
-                return_log_prob=True,
-                task_complexity=task_complexity,
-                contextual_action_logits=gat_action_logits[candidate_idx],
+
+        action_indices = {
+            action: idx
+            for idx, action in enumerate(self.message_actions)
+        }
+        answer_idx = action_indices.get("answer")
+        reason_idx = action_indices.get("reason")
+        if answer_idx is None or reason_idx is None:
+            return torch.sum(torch.stack(log_probs))
+
+        if len(receiver_action_logits) == 1:
+            reason_candidate_idx = 0
+        else:
+            reason_rank_scores = torch.stack([
+                action_logits[reason_idx] - action_logits[answer_idx]
+                for action_logits in receiver_action_logits
+            ])
+            reason_candidate_idx = int(torch.argmax(reason_rank_scores).item())
+
+        for candidate_idx, candidate_entry in enumerate(candidate_entries):
+            edge_kind = candidate_entry["edge_kind"]
+            predecessor = candidate_entry["predecessor"]
+            action_logits = receiver_action_logits[candidate_idx]
+            if candidate_idx == reason_candidate_idx:
+                message_type = "reason"
+                action_idx = reason_idx
+            else:
+                message_type = "answer"
+                action_idx = answer_idx
+            optimized = (
+                self.optimized_spatial_message_type
+                if edge_kind == "spatial"
+                else self.optimized_temporal_message_type
             )
+            if optimized:
+                message_type_log_prob = F.log_softmax(action_logits, dim=-1)[action_idx]
+            else:
+                message_type_log_prob = torch.tensor(0.0, device=action_logits.device)
             if edge_kind == "spatial":
                 predecessor.spatial_message_types[receiver.id] = message_type
             else:
                 predecessor.temporal_message_types[receiver.id] = message_type
             self._record_message_action(edge_kind, message_type)
             log_probs.append(message_type_log_prob)
+
+        if receiver_action_logits:
+            self._record_receiver_message_action_logits(torch.stack(receiver_action_logits))
 
         return torch.sum(torch.stack(log_probs))
 
@@ -1016,12 +1083,13 @@ class Graph(ABC):
 
             while zero_in_degree_queue:
                 current_node_id = zero_in_degree_queue.pop(0)
-                log_probs += self.apply_contextual_message_selection(
+                message_action_log_prob = self.apply_contextual_message_selection(
                     self.nodes[current_node_id],
                     inputs,
                     round,
                     task_complexity,
                 )
+                self.message_action_log_prob = self.message_action_log_prob + message_action_log_prob
                 tries = 0
                 while tries < max_tries:
                     try:
@@ -1149,12 +1217,13 @@ class Graph(ABC):
                 # if round==1 and i<2:
                 #     continue
                 current_node_id = zero_in_degree_queue.pop(0)
-                log_probs += self.apply_contextual_message_selection(
+                message_action_log_prob = self.apply_contextual_message_selection(
                     self.nodes[current_node_id],
                     input,
                     round,
                     task_complexity,
                 )
+                self.message_action_log_prob = self.message_action_log_prob + message_action_log_prob
                 tries = 0
                 while tries < max_tries:
                     try:

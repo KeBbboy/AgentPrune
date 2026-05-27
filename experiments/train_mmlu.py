@@ -61,10 +61,7 @@ def _message_action_penalty(graph: Graph, args) -> float:
     if getattr(args, "message_selection_policy", "none") != "aims_plus":
         return 0.0
     counts = getattr(graph, "message_action_counts", {}).get("total", {})
-    penalty = (
-        float(getattr(args, "message_reason_penalty_weight", 0.0)) * counts.get("reason", 0)
-        + float(getattr(args, "message_full_penalty_weight", 0.0)) * counts.get("full", 0)
-    )
+    penalty = float(getattr(args, "message_reason_penalty_weight", 0.0)) * counts.get("reason", 0)
     collapse_weight = float(getattr(args, "message_action_collapse_penalty_weight", 0.0))
     collapse_threshold = float(getattr(args, "message_action_collapse_threshold", 1.0))
     action_total = sum(counts.values())
@@ -79,7 +76,7 @@ def _max_resample_attempts(args) -> int:
     return retry_count + 1
 
 
-def _training_regularization_loss(graph: Graph, args, kwargs) -> torch.Tensor:
+def _topology_regularization_loss(graph: Graph, args, kwargs) -> torch.Tensor:
     agent_num = sum(args.agent_nums)
     if not graph.diff:
         spatial_matrix_train = graph.spatial_logits.reshape((agent_num, agent_num))
@@ -128,8 +125,7 @@ def _training_regularization_loss(graph: Graph, args, kwargs) -> torch.Tensor:
             for matrix in temporal_matrix_train
         ]))
 
-    add_loss = loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
-    return add_loss + _message_selection_regularization(graph, args)
+    return loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
 
 
 async def _run_record_with_resampling(
@@ -317,7 +313,7 @@ async def train(graph:Graph,
         message_selection_enabled = _message_selection_enabled_for_iteration(args, i_iter)
         graph.set_message_type_learning_mode(message_selection_enabled)
         if _message_selection_enabled(args) and not message_selection_enabled:
-            print("AIMS+ warmup: using full messages and training topology only")
+            print("AIMS+ warmup: using complete messages and training topology only")
         start_ts = time.time()
         correct_answers = []
         answer_log_probs = []
@@ -337,6 +333,7 @@ async def train(graph:Graph,
             
         raw_attempt_batches = await asyncio.gather(*answer_log_probs)
         loss_list: List[torch.Tensor] = []
+        message_loss_list: List[torch.Tensor] = []
         utilities: List[float] = []
         answers: List[str] = []
         raw_answers = []
@@ -352,28 +349,43 @@ async def train(graph:Graph,
                 utilities.append(utility)
                 answers.append(answer)
                 raw_answers.append(raw_answer)
-                policy_entries.append({
-                    "log_prob": log_prob,
-                    "effective_utility": effective_utility,
-                    "regularization": _message_contextual_regularization(realized_graph, args),
-                })
+                loss_list.append(-log_prob * utility)
+                if message_selection_enabled:
+                    message_log_prob = getattr(
+                        realized_graph,
+                        "message_action_log_prob",
+                        torch.tensor(0.0, device=log_prob.device),
+                    )
+                    policy_entries.append({
+                        "log_prob": message_log_prob,
+                        "effective_utility": effective_utility,
+                        "regularization": _message_contextual_regularization(realized_graph, args),
+                    })
                 if attempt_idx > 1:
                     print(f"resample attempt:{attempt_idx} answer:{answer} utility:{utility:.4f}")
                 if action_penalty > 0.0:
                     print(f"AIMS+ action penalty:{action_penalty:.4f} effective utility:{effective_utility:.4f}")
 
-        mean_effective_utility = (
-            sum(entry["effective_utility"] for entry in policy_entries)
-            / max(1, len(policy_entries))
-        )
         effective_utilities = []
-        for entry in policy_entries:
-            advantage = entry["effective_utility"] - mean_effective_utility
-            effective_utilities.append(entry["effective_utility"])
-            single_loss = - entry["log_prob"] * advantage
-            loss_list.append(single_loss + entry["regularization"])
-    
-        total_loss = torch.mean(torch.stack(loss_list)) + _training_regularization_loss(graph, args, kwargs)
+        if message_selection_enabled:
+            mean_effective_utility = (
+                sum(entry["effective_utility"] for entry in policy_entries)
+                / max(1, len(policy_entries))
+            )
+            for entry in policy_entries:
+                advantage = entry["effective_utility"] - mean_effective_utility
+                effective_utilities.append(entry["effective_utility"])
+                single_loss = - entry["log_prob"] * advantage
+                message_loss_list.append(single_loss + entry["regularization"])
+
+        topology_loss = torch.mean(torch.stack(loss_list))
+        topology_regularization = _topology_regularization_loss(graph, args, kwargs)
+        message_loss = torch.tensor(0.0, device=topology_loss.device)
+        if message_loss_list:
+            message_loss = torch.mean(torch.stack(message_loss_list))
+            message_loss = message_loss + _message_selection_regularization(graph, args)
+
+        total_loss = topology_loss + topology_regularization + message_loss
         optimizer.zero_grad() 
         total_loss.backward()
         optimizer.step()
@@ -391,6 +403,9 @@ async def train(graph:Graph,
         print("utilities:", utilities)
         print("effective utilities:", effective_utilities)
         print("loss:", total_loss.item()) 
+        print("topology loss:", topology_loss.item())
+        if message_selection_enabled:
+            print("gat loss:", message_loss.item())
         # print("Spatial logits Grad:", graph.spatial_logits.grad)
         # print("Temporal logits Grad:", graph.spatial_logits.grad)
         print("Spatial logits:", graph.spatial_logits)
