@@ -42,18 +42,34 @@ def _message_selection_regularization(graph: Graph, args) -> torch.Tensor:
         context_weight_decay=getattr(args, "message_context_weight_decay", 0.0),
     )
 
+
+def _message_contextual_regularization(graph: Graph, args) -> torch.Tensor:
+    return graph.contextual_message_regularization(
+        entropy_weight=getattr(args, "message_context_entropy_weight", 0.0),
+        balance_weight=getattr(args, "message_balance_weight", 0.0),
+    )
+
+
 def _message_action_penalty(graph: Graph, args) -> float:
     if getattr(args, "message_selection_policy", "none") != "aims_plus":
         return 0.0
     counts = getattr(graph, "message_action_counts", {}).get("total", {})
-    return (
+    penalty = (
         float(getattr(args, "message_reason_penalty_weight", 0.0)) * counts.get("reason", 0)
         + float(getattr(args, "message_full_penalty_weight", 0.0)) * counts.get("full", 0)
     )
+    collapse_weight = float(getattr(args, "message_action_collapse_penalty_weight", 0.0))
+    collapse_threshold = float(getattr(args, "message_action_collapse_threshold", 1.0))
+    action_total = sum(counts.values())
+    if collapse_weight > 0.0 and action_total > 0:
+        max_action_ratio = max(counts.values()) / action_total
+        penalty += collapse_weight * max(0.0, max_action_ratio - collapse_threshold)
+    return penalty
 
 
 def _max_resample_attempts(args) -> int:
-    return max(1, int(getattr(args, "max_resample_attempts", 1)))
+    retry_count = max(0, int(getattr(args, "max_resample_attempts", 0)))
+    return retry_count + 1
 
 
 def _training_regularization_loss(graph: Graph, args, kwargs) -> torch.Tensor:
@@ -138,9 +154,10 @@ async def _run_record_with_resampling(
         if utility > 0.0:
             break
         if attempt_idx + 1 < max_attempts:
+            retry_idx = attempt_idx + 1
             print(
                 "Resampling wrong training sample "
-                f"({attempt_idx + 1}/{max_attempts}) "
+                f"(retry {retry_idx}/{max_attempts - 1}) "
                 f"answer:{answer} correct:{correct_answer}"
             )
 
@@ -313,6 +330,7 @@ async def train(graph:Graph,
         answers: List[str] = []
         raw_answers = []
         attempt_counts = []
+        policy_entries = []
         
         for attempt_results, correct_answer in zip(raw_attempt_batches, correct_answers):
             attempt_counts.append(len(attempt_results))
@@ -323,12 +341,26 @@ async def train(graph:Graph,
                 utilities.append(utility)
                 answers.append(answer)
                 raw_answers.append(raw_answer)
-                single_loss = - log_prob * effective_utility
-                loss_list.append(single_loss)
+                policy_entries.append({
+                    "log_prob": log_prob,
+                    "effective_utility": effective_utility,
+                    "regularization": _message_contextual_regularization(realized_graph, args),
+                })
                 if attempt_idx > 1:
                     print(f"resample attempt:{attempt_idx} answer:{answer} utility:{utility:.4f}")
                 if action_penalty > 0.0:
                     print(f"AIMS+ action penalty:{action_penalty:.4f} effective utility:{effective_utility:.4f}")
+
+        mean_effective_utility = (
+            sum(entry["effective_utility"] for entry in policy_entries)
+            / max(1, len(policy_entries))
+        )
+        effective_utilities = []
+        for entry in policy_entries:
+            advantage = entry["effective_utility"] - mean_effective_utility
+            effective_utilities.append(entry["effective_utility"])
+            single_loss = - entry["log_prob"] * advantage
+            loss_list.append(single_loss + entry["regularization"])
     
         total_loss = torch.mean(torch.stack(loss_list)) + _training_regularization_loss(graph, args, kwargs)
         optimizer.zero_grad() 
@@ -346,6 +378,7 @@ async def train(graph:Graph,
         print("resample attempts:", attempt_counts)
         print(f"Batch time {time.time() - start_ts:.3f}")
         print("utilities:", utilities)
+        print("effective utilities:", effective_utilities)
         print("loss:", total_loss.item()) 
         # print("Spatial logits Grad:", graph.spatial_logits.grad)
         # print("Temporal logits Grad:", graph.spatial_logits.grad)

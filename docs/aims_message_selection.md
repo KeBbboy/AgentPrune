@@ -62,8 +62,9 @@ The contextual policy is:
 
 ```
 z_i = Enc([q, role(sender_i), role(receiver), m_i])
+H = GAT([z_1, ..., z_n])
 p(a_i | e_i, r, q, role(sender_i), role(receiver), m_i) =
-    softmax((theta[e_i, r] + MLP(z_i) + c(q) * beta) / tau)
+    softmax((theta[e_i, r] + Head(H_i) + c(q) * beta) / tau)
 ```
 
 where `m_i` is one generated sender message. Following GDesigner's lightweight
@@ -86,10 +87,12 @@ This gives the method three distinct layers:
 3. A content-aware receiver gate adapts each retained edge's payload after
    seeing the actual message.
 
-The message-level action selector is implemented as a two-layer MLP over that
-per-edge context embedding. The remaining edge logits and task-complexity bias
-serve as priors, while the MLP learns nonlinear interactions among task, role,
-and message content.
+The message-level action selector is implemented as a receiver-local graph
+attention network over the incoming message embeddings. The GAT builds a small
+fully connected message graph for each receiver, adds an embedding-similarity
+bias to the learned attention scores, and outputs one relation-aware action
+logit vector for every retained incoming edge. The remaining edge logits and
+task-complexity bias serve as priors.
 
 Since AgentPrune already handles edge-level pruning, AIMS+ does not include a
 `none` action. Every retained edge transmits exactly one of `answer`, `reason`,
@@ -121,7 +124,7 @@ The cost term rewards concise messages, the entropy term prevents early action
 collapse, the receiver-side diversity term discourages all incoming messages from
 using the same granularity, the sampled-action penalties directly discourage
 overusing `reason` and especially `full`, and the context weight decay keeps the
-action MLP stable.
+GAT selector stable.
 
 ## Usage
 

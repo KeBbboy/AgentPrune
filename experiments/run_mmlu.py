@@ -25,14 +25,14 @@ def parse_args():
                         choices=['DirectAnswer', 'FullConnected', 'Random', 'Chain', 'Debate', 'Layered','Star', 'Mesh',
                                  'FakeFullConnected','FakeRandom','FakeChain','FakeStar','FakeMesh','FakeAGRandom','FakeAGFull'],
                         help="Mode of operation. Default is 'FullConnected'.")
-    parser.add_argument('--lr', type=float, default=0.1,
+    parser.add_argument('--lr', type=float, default=0.01,
                         help="learning rate")
     parser.add_argument('--delta', type=float, default=0.1,
                         help="noise level")
     parser.add_argument('--batch_size', type=int, default=4,
                         help="batch size")
-    parser.add_argument('--max_resample_attempts', type=int, default=10,
-                        help="Maximum training resampling attempts for one record when the sampled graph gives a wrong answer.")
+    parser.add_argument('--max_resample_attempts', type=int, default=0,
+                        help="Maximum extra training resampling retries for one record when the sampled graph gives a wrong answer.")
     parser.add_argument('--agent_names', nargs='+', type=str, default=['AnalyzeAgent'],
                         help='Specify agent names as a list of strings')
     parser.add_argument('--agent_nums', nargs='+', type=int, default=[5],
@@ -70,11 +70,19 @@ def parse_args():
     parser.add_argument('--message_diversity_weight', type=float, default=0.005,
                         help="Receiver-side granularity diversity bonus for AIMS.")
     parser.add_argument('--message_context_weight_decay', type=float, default=0.001,
-                        help="Weight decay for the AIMS+ contextual action MLP.")
+                        help="Weight decay for the AIMS+ contextual GAT selector.")
+    parser.add_argument('--message_context_entropy_weight', type=float, default=0.05,
+                        help="Entropy bonus weight for the AIMS+ contextual action probabilities.")
+    parser.add_argument('--message_balance_weight', type=float, default=0.10,
+                        help="Batch-level balance penalty weight for AIMS+ contextual action probabilities.")
     parser.add_argument('--message_reason_penalty_weight', type=float, default=0.01,
                         help="Per-sample reward penalty for each AIMS+ reason action.")
-    parser.add_argument('--message_full_penalty_weight', type=float, default=0.03,
+    parser.add_argument('--message_full_penalty_weight', type=float, default=0.015,
                         help="Per-sample reward penalty for each AIMS+ full action.")
+    parser.add_argument('--message_action_collapse_penalty_weight', type=float, default=0.20,
+                        help="Reward penalty weight when sampled AIMS+ actions collapse to one type.")
+    parser.add_argument('--message_action_collapse_threshold', type=float, default=0.70,
+                        help="Maximum allowed sampled action ratio before applying collapse penalty.")
     args = parser.parse_args()
     if args.aims_plus:
         args.message_selection_policy = 'aims_plus'

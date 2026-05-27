@@ -3,6 +3,7 @@ from typing import Any, List, Optional, Dict
 from abc import ABC
 import numpy as np
 import torch
+import torch.nn.functional as F
 import asyncio
 import re
 import hashlib
@@ -17,6 +18,73 @@ import random
 MESSAGE_SELECTION_POLICIES = {"none", "binary", "aims", "aims_plus"}
 MESSAGE_EMBEDDING_MODEL = None
 MESSAGE_EMBEDDING_MODEL_FAILED = False
+
+
+class MessageGraphAttentionSelector(torch.nn.Module):
+    def __init__(
+            self,
+            input_dim: int,
+            hidden_dim: int,
+            output_dim: int,
+            num_heads: int = 4,
+            ):
+        super().__init__()
+        if hidden_dim % num_heads != 0:
+            raise ValueError("hidden_dim must be divisible by num_heads")
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads
+
+        self.input_projection = torch.nn.Linear(input_dim, hidden_dim)
+        self.gat_projection = torch.nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.attn_src = torch.nn.Parameter(torch.empty(num_heads, self.head_dim))
+        self.attn_dst = torch.nn.Parameter(torch.empty(num_heads, self.head_dim))
+        self.similarity_scale = torch.nn.Parameter(torch.tensor(0.1, dtype=torch.float32))
+        self.output_projection = torch.nn.Linear(hidden_dim, hidden_dim)
+        self.layer_norm = torch.nn.LayerNorm(hidden_dim)
+        self.action_head = torch.nn.Sequential(
+            torch.nn.Linear(hidden_dim * 2, hidden_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_dim, output_dim),
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for module in self.modules():
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight, gain=0.1)
+                if module.bias is not None:
+                    torch.nn.init.zeros_(module.bias)
+        torch.nn.init.xavier_uniform_(self.attn_src, gain=0.1)
+        torch.nn.init.xavier_uniform_(self.attn_dst, gain=0.1)
+
+    def forward(self, message_embeddings: torch.Tensor) -> torch.Tensor:
+        if message_embeddings.dim() == 1:
+            message_embeddings = message_embeddings.unsqueeze(0)
+
+        node_features = F.relu(self.input_projection(message_embeddings))
+        projected = self.gat_projection(node_features).view(
+            message_embeddings.size(0),
+            self.num_heads,
+            self.head_dim,
+        )
+
+        src_scores = (projected * self.attn_src).sum(dim=-1)
+        dst_scores = (projected * self.attn_dst).sum(dim=-1)
+        attention_scores = src_scores[:, None, :] + dst_scores[None, :, :]
+
+        normalized_embeddings = F.normalize(message_embeddings, p=2, dim=-1)
+        similarity = normalized_embeddings @ normalized_embeddings.transpose(0, 1)
+        attention_scores = attention_scores + self.similarity_scale * similarity.unsqueeze(-1)
+        attention_scores = F.leaky_relu(attention_scores, negative_slope=0.2)
+
+        attention_weights = torch.softmax(attention_scores, dim=1)
+        aggregated = torch.sum(attention_weights.unsqueeze(-1) * projected.unsqueeze(0), dim=1)
+        aggregated = aggregated.reshape(message_embeddings.size(0), self.hidden_dim)
+        relation_features = self.layer_norm(
+            node_features + F.relu(self.output_projection(aggregated))
+        )
+        return self.action_head(torch.cat([node_features, relation_features], dim=-1))
 
 
 class Graph(ABC):
@@ -97,15 +165,20 @@ class Graph(ABC):
             dtype=torch.float32,
         )
         self.message_action_counts = self._empty_message_action_counts()
+        self.message_action_prob_history = []
         self.message_embedding_dim = 384
-        self.message_mlp_hidden_dim = 64
+        self.message_gat_hidden_dim = 128
+        self.message_gat_heads = 4
         self.message_embedding_model = None
         self.message_embedding_model_failed = False
         self.message_embedding_cache = {}
-        self.message_action_mlp = self._build_two_layer_mlp(
-            self.message_embedding_dim,
-            len(self.message_actions),
+        self.message_action_gat = MessageGraphAttentionSelector(
+            input_dim=self.message_embedding_dim,
+            hidden_dim=self.message_gat_hidden_dim,
+            num_heads=self.message_gat_heads,
+            output_dim=len(self.message_actions),
         )
+        self.message_action_gat.requires_grad_(False)
         self.message_complexity_action_bias = torch.nn.Parameter(
             torch.tensor(
                 [self._message_complexity_bias(action) for action in self.message_actions],
@@ -201,6 +274,7 @@ class Graph(ABC):
 
     def reset_message_action_counts(self):
         self.message_action_counts = self._empty_message_action_counts()
+        self.message_action_prob_history = []
 
     def _record_message_action(self, edge_kind: str, action: str):
         if action not in self.message_actions:
@@ -208,6 +282,9 @@ class Graph(ABC):
         self.message_action_counts["total"][action] += 1
         if edge_kind in self.message_action_counts:
             self.message_action_counts[edge_kind][action] += 1
+
+    def _record_message_action_probs(self, action_probs: torch.Tensor):
+        self.message_action_prob_history.append(action_probs)
 
     def message_action_count_summary(self) -> str:
         def format_counts(scope: str) -> str:
@@ -233,19 +310,6 @@ class Graph(ABC):
             "reason": 0.20,
             "full": 0.35,
         }[action]
-
-    def _build_two_layer_mlp(self, input_dim: int, output_dim: int) -> torch.nn.Sequential:
-        mlp = torch.nn.Sequential(
-            torch.nn.Linear(input_dim, self.message_mlp_hidden_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(self.message_mlp_hidden_dim, output_dim),
-        )
-        for module in mlp:
-            if isinstance(module, torch.nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight, gain=0.1)
-                torch.nn.init.zeros_(module.bias)
-        mlp.requires_grad_(False)
-        return mlp
 
     def _role_prior_for_message_action(self, sender: Node, receiver: Node, action: str) -> float:
         sender_role = (sender.role or "").lower()
@@ -418,7 +482,7 @@ class Graph(ABC):
             round: int = 0,
             return_log_prob: bool = False,
             task_complexity: float = 0.0,
-            context_features: Optional[torch.Tensor] = None,
+            contextual_action_logits: Optional[torch.Tensor] = None,
             ):
         if edge_kind == "spatial":
             enabled = self.enable_spatial_message_type_action
@@ -436,7 +500,7 @@ class Graph(ABC):
             return "full"
 
         active_policy = self._active_message_selection_policy()
-        if active_policy == "aims_plus" and context_features is None:
+        if active_policy == "aims_plus" and contextual_action_logits is None:
             if return_log_prob:
                 return "full", torch.tensor(0.0, device=logits.device)
             return "full"
@@ -444,8 +508,7 @@ class Graph(ABC):
         if active_policy in {"aims", "aims_plus"}:
             action_logits = logits[edge_idx]
             if active_policy == "aims_plus":
-                context_features = context_features.to(action_logits.device)
-                action_logits = action_logits + self.message_action_mlp(context_features)
+                action_logits = action_logits + contextual_action_logits.to(action_logits.device)
             action_logits = action_logits + self.message_complexity_action_bias.to(action_logits.device) * float(task_complexity)
             action_logits = action_logits / self.message_selection_temperature
             if not optimized:
@@ -479,6 +542,45 @@ class Graph(ABC):
             return message_type, log_prob
         return message_type
 
+    def contextual_message_regularization(
+            self,
+            entropy_weight: float = 0.0,
+            balance_weight: float = 0.0,
+            ) -> torch.Tensor:
+        if self._active_message_selection_policy() != "aims_plus":
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+        if not self.message_action_prob_history:
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+        if entropy_weight == 0.0 and balance_weight == 0.0:
+            return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
+
+        action_probs = torch.stack(self.message_action_prob_history)
+        loss = torch.tensor(0.0, device=action_probs.device)
+        if entropy_weight > 0.0:
+            entropy = -(
+                action_probs * torch.log(action_probs.clamp_min(1e-8))
+            ).sum(dim=-1).mean()
+            loss = loss - entropy_weight * entropy
+        if balance_weight > 0.0:
+            target_values = {
+                "answer": 0.30,
+                "reason": 0.40,
+                "full": 0.30,
+            }
+            target_distribution = torch.tensor(
+                [
+                    target_values.get(action, 1.0 / len(self.message_actions))
+                    for action in self.message_actions
+                ],
+                dtype=action_probs.dtype,
+                device=action_probs.device,
+            )
+            target_distribution = target_distribution / target_distribution.sum()
+            average_probs = action_probs.mean(dim=0)
+            balance_loss = torch.sum((average_probs - target_distribution) ** 2)
+            loss = loss + balance_weight * balance_loss
+        return loss
+
     def second_stage_optimizer_parameters(self):
         params = []
         params.extend(self._iter_parameters(self.spatial_logits))
@@ -490,7 +592,7 @@ class Graph(ABC):
         if self._active_message_selection_policy() in {"aims", "aims_plus"}:
             params.extend(self._iter_parameters(self.message_complexity_action_bias))
         if self._active_message_selection_policy() == "aims_plus":
-            params.extend(self._iter_parameters(self.message_action_mlp))
+            params.extend(self._iter_parameters(self.message_action_gat))
         return params
 
     def share_second_stage_parameters(self, source: "Graph"):
@@ -498,7 +600,7 @@ class Graph(ABC):
         self.temporal_logits = source.temporal_logits
         self.spatial_message_type_logits = source.spatial_message_type_logits
         self.temporal_message_type_logits = source.temporal_message_type_logits
-        self.message_action_mlp = source.message_action_mlp
+        self.message_action_gat = source.message_action_gat
         self.message_complexity_action_bias = source.message_complexity_action_bias
 
     def set_message_type_learning_mode(self, enabled: bool):
@@ -515,7 +617,7 @@ class Graph(ABC):
             and self._active_message_selection_policy() in {"aims", "aims_plus"}
             and (self.optimized_spatial or self.optimized_temporal)
         )
-        self.message_action_mlp.requires_grad_(
+        self.message_action_gat.requires_grad_(
             enabled
             and self._active_message_selection_policy() == "aims_plus"
             and (self.optimized_spatial or self.optimized_temporal)
@@ -585,7 +687,7 @@ class Graph(ABC):
             loss = loss - diversity_weight * torch.mean(torch.stack(diversity_terms))
         if self._active_message_selection_policy() == "aims_plus":
             if context_weight_decay > 0.0:
-                loss = loss + context_weight_decay * self._module_l2(self.message_action_mlp)
+                loss = loss + context_weight_decay * self._module_l2(self.message_action_gat)
         return loss
 
     def _module_l2(self, module: torch.nn.Module) -> torch.Tensor:
@@ -718,6 +820,12 @@ class Graph(ABC):
         if not candidate_entries:
             return torch.tensor(0.0, device=self.message_complexity_action_bias.device)
 
+        context_features = torch.stack([
+            candidate_entry["context_features"]
+            for candidate_entry in candidate_entries
+        ])
+        gat_action_logits = self.message_action_gat(context_features)
+
         log_probs = [
             torch.tensor(
                 0.0,
@@ -725,17 +833,24 @@ class Graph(ABC):
                 requires_grad=self.optimized_spatial_message_type or self.optimized_temporal_message_type,
             )
         ]
-        for candidate_entry in candidate_entries:
+        for candidate_idx, candidate_entry in enumerate(candidate_entries):
             edge_kind = candidate_entry["edge_kind"]
             predecessor = candidate_entry["predecessor"]
-            context_features = candidate_entry["context_features"]
+            action_logits = self._message_type_logits_for(
+                edge_kind,
+                round,
+            )[candidate_entry["edge_idx"]]
+            action_logits = action_logits + gat_action_logits[candidate_idx].to(action_logits.device)
+            action_logits = action_logits + self.message_complexity_action_bias.to(action_logits.device) * float(task_complexity)
+            action_logits = action_logits / self.message_selection_temperature
+            self._record_message_action_probs(torch.softmax(action_logits, dim=-1))
             message_type, message_type_log_prob = self.sample_message_type(
                 edge_kind=edge_kind,
                 edge_idx=candidate_entry["edge_idx"],
                 round=round,
                 return_log_prob=True,
                 task_complexity=task_complexity,
-                context_features=context_features,
+                contextual_action_logits=gat_action_logits[candidate_idx],
             )
             if edge_kind == "spatial":
                 predecessor.spatial_message_types[receiver.id] = message_type

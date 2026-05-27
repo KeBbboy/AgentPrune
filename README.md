@@ -93,7 +93,8 @@ chooses among `full`, `answer`, and `reason`; AIMS+ adds a content-aware
 receiver-contextual per-edge policy over `answer`, `reason`, and `full`. For
 each receiver, AIMS+ selects one message action for every retained incoming edge
 from a 384-dimensional MiniLM-style embedding of `[task, sender role, receiver
-role, message]`. The contextual action selector is a two-layer MLP and no
+role, message]`. The contextual action selector is now a lightweight
+receiver-local graph attention network over the incoming message set and no
 longer applies a hard receiver-level budget constraint.
 
 ```bash
