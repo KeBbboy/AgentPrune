@@ -8,6 +8,7 @@ import argparse
 import random
 
 from AgentDropout.graph.graph import Graph
+from AgentDropout.context import configure_selective_context, selective_context_disabled
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
 from experiments.train_mmlu import train
@@ -54,6 +55,8 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
+    parser.add_argument('--selective_context', action='store_true',
+                        help="Enable Selective Context compression during evaluation/inference.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -64,6 +67,8 @@ def parse_args():
 
 async def main():
     args = parse_args()
+    if args.selective_context:
+        configure_selective_context(enabled=True)
     
     mode = args.mode
     decision_method = args.decision_method
@@ -87,8 +92,9 @@ async def main():
     dataset_val = MMLUDataset('val')
     
     if args.optimized_spatial or args.optimized_temporal:
-        await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
-                    lr=args.lr,batch_size=20,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
+        with selective_context_disabled():
+            await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
+                        lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
         
     print("Final spatial logits: ",graph.spatial_logits)
     print("Final temporal logits: ",graph.temporal_logits)

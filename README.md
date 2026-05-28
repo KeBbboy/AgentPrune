@@ -73,6 +73,22 @@ python experiments/run_mmlu_pro.py --agent_nums 6 --mode FakeAGFull --batch_size
 python experiments/run_mmlu_pro.py --agent_nums 1 --mode DirectAnswer --decision_method FinalMajorVote --agent_names AdverarialAgent --batch_size 4
 ```
 
+### ✂️ Selective Context Compression
+
+This branch adds an optional Selective Context compressor for inter-agent messages. When enabled, each node keeps the original task intact, preserves the first line of each predecessor agent output as the answer line, and compresses the remaining output before adding it to the downstream prompt. The scorer follows the paper's self-information idea: a small causal LM estimates token surprisal, and low-information phrase/sentence/token units are removed according to the configured ratio.
+
+When `--optimized_spatial` or `--optimized_temporal` triggers AgentPrune training, Selective Context is disabled during training and re-enabled for evaluation/inference.
+
+All regular spatial and temporal communication edges are compressed when Selective Context is enabled, while messages entering `FinalMajorVote` are kept uncompressed.
+
+```bash
+SELECTIVE_CONTEXT_REDUCE_RATIO=0.5 \
+SELECTIVE_CONTEXT_GRANULARITY=phrase \
+python experiments/run_mmlu.py --agent_nums 5 --mode FullConnected --batch_size 4 --selective_context
+```
+
+Useful knobs are `SELECTIVE_CONTEXT_MIN_CHARS`, `SELECTIVE_CONTEXT_MIN_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_LINE`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_LAST_UNITS`, `SELECTIVE_CONTEXT_MAX_LENGTH`, `SELECTIVE_CONTEXT_DEVICE`, and `SELECTIVE_CONTEXT_LOCAL_FILES_ONLY`.
+
 ### 🔗 Integrate into other multi-agent systems frameworks
 
 We demonstrate the integration of AgentPrune with the widely-used `AutoGen` and `GPTSwarm` frameworks. Although the integration is not based on their original codebase, the underlying logic remains consistent with the frameworks' core principles. Specifically, the integration with `GPTSwarm` aligns with its edge-optimized mode, while the integration with `AutoGen` corresponds to its RoundRobinGroupChat mode.

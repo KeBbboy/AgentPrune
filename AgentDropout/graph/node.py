@@ -3,7 +3,8 @@ from typing import List, Any, Optional,Dict
 from abc import ABC, abstractmethod
 import warnings
 import asyncio
-import re
+
+from AgentDropout.context import get_selective_context_compressor
 
 
 class Node(ABC):
@@ -41,6 +42,8 @@ class Node(ABC):
             An internal medthod to process the raw_input, the spatial info and temporal info to get the final inputs.
     """
 
+    UNCOMPRESSED_INCOMING_AGENT_NAMES = {"FinalMajorVote"}
+
     def __init__(self, 
                  id: Optional[str],
                  agent_name:str="",
@@ -62,8 +65,6 @@ class Node(ABC):
         self.outputs: List[Any] = []
         self.raw_inputs: List[Any] = []
         self.role = ""
-        self.spatial_message_types: Dict[str, str] = {}
-        self.temporal_message_types: Dict[str, str] = {}
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}        
 
     @property
@@ -113,63 +114,13 @@ class Node(ABC):
         self.last_memory['outputs'] = self.outputs
         self.last_memory['raw_inputs'] = self.raw_inputs
 
-    def _split_answer_and_reasoning(self, predecessor_output: str) -> tuple[str, str]:
-        if not isinstance(predecessor_output, str):
-            predecessor_output = str(predecessor_output)
-        if self.domain == "humaneval":
-            return self._split_humaneval_answer_and_reasoning(predecessor_output)
+    def _resolve_message_payload(self, output: Any) -> Any:
+        if not self._should_compress_incoming_payloads():
+            return output
+        return get_selective_context_compressor().compress_payload(output)
 
-        lines = predecessor_output.splitlines()
-        non_empty_indices = [idx for idx, line in enumerate(lines) if line.strip()]
-        if len(non_empty_indices) == 0:
-            return "", ""
-
-        answer_idx = non_empty_indices[0]
-        answer = lines[answer_idx].strip()
-        reasoning = "\n".join(lines[answer_idx + 1:]).strip()
-        return answer, reasoning
-
-    def _split_humaneval_answer_and_reasoning(self, predecessor_output: str) -> tuple[str, str]:
-        if not isinstance(predecessor_output, str):
-            predecessor_output = str(predecessor_output)
-        answer_match = re.search(
-            r"<answer>\s*(.*?)\s*</answer>",
-            predecessor_output,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        if answer_match is not None:
-            answer = answer_match.group(1).strip()
-            reasoning = (
-                predecessor_output[:answer_match.start()] + "\n" + predecessor_output[answer_match.end():]
-            ).strip()
-            return answer, reasoning
-        return predecessor_output.strip(), ""
-
-    def _extract_answer_content(self, predecessor_output: str) -> str:
-        answer, _ = self._split_answer_and_reasoning(predecessor_output)
-        return answer
-
-    def _extract_reasoning_content(self, predecessor_output: str) -> str:
-        _, reasoning = self._split_answer_and_reasoning(predecessor_output)
-        return reasoning
-
-    def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
-        message_type = "full"
-        selected_output = output
-        if source == "spatial":
-            message_type = predecessor.spatial_message_types.get(self.id, "full")
-        elif source == "temporal":
-            message_type = predecessor.temporal_message_types.get(self.id, "full")
-
-        if isinstance(output, str):
-            if message_type == "answer":
-                answer_payload = self._extract_answer_content(output)
-                selected_output = answer_payload if answer_payload else output.strip()
-            elif message_type == "reason":
-                reasoning_payload = self._extract_reasoning_content(output)
-                selected_output = reasoning_payload if reasoning_payload else output.strip()
-
-        return message_type, selected_output
+    def _should_compress_incoming_payloads(self) -> bool:
+        return self.agent_name not in self.UNCOMPRESSED_INCOMING_AGENT_NAMES
 
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
@@ -183,11 +134,10 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="spatial")
+                selected_output = self._resolve_message_payload(predecessor_output)
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": selected_output,
-                    "message_type": message_type,
                 }
 
         return spatial_info
@@ -203,11 +153,10 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="temporal")
+                selected_output = self._resolve_message_payload(predecessor_output)
                 temporal_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": selected_output,
-                    "message_type": message_type,
                 }
         
         return temporal_info
