@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 DEFAULT_LONGLINGUA_MODEL = "Qwen/Qwen2.5-0.5B"
 DEFAULT_LONGLINGUA_DEVICE_MAP = "cuda"
-DEFAULT_LONGLINGUA_RATE = 0.5
+DEFAULT_LONGLINGUA_RATE = 0.3
 
 
 def _env_float(name: str, default: float) -> float:
