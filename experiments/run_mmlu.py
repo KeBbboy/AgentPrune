@@ -54,6 +54,8 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
+    parser.add_argument('--longllmlingua_compression', action='store_true',
+                        help="Enable LongLLMLingua compression during evaluation. Training always disables compression.")
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -82,13 +84,15 @@ async def main():
                   diff=args.diff,
                   dec=args.dec,
                   **kwargs)
+    graph.set_message_compression_enabled(args.longllmlingua_compression)
+    print(f"LongLLMLingua compression enabled for evaluation: {args.longllmlingua_compression}")
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')
     
     if args.optimized_spatial or args.optimized_temporal:
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
-                    lr=args.lr,batch_size=20,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
+                    lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
         
     print("Final spatial logits: ",graph.spatial_logits)
     print("Final temporal logits: ",graph.temporal_logits)

@@ -5,6 +5,8 @@ import warnings
 import asyncio
 import re
 
+from AgentDropout.graph.longllmlingua import compress_info_messages_with_longllmlingua
+
 
 class Node(ABC):
     """
@@ -64,6 +66,7 @@ class Node(ABC):
         self.role = ""
         self.spatial_message_types: Dict[str, str] = {}
         self.temporal_message_types: Dict[str, str] = {}
+        self.enable_message_compression = True
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}        
 
     @property
@@ -154,24 +157,37 @@ class Node(ABC):
         return reasoning
 
     def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
-        message_type = "full"
-        selected_output = output
-        if source == "spatial":
-            message_type = predecessor.spatial_message_types.get(self.id, "full")
-        elif source == "temporal":
-            message_type = predecessor.temporal_message_types.get(self.id, "full")
+        return "longllmlingua", output
 
-        if isinstance(output, str):
-            if message_type == "answer":
-                answer_payload = self._extract_answer_content(output)
-                selected_output = answer_payload if answer_payload else output.strip()
-            elif message_type == "reason":
-                reasoning_payload = self._extract_reasoning_content(output)
-                selected_output = reasoning_payload if reasoning_payload else output.strip()
+    def _question_from_raw_inputs(self, raw_inputs: Any) -> str:
+        if isinstance(raw_inputs, dict):
+            return str(raw_inputs.get("task", ""))
+        return str(raw_inputs)
 
-        return message_type, selected_output
+    def _longllmlingua_instruction(self, source: str) -> str:
+        return (
+            f"Compress {source} messages for the receiving agent. "
+            f"Receiver role: {self.role}."
+        )
 
-    def get_spatial_info(self)->Dict[str,Dict]:
+    def _compress_info_messages(self, raw_inputs: Any, info_messages: Dict[str, Dict], source: str) -> Dict[str, Dict]:
+        if not info_messages:
+            return info_messages
+        if not self.enable_message_compression:
+            return {
+                node_id: {
+                    **info,
+                    "message_type": "uncompressed",
+                }
+                for node_id, info in info_messages.items()
+            }
+        return compress_info_messages_with_longllmlingua(
+            info_messages,
+            question=self._question_from_raw_inputs(raw_inputs),
+            instruction=self._longllmlingua_instruction(source),
+        )
+
+    def get_spatial_info(self, raw_inputs: Any = None)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
         spatial_info = {}
         if self.spatial_predecessors is not None:
@@ -190,9 +206,9 @@ class Node(ABC):
                     "message_type": message_type,
                 }
 
-        return spatial_info
+        return self._compress_info_messages(raw_inputs, spatial_info, source="spatial")
 
-    def get_temporal_info(self)->Dict[str,Any]:
+    def get_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
         temporal_info = {}
         if self.temporal_predecessors is not None:
             for predecessor in self.temporal_predecessors:
@@ -210,12 +226,12 @@ class Node(ABC):
                     "message_type": message_type,
                 }
         
-        return temporal_info
+        return self._compress_info_messages(raw_inputs, temporal_info, source="temporal")
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []
-        spatial_info:Dict[str,Dict] = self.get_spatial_info()
-        temporal_info:Dict[str,Dict] = self.get_temporal_info()
+        spatial_info:Dict[str,Dict] = self.get_spatial_info(input)
+        temporal_info:Dict[str,Dict] = self.get_temporal_info(input)
         results = [self._execute(input, spatial_info, temporal_info, **kwargs)]
 
         for result in results:
@@ -228,8 +244,8 @@ class Node(ABC):
     async def async_execute(self, input:Any, **kwargs):
 
         self.outputs = []
-        spatial_info:Dict[str,Any] = self.get_spatial_info()
-        temporal_info:Dict[str,Any] = self.get_temporal_info()
+        spatial_info:Dict[str,Any] = self.get_spatial_info(input)
+        temporal_info:Dict[str,Any] = self.get_temporal_info(input)
         # print(temporal_info)
         tasks = [asyncio.create_task(self._async_execute(input, spatial_info, temporal_info, **kwargs))]
         results = await asyncio.gather(*tasks, return_exceptions=False)

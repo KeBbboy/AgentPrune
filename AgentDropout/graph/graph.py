@@ -234,37 +234,13 @@ class Graph(ABC):
         raise ValueError(f"Unknown edge_kind: {edge_kind}")
 
     def sample_message_type(self, edge_kind: str, edge_idx: int, round: int = 0, return_log_prob: bool = False):
-        if edge_kind == "spatial":
-            enabled = self.enable_spatial_message_type_action
-            optimized = self.optimized_spatial_message_type
-        elif edge_kind == "temporal":
-            enabled = self.enable_temporal_message_type_action
-            optimized = self.optimized_temporal_message_type
-        else:
+        if edge_kind not in {"spatial", "temporal"}:
             raise ValueError(f"Unknown edge_kind: {edge_kind}")
 
         logits = self._message_type_logits_for(edge_kind, round)
-        if not enabled:
-            if return_log_prob:
-                return "full", torch.tensor(0.0, device=logits.device)
-            return "full"
-
-        if not optimized:
-            message_type = "reason" if logits[edge_idx].item() >= 0 else "answer"
-            if return_log_prob:
-                return message_type, torch.tensor(0.0, device=logits.device)
-            return message_type
-
-        reason_prob = torch.sigmoid(logits[edge_idx])
-        if torch.rand(1, device=reason_prob.device) < reason_prob:
-            message_type = "reason"
-            log_prob = torch.log(reason_prob)
-        else:
-            message_type = "answer"
-            log_prob = torch.log(1 - reason_prob)
         if return_log_prob:
-            return message_type, log_prob
-        return message_type
+            return "longllmlingua", torch.tensor(0.0, device=logits.device)
+        return "longllmlingua"
 
     def second_stage_optimizer_parameters(self):
         params = []
@@ -291,6 +267,11 @@ class Graph(ABC):
             param.requires_grad_(self.optimized_spatial_message_type)
         for param in self._iter_parameters(self.temporal_message_type_logits):
             param.requires_grad_(self.optimized_temporal_message_type)
+
+    def set_message_compression_enabled(self, enabled: bool):
+        for node in self.nodes.values():
+            node.enable_message_compression = enabled
+        self.decision_node.enable_message_compression = enabled
 
     def connect_decision_node(self):
         for node_id in self.nodes.keys():
