@@ -67,13 +67,13 @@ class SelectiveContextConfig:
     model_name: str = "Qwen/Qwen2.5-0.5B"
     reduce_ratio: float = 0.5
     granularity: str = "phrase"
-    min_chars: int = 256
-    min_units: int = 8
+    min_chars: int = 0
+    min_units: int = 1
     max_length: int = 1024
     device: str = "auto"
     preserve_first_line: bool = True
-    preserve_first_units: int = 1
-    preserve_last_units: int = 1
+    preserve_first_units: int = 0
+    preserve_last_units: int = 0
     fail_open: bool = True
     local_files_only: bool = False
     debug: bool = False
@@ -85,13 +85,13 @@ class SelectiveContextConfig:
             model_name=os.getenv("SELECTIVE_CONTEXT_MODEL", "Qwen/Qwen2.5-0.5B").strip() or "Qwen/Qwen2.5-0.5B",
             reduce_ratio=min(max(_env_float("SELECTIVE_CONTEXT_REDUCE_RATIO", 0.5), 0.0), 0.95),
             granularity=os.getenv("SELECTIVE_CONTEXT_GRANULARITY", "phrase").strip().lower() or "phrase",
-            min_chars=max(0, _env_int("SELECTIVE_CONTEXT_MIN_CHARS", 256)),
-            min_units=max(1, _env_int("SELECTIVE_CONTEXT_MIN_UNITS", 8)),
+            min_chars=max(0, _env_int("SELECTIVE_CONTEXT_MIN_CHARS", 0)),
+            min_units=max(1, _env_int("SELECTIVE_CONTEXT_MIN_UNITS", 1)),
             max_length=max(2, _env_int("SELECTIVE_CONTEXT_MAX_LENGTH", 1024)),
             device=os.getenv("SELECTIVE_CONTEXT_DEVICE", "auto").strip().lower() or "auto",
             preserve_first_line=_env_bool("SELECTIVE_CONTEXT_PRESERVE_FIRST_LINE", True),
-            preserve_first_units=max(0, _env_int("SELECTIVE_CONTEXT_PRESERVE_FIRST_UNITS", 1)),
-            preserve_last_units=max(0, _env_int("SELECTIVE_CONTEXT_PRESERVE_LAST_UNITS", 1)),
+            preserve_first_units=max(0, _env_int("SELECTIVE_CONTEXT_PRESERVE_FIRST_UNITS", 0)),
+            preserve_last_units=max(0, _env_int("SELECTIVE_CONTEXT_PRESERVE_LAST_UNITS", 0)),
             fail_open=_env_bool("SELECTIVE_CONTEXT_FAIL_OPEN", True),
             local_files_only=_env_bool("SELECTIVE_CONTEXT_LOCAL_FILES_ONLY", False),
             debug=_env_bool("SELECTIVE_CONTEXT_DEBUG", False),
@@ -217,7 +217,7 @@ class SelectiveContextCompressor:
     """
 
     _TOKEN_RE = re.compile(r"\s*\S+")
-    _PHRASE_RE = re.compile(r"[^,;:.!?\n，；：。！？]+[,;:，；：]?\s*|[.!?。！？]\s*|\n+\s*")
+    _PHRASE_RE = re.compile(r"[^,;:.!?\n，；：。！？]+[,;:.!?，；：。！？]?\s*|\n+\s*")
     _SENTENCE_RE = re.compile(r"[^.!?\n。！？]+[.!?。！？]?\s*|\n+\s*")
 
     def __init__(
