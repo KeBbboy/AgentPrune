@@ -67,8 +67,7 @@ def parse_args():
 
 async def main():
     args = parse_args()
-    if args.selective_context:
-        configure_selective_context(enabled=True)
+    configure_selective_context(enabled=args.selective_context)
     
     mode = args.mode
     decision_method = args.decision_method
