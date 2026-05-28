@@ -94,8 +94,8 @@ receiver-contextual per-edge policy over `answer`, `reason`, and `full`. For
 each receiver, AIMS+ selects one message action for every retained incoming edge
 from a 384-dimensional MiniLM-style embedding of `[task, sender role, receiver
 role, message]`. The contextual action selector is now a lightweight
-receiver-local graph attention network over the incoming message set and no
-longer applies a hard receiver-level budget constraint.
+receiver-local GAN-style generator/critic network over the incoming message
+embeddings and no longer applies a hard receiver-level budget constraint.
 
 ```bash
 python experiments/run_mmlu.py --mode FakeAGFull --agent_nums 6 --batch_size 4 --num_iterations 10 --imp_per_iterations 5 --pruning_rate 0.25 --num_rounds 1 --optimized_spatial --optimized_temporal --aims_plus

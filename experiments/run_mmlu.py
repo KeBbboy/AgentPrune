@@ -72,7 +72,7 @@ def parse_args():
     parser.add_argument('--message_diversity_weight', type=float, default=0.005,
                         help="Receiver-side granularity diversity bonus for AIMS.")
     parser.add_argument('--message_context_weight_decay', type=float, default=0.001,
-                        help="Weight decay for the AIMS+ contextual GAT selector.")
+                        help="Weight decay for the AIMS+ contextual GAN selector.")
     parser.add_argument('--message_context_entropy_weight', type=float, default=0.02,
                         help="Entropy bonus weight for the AIMS+ contextual action probabilities.")
     parser.add_argument('--message_balance_weight', type=float, default=0.05,
