@@ -15,6 +15,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.graph.graph import Graph
+from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
 from AgentDropout.tools.reader.readers import JSONLReader
 from AgentDropout.tools.coding.python_executor import PyExecutor
 from AgentDropout.utils.globals import Time
@@ -65,6 +66,7 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
+    add_llmlingua2_args(parser)
     
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
@@ -96,7 +98,8 @@ async def main():
                   rounds=args.num_rounds,
                   diff=args.diff,
                   dec=args.dec,
-                  **kwargs)
+                  **kwargs,
+                  **llmlingua2_graph_kwargs(args))
 
     if args.dec:
         graph.optimized_spatial=False
@@ -151,7 +154,7 @@ async def main():
                 test = record["test"]
                 tests.append(test)
                 input_dict = {"task": task}
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds,skip=True)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds,skip=True,compress_messages=False)))
                 add_losses.append(add_loss)
                 
             raw_results = await asyncio.gather(*answer_log_probs)
@@ -280,7 +283,7 @@ async def main():
                 test = record["test"]
                 tests.append(test)
                 input_dict = {"task": task}
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds,compress_messages=False)))
                 add_losses.append(add_loss)
                 
             raw_results = await asyncio.gather(*answer_log_probs)

@@ -33,6 +33,10 @@ async def train(graph:Graph,
                 yield record
     
     loader = infinite_data_loader()
+    restore_message_compression = getattr(graph, "message_compression_enabled", False)
+    graph.set_message_compression_enabled(False)
+    if restore_message_compression:
+        print("LLMLingua-2 compression disabled during training.")
     if args.dec:
         graph.optimized_spatial=False
         graph.optimized_temporal=False
@@ -43,13 +47,13 @@ async def train(graph:Graph,
         #     optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters())+[graph.decision_logits],lr=lr)
         else:
             optimizer = torch.optim.Adam(list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),lr=lr)
-        for i_iter in range(2):
-            print(f"Train {i_iter}", 80*'-')
+        for i_iter in range(num_iters):
+            print(f"Train {i_iter + 1}/{num_iters}", 80*'-')
             start_ts = time.time()
             correct_answers = []
             answer_log_probs = []
             add_losses = []
-            for i_record, record in zip(range(20), loader):
+            for i_record, record in zip(range(batch_size), loader):
                 realized_graph = copy.deepcopy(graph)
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
@@ -89,9 +93,9 @@ async def train(graph:Graph,
                 add_loss = 0
                 input_dict = dataset.record_to_input(record)
                 if args.dec:
-                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,skip=True)))
+                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,skip=True,compress_messages=False)))
                 else:
-                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
+                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,compress_messages=False)))
                 correct_answer = dataset.record_to_target_answer(record)
                 correct_answers.append(correct_answer)
                 add_losses.append(add_loss)
@@ -156,13 +160,13 @@ async def train(graph:Graph,
     graph.optimized_spatial=True
     graph.optimized_temporal=True
 
-    for i_iter in range(2):
-        print(f"Train {i_iter}", 80*'-')
+    for i_iter in range(num_iters):
+        print(f"Train {i_iter + 1}/{num_iters}", 80*'-')
         start_ts = time.time()
         correct_answers = []
         answer_log_probs = []
         add_losses = []
-        for i_record, record in zip(range(10), loader):
+        for i_record, record in zip(range(batch_size), loader):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
@@ -211,9 +215,9 @@ async def train(graph:Graph,
             # add_loss = 0
             input_dict = dataset.record_to_input(record)
             if args.dec:
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,compress_messages=False)))
             else:
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,compress_messages=False)))
             correct_answer = dataset.record_to_target_answer(record)
             correct_answers.append(correct_answer)
             add_losses.append(add_loss)
@@ -265,7 +269,7 @@ async def train(graph:Graph,
         print(f"PromptTokens {PromptTokens.instance().value}")
         print(f"CompletionTokens {CompletionTokens.instance().value}")
         
-        if (i_iter+1)%2 == 0:
+        if (i_iter+1)%imp_per_iters == 0:
             if not graph.diff:
                 spatial_masks, temporal_masks = graph.update_masks(pruning_rate)
             else:
@@ -281,6 +285,7 @@ async def train(graph:Graph,
 
     # graph.optimized_spatial=False
     # graph.optimized_temporal=False        
+    graph.set_message_compression_enabled(restore_message_compression)
 
 
 def connectivity_loss(A: torch.Tensor) -> torch.Tensor:

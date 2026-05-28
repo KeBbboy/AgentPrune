@@ -1,4 +1,5 @@
 import shortuuid
+from contextlib import contextmanager
 from typing import Any, List, Optional, Dict
 from abc import ABC
 import numpy as np
@@ -7,6 +8,10 @@ import asyncio
 
 from AgentDropout.graph.node import Node
 from AgentDropout.agents.agent_registry import AgentRegistry
+from AgentDropout.utils.llmlingua2_compressor import (
+    DEFAULT_LLMLINGUA2_MODEL,
+    LLMLingua2MessageCompressor,
+)
 import random
 
 class Graph(ABC):
@@ -46,6 +51,12 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                llmlingua2_compression: bool = False,
+                llmlingua2_rate: float = 0.5,
+                llmlingua2_model_name: str = None,
+                llmlingua2_min_tokens: int = 20,
+                llmlingua2_compress_code: bool = False,
+                llmlingua2_scope: str = "all",
                 ):
         
         if fixed_spatial_masks is None:
@@ -77,11 +88,21 @@ class Graph(ABC):
         self.node_kwargs = node_kwargs if node_kwargs is not None else [{} for _ in agent_names]
         self.diff=diff
         self.rounds=rounds
+        self.message_compression_scope = llmlingua2_scope
+        self.message_compression_enabled = llmlingua2_compression
+        self.message_compressor = self._build_message_compressor(
+            enabled=llmlingua2_compression,
+            rate=llmlingua2_rate,
+            model_name=llmlingua2_model_name,
+            min_tokens=llmlingua2_min_tokens,
+            compress_code=llmlingua2_compress_code,
+        )
         # self.dec=False
         self.dec_1=False
         self.skip_nodes = []
         
         self.init_nodes() # add nodes to the self.nodes
+        self.attach_message_compressor()
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
         
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
@@ -129,6 +150,58 @@ class Graph(ABC):
                 for _ in range(rounds-1)
             ])
             self.temporal_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_temporal_masks.clone(), requires_grad=False) for _ in range(rounds-1)])
+
+    def _build_message_compressor(
+        self,
+        enabled: bool,
+        rate: float,
+        model_name: str | None,
+        min_tokens: int,
+        compress_code: bool,
+    ):
+        if not enabled:
+            return None
+        return LLMLingua2MessageCompressor(
+            model_name=model_name or DEFAULT_LLMLINGUA2_MODEL,
+            rate=rate,
+            min_tokens=min_tokens,
+            compress_code=compress_code,
+        )
+
+    def attach_message_compressor(self):
+        message_compressor = self.message_compressor if self.message_compression_enabled else None
+        if self.message_compression_scope == "final":
+            decision_compressor = message_compressor
+            node_compressor = None
+        elif self.message_compression_scope == "all":
+            decision_compressor = None
+            node_compressor = message_compressor
+        else:
+            raise ValueError(f"Unknown LLMLingua-2 compression scope: {self.message_compression_scope}")
+
+        self.decision_node.message_compressor = decision_compressor
+        for node in self.nodes.values():
+            node.message_compressor = node_compressor
+
+    def set_message_compression_enabled(self, enabled: bool):
+        self.message_compression_enabled = bool(enabled) and self.message_compressor is not None
+        self.attach_message_compressor()
+
+    @contextmanager
+    def message_compression_disabled(self):
+        previous_enabled = self.message_compression_enabled
+        self.set_message_compression_enabled(False)
+        try:
+            yield
+        finally:
+            self.set_message_compression_enabled(previous_enabled)
+
+    def message_compression_summary(self) -> str:
+        if self.message_compressor is None:
+            return "LLMLingua-2 compression disabled."
+        if not self.message_compression_enabled:
+            return "LLMLingua-2 compression temporarily disabled."
+        return f"{self.message_compressor.summary()} Scope: {self.message_compression_scope}."
         
     @property
     def spatial_adj_matrix(self):
@@ -475,7 +548,19 @@ class Graph(ABC):
                   max_tries: int = 3, 
                   max_time: int = 6000,
                   skip: bool=False,
-                  case: bool=False) -> List[Any]:
+                  case: bool=False,
+                  compress_messages: bool=True) -> List[Any]:
+        if not compress_messages:
+            with self.message_compression_disabled():
+                return await self.arun(
+                    input,
+                    num_rounds=num_rounds,
+                    max_tries=max_tries,
+                    max_time=max_time,
+                    skip=skip,
+                    case=case,
+                    compress_messages=True,
+                )
         # inputs:{'task':"xxx"}
         log_probs = 0
         log_probs_skip = 0

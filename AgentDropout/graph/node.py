@@ -64,6 +64,7 @@ class Node(ABC):
         self.role = ""
         self.spatial_message_types: Dict[str, str] = {}
         self.temporal_message_types: Dict[str, str] = {}
+        self.message_compressor = None
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}        
 
     @property
@@ -169,7 +170,32 @@ class Node(ABC):
                 reasoning_payload = self._extract_reasoning_content(output)
                 selected_output = reasoning_payload if reasoning_payload else output.strip()
 
+        selected_output = self._compress_message_payload(
+            predecessor=predecessor,
+            output=selected_output,
+            source=source,
+            message_type=message_type,
+        )
         return message_type, selected_output
+
+    def _compress_message_payload(
+        self,
+        predecessor: 'Node',
+        output: Any,
+        source: str,
+        message_type: str,
+    ) -> Any:
+        if self.message_compressor is None:
+            return output
+        if not isinstance(output, str):
+            return output
+        return self.message_compressor.compress(
+            output,
+            domain=self.domain,
+            role=predecessor.role,
+            message_type=message_type,
+            source=source,
+        )
 
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """

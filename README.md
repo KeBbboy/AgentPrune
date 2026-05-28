@@ -64,6 +64,33 @@ The above code verifies the experimental results of the `mmlu` dataset under dif
 
 We also provide experimental code for other datasets and topologies.You can refer to `experiments/run_humaneval.py` and `experiments/run_gsm8k.py`.
 
+### ▶️ Run AgentPrune with LLMLingua-2-only message compression
+
+This branch adds an optional LLMLingua-2 payload compressor for inter-agent
+messages. It does not add AIMS/AIMS+ or another learned message-selection
+policy; AgentPrune still decides the communication topology, and LLMLingua-2
+compresses the text that travels over retained edges.
+
+```bash
+python experiments/run_mmlu.py --mode FullConnected --agent_nums 5 --llmlingua2_compression --llmlingua2_rate 0.5
+```
+
+Use `--llmlingua2_min_tokens` to skip short messages. HumanEval code payloads
+are skipped by default; pass `--llmlingua2_compress_code` only if you explicitly
+want LLMLingua-2 to compress generated code.
+
+During topology training, LLMLingua-2 is disabled so optimization uses the
+original inter-agent messages. Evaluation/inference still compresses messages
+when `--llmlingua2_compression` is enabled.
+
+By default, `--llmlingua2_scope all` compresses agent-to-agent messages, while
+messages entering the final vote/decision node are left uncompressed. Use
+`--llmlingua2_scope final` only if you want to compress final-node inputs
+instead.
+
+For multiple-choice outputs, the leading answer line is kept outside the
+LLMLingua-2 input and is reattached unchanged after compression.
+
 ### ▶️ Run AgentPrune on MMLU-Pro
 
 Place `dev/val` split files under `dataset/mmlu_pro/`. If you are using the official `TIGER-Lab/MMLU-Pro` release, the loader also accepts `validation/test` filenames and maps them to the default `dev/val` behavior. Then run:
