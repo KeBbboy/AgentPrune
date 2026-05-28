@@ -8,7 +8,11 @@ import argparse
 import random
 
 from AgentDropout.graph.graph import Graph
-from AgentDropout.context import configure_selective_context, selective_context_disabled
+from AgentDropout.context import (
+    configure_selective_context,
+    get_selective_context_compressor,
+    selective_context_disabled,
+)
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
 from experiments.train_mmlu import train
@@ -65,9 +69,30 @@ def parse_args():
         
     return args
 
+def validate_selective_context():
+    compressor = get_selective_context_compressor()
+    probe = (
+        "A\n"
+        "This preflight message verifies that Selective Context can load its scorer. "
+        "If tokenizer or model loading fails, the experiment should stop before evaluation."
+    )
+    compressed = compressor.compress(probe)
+    print(
+        "Selective Context preflight: "
+        f"model={compressor.config.model_name} "
+        f"reduce_ratio={compressor.config.reduce_ratio} "
+        f"chars={len(probe)}->{len(compressed)}",
+        flush=True,
+    )
+
 async def main():
     args = parse_args()
+    if args.selective_context:
+        os.environ.setdefault("SELECTIVE_CONTEXT_FAIL_OPEN", "0")
     configure_selective_context(enabled=args.selective_context)
+    if args.selective_context:
+        print("Selective Context enabled; running compression preflight.")
+        validate_selective_context()
     
     mode = args.mode
     decision_method = args.decision_method

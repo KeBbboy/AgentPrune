@@ -64,7 +64,7 @@ def _env_int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class SelectiveContextConfig:
     enabled: bool = True
-    model_name: str = "Qwen/Qwen2.5-0.5B"
+    model_name: str = "distilgpt2"
     reduce_ratio: float = 0.5
     granularity: str = "phrase"
     min_chars: int = 0
@@ -82,7 +82,7 @@ class SelectiveContextConfig:
     def from_env(cls) -> "SelectiveContextConfig":
         return cls(
             enabled=_env_bool("SELECTIVE_CONTEXT_ENABLED", True),
-            model_name=os.getenv("SELECTIVE_CONTEXT_MODEL", "Qwen/Qwen2.5-0.5B").strip() or "Qwen/Qwen2.5-0.5B",
+            model_name=os.getenv("SELECTIVE_CONTEXT_MODEL", "distilgpt2").strip() or "distilgpt2",
             reduce_ratio=min(max(_env_float("SELECTIVE_CONTEXT_REDUCE_RATIO", 0.5), 0.0), 0.95),
             granularity=os.getenv("SELECTIVE_CONTEXT_GRANULARITY", "phrase").strip().lower() or "phrase",
             min_chars=max(0, _env_int("SELECTIVE_CONTEXT_MIN_CHARS", 0)),

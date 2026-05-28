@@ -87,7 +87,7 @@ SELECTIVE_CONTEXT_GRANULARITY=phrase \
 python experiments/run_mmlu.py --agent_nums 5 --mode FullConnected --batch_size 4 --selective_context
 ```
 
-By default, the first answer line is preserved and the remaining body is eligible for compression even when the message is short. Useful knobs are `SELECTIVE_CONTEXT_MIN_CHARS`, `SELECTIVE_CONTEXT_MIN_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_LINE`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_LAST_UNITS`, `SELECTIVE_CONTEXT_MAX_LENGTH`, `SELECTIVE_CONTEXT_DEVICE`, and `SELECTIVE_CONTEXT_LOCAL_FILES_ONLY`.
+By default, Selective Context uses `distilgpt2` as the local scoring model, preserves the first answer line, and makes the remaining body eligible for compression even when the message is short. Useful knobs are `SELECTIVE_CONTEXT_MODEL`, `SELECTIVE_CONTEXT_MIN_CHARS`, `SELECTIVE_CONTEXT_MIN_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_LINE`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_LAST_UNITS`, `SELECTIVE_CONTEXT_MAX_LENGTH`, `SELECTIVE_CONTEXT_DEVICE`, `SELECTIVE_CONTEXT_LOCAL_FILES_ONLY`, and `SELECTIVE_CONTEXT_FAIL_OPEN`.
 
 ### 🔗 Integrate into other multi-agent systems frameworks
 
