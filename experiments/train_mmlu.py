@@ -61,10 +61,7 @@ def _message_action_penalty(graph: Graph, args) -> float:
     if getattr(args, "message_selection_policy", "none") != "aims_plus":
         return 0.0
     counts = getattr(graph, "message_action_counts", {}).get("total", {})
-    penalty = (
-        float(getattr(args, "message_reason_penalty_weight", 0.0)) * counts.get("reason", 0)
-        + float(getattr(args, "message_full_penalty_weight", 0.0)) * counts.get("full", 0)
-    )
+    penalty = float(getattr(args, "message_reason_penalty_weight", 0.0)) * counts.get("reason", 0)
     collapse_weight = float(getattr(args, "message_action_collapse_penalty_weight", 0.0))
     collapse_threshold = float(getattr(args, "message_action_collapse_threshold", 1.0))
     action_total = sum(counts.values())
@@ -317,7 +314,7 @@ async def train(graph:Graph,
         message_selection_enabled = _message_selection_enabled_for_iteration(args, i_iter)
         graph.set_message_type_learning_mode(message_selection_enabled)
         if _message_selection_enabled(args) and not message_selection_enabled:
-            print("AIMS+ warmup: using full messages and training topology only")
+            print("AIMS+ warmup: training topology with message selection disabled")
         start_ts = time.time()
         correct_answers = []
         answer_log_probs = []

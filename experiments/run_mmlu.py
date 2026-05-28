@@ -39,8 +39,8 @@ def parse_args():
                         help='Specify the number of agents for each name in agent_names')
     parser.add_argument('--num_iterations', type=int, default=10,
                         help="Number of optimization iterations. Default 10.")
-    parser.add_argument('--message_selection_warmup_iterations', type=int, default=5,
-                        help="Number of initial training iterations that use full messages before training AIMS+ selection.")
+    parser.add_argument('--message_selection_warmup_iterations', type=int, default=0,
+                        help="Number of initial training iterations that train topology before AIMS+ selection.")
     parser.add_argument('--imp_per_iterations', type=int, default=5,
                         help="Prune every few iterations. Default 5.")
     parser.add_argument('--num_rounds',type=int,default=1,
@@ -77,10 +77,8 @@ def parse_args():
                         help="Entropy bonus weight for the AIMS+ contextual action probabilities.")
     parser.add_argument('--message_balance_weight', type=float, default=0.05,
                         help="Batch-level balance penalty weight for AIMS+ contextual action probabilities.")
-    parser.add_argument('--message_reason_penalty_weight', type=float, default=0.0,
+    parser.add_argument('--message_reason_penalty_weight', type=float, default=0.01,
                         help="Per-sample reward penalty for each AIMS+ reason action.")
-    parser.add_argument('--message_full_penalty_weight', type=float, default=0.0,
-                        help="Per-sample reward penalty for each AIMS+ full action.")
     parser.add_argument('--message_action_collapse_penalty_weight', type=float, default=0.05,
                         help="Reward penalty weight when sampled AIMS+ actions collapse to one type.")
     parser.add_argument('--message_action_collapse_threshold', type=float, default=0.85,

@@ -227,17 +227,12 @@ class Graph(ABC):
         return normalized_policy
 
     def _message_actions_for_policy(self, policy: str):
-        if policy == "aims_plus":
-            return ("answer", "reason", "full")
-        if policy == "aims":
-            return ("full", "answer", "reason")
         return ("answer", "reason")
 
     def _message_action_cost(self, action: str) -> float:
         return {
             "answer": 0.25,
             "reason": 0.70,
-            "full": 1.00,
         }[action]
 
     def _empty_message_action_counts(self):
@@ -281,9 +276,8 @@ class Graph(ABC):
 
     def _message_complexity_bias(self, action: str) -> float:
         return {
-            "answer": -0.40,
-            "reason": 0.10,
-            "full": 0.45,
+            "answer": 0.30,
+            "reason": -0.10,
         }[action]
 
     def _role_prior_for_message_action(self, sender: Node, receiver: Node, action: str) -> float:
@@ -292,15 +286,13 @@ class Graph(ABC):
         prior = 0.0
 
         if action == "answer":
-            prior += 0.35 if "math solver" in receiver_role else 0.0
-            prior -= 0.25 if any(role in receiver_role for role in ("inspector", "analyst", "programming")) else 0.0
+            prior += 0.45
+            prior += 0.20 if "math solver" in receiver_role else 0.0
+            prior += 0.15 if any(role in receiver_role for role in ("decision", "major vote")) else 0.0
         elif action == "reason":
-            prior += 0.35 if any(role in receiver_role for role in ("inspector", "analyst")) else 0.0
+            prior -= 0.10
+            prior += 0.25 if any(role in receiver_role for role in ("inspector", "analyst", "programming")) else 0.0
             prior += 0.20 if any(role in sender_role for role in ("analyst", "inspector")) else 0.0
-        elif action == "full":
-            prior += 0.40 if self.domain == "humaneval" else 0.0
-            prior += 0.25 if "programming" in sender_role or "programming" in receiver_role else 0.0
-            prior += 0.15 if any(role in receiver_role for role in ("inspector", "decision")) else 0.0
         return prior
 
     def _build_edge_index(self, edges):
@@ -477,8 +469,8 @@ class Graph(ABC):
         active_policy = self._active_message_selection_policy()
         if active_policy == "aims_plus" and contextual_action_logits is None:
             if return_log_prob:
-                return "full", torch.tensor(0.0, device=logits.device)
-            return "full"
+                return "answer", torch.tensor(0.0, device=logits.device)
+            return "answer"
 
         if active_policy in {"aims", "aims_plus"}:
             action_logits = logits[edge_idx]
@@ -538,9 +530,8 @@ class Graph(ABC):
             loss = loss - entropy_weight * entropy
         if balance_weight > 0.0:
             target_values = {
-                "answer": 0.15,
-                "reason": 0.30,
-                "full": 0.55,
+                "answer": 0.75,
+                "reason": 0.25,
             }
             target_distribution = torch.tensor(
                 [

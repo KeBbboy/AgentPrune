@@ -89,8 +89,8 @@ python experiments/run_mmlu_pro.py --agent_nums 1 --mode DirectAnswer --decision
 
 This branch adds Adaptive Information-granularity Message Selection (AIMS/AIMS+),
 a trainable message-level policy on top of AgentPrune's topology optimizer. AIMS
-chooses among `full`, `answer`, and `reason`; AIMS+ adds a content-aware
-receiver-contextual per-edge policy over `answer`, `reason`, and `full`. For
+chooses between `answer` and `reason`; AIMS+ adds a content-aware
+receiver-contextual per-edge policy over `answer` and `reason`. For
 each receiver, AIMS+ selects one message action for every retained incoming edge
 from a 384-dimensional MiniLM-style embedding of `[task, sender role, receiver
 role, message]`. The contextual action selector is now a lightweight
@@ -102,8 +102,8 @@ python experiments/run_mmlu.py --mode FakeAGFull --agent_nums 6 --batch_size 4 -
 ```
 
 Use `--message_selection_policy none` for the original behavior, `binary` for
-the previous two-action answer/reason policy, `aims` for role-aware static
-granularity selection, and `--aims_plus` for contextual message gating. See
+the two-action answer/reason policy, `aims` for role-aware static granularity
+selection, and `--aims_plus` for contextual message gating. See
 `docs/aims_message_selection.md` for the objective, implementation details, and
 ablation suggestions.
 

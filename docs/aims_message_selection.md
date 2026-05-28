@@ -29,7 +29,7 @@ For each candidate edge e = (sender, receiver), round r, and task q, AIMS sample
 an action from:
 
 ```
-A = {full, answer, reason}
+A = {answer, reason}
 p(a | e, r, q) = softmax((theta[e, r] + c(q) * beta) / tau)
 ```
 
@@ -43,8 +43,8 @@ where:
 - `tau` is `--message_selection_temperature`.
 
 The initialization is role-aware. For example, math-solver receivers start with a
-small preference for `answer` hints, inspectors and analysts prefer `reason`, and
-HumanEval/programming agents prefer `full` because code payloads are fragile.
+default preference for `answer` hints, while inspectors and analysts can still
+prefer `reason` when reasoning context is useful.
 
 ## AIMS+ contextual per-edge policy
 
@@ -55,7 +55,7 @@ topology stage runs before the sender's actual output is known.
 The AIMS+ action space is:
 
 ```
-A+ = {answer, reason, full}
+A+ = {answer, reason}
 ```
 
 The contextual policy is:
@@ -97,15 +97,16 @@ logits for every retained incoming edge. The remaining edge logits and
 task-complexity bias serve as priors.
 
 Since AgentPrune already handles edge-level pruning, AIMS+ does not include a
-`none` action. Every retained edge transmits exactly one of `answer`, `reason`,
-or `full`.
+`none` action. Every retained edge transmits exactly one of `answer` or
+`reason`; the previous `full` action has been removed to avoid collapse toward
+full-message communication.
 
 ## Objective
 
 AIMS extends the existing REINFORCE-style AgentPrune objective:
 
 ```
-L = - (utility - lambda_r * selected_reason_count - lambda_f * selected_full_count)
+L = - (utility - lambda_r * selected_reason_count)
       * log p(topology, message_actions)
     + graph_regularization
     + lambda_c * expected_message_cost
@@ -120,13 +121,13 @@ The regularizers are exposed as:
 - `--message_diversity_weight`
 - `--message_context_weight_decay`
 - `--message_reason_penalty_weight`
-- `--message_full_penalty_weight`
 
 The cost term rewards concise messages, the entropy term prevents early action
 collapse, the receiver-side diversity term discourages all incoming messages from
-using the same granularity, the sampled-action penalties directly discourage
-overusing `reason` and especially `full`, and the context weight decay keeps the
-GAN selector stable.
+using the same granularity, the sampled-action penalty discourages overusing
+`reason`, and the context weight decay keeps the GAN selector stable. The
+default balance target prefers `answer` first and keeps `reason` as the
+secondary, higher-information option.
 
 ## Usage
 
