@@ -91,6 +91,40 @@ instead.
 For multiple-choice outputs, the leading answer line is kept outside the
 LLMLingua-2 input and is reattached unchanged after compression.
 
+### ▶️ Run receiver-aware communication compression
+
+This branch also adds receiver-aware communication compression. The first
+module is edge-level role-aware compression: it splits each sender message into
+sentences, encodes every sentence and the receiver role description with
+`all-MiniLM-L6-v2`, computes cosine similarity, keeps the top role-relevant
+sentences under a budget, and deduplicates highly similar sentences inside the
+same edge message. This edge-level module applies to both spatial and temporal
+edges.
+
+```bash
+python experiments/run_mmlu.py --mode FullConnected --agent_nums 5 --role_aware_compression
+```
+
+The command-line interface intentionally exposes this module as a single
+switch. Internally it uses `all-MiniLM-L6-v2`, keeps about half of each edge
+message by sentence count, and uses `0.88` as the intra-message deduplication
+threshold.
+
+The second module is receiver-side node aggregation. It runs only on spatial
+messages within the current round: after edge-level compression, each receiver
+scores all incoming spatial sentences, combines sentence-level role relevance
+with a message-level `source_score`, removes cross-sender duplicates, and keeps
+the final spatial context under a receiver-level budget.
+
+```bash
+python experiments/run_mmlu.py --mode FullConnected --agent_nums 5 --role_aware_compression --node_aware_aggregation
+```
+
+The node aggregation module is also exposed as a single switch. Internally it
+keeps up to 10 spatial sentences per receiver, uses `0.88` for cross-sender
+deduplication, and ranks sentences with `0.7 * sentence_score + 0.3 *
+source_score`.
+
 ### ▶️ Run AgentPrune on MMLU-Pro
 
 Place `dev/val` split files under `dataset/mmlu_pro/`. If you are using the official `TIGER-Lab/MMLU-Pro` release, the loader also accepts `validation/test` filenames and maps them to the default `dev/val` behavior. Then run:

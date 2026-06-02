@@ -65,6 +65,7 @@ class Node(ABC):
         self.spatial_message_types: Dict[str, str] = {}
         self.temporal_message_types: Dict[str, str] = {}
         self.message_compressor = None
+        self.spatial_aggregator = None
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}        
 
     @property
@@ -178,6 +179,15 @@ class Node(ABC):
         )
         return message_type, selected_output
 
+    def _receiver_description(self) -> str:
+        parts = []
+        role = getattr(self, "role", "")
+        constraint = getattr(self, "constraint", "")
+        for value in (role, constraint):
+            if value and value not in parts:
+                parts.append(str(value))
+        return ". ".join(parts)
+
     def _compress_message_payload(
         self,
         predecessor: 'Node',
@@ -193,8 +203,22 @@ class Node(ABC):
             output,
             domain=self.domain,
             role=predecessor.role,
+            receiver_role=self.role,
+            receiver_description=self._receiver_description(),
+            receiver_agent=self.agent_name,
             message_type=message_type,
             source=source,
+        )
+
+    def _aggregate_spatial_info(self, spatial_info: Dict[str, Dict]) -> Dict[str, Dict]:
+        if self.spatial_aggregator is None:
+            return spatial_info
+        return self.spatial_aggregator.aggregate(
+            spatial_info,
+            domain=self.domain,
+            receiver_role=self.role,
+            receiver_description=self._receiver_description(),
+            receiver_agent=self.agent_name,
         )
 
     def get_spatial_info(self)->Dict[str,Dict]:
@@ -216,7 +240,7 @@ class Node(ABC):
                     "message_type": message_type,
                 }
 
-        return spatial_info
+        return self._aggregate_spatial_info(spatial_info)
 
     def get_temporal_info(self)->Dict[str,Any]:
         temporal_info = {}

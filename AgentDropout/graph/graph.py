@@ -12,6 +12,16 @@ from AgentDropout.utils.llmlingua2_compressor import (
     DEFAULT_LLMLINGUA2_MODEL,
     LLMLingua2MessageCompressor,
 )
+from AgentDropout.utils.role_aware_compressor import (
+    DEFAULT_DEDUP_THRESHOLD,
+    DEFAULT_NODE_AWARE_RATE,
+    DEFAULT_NODE_AWARE_SOURCE_WEIGHT,
+    DEFAULT_NODE_AWARE_TOTAL_BUDGET,
+    DEFAULT_ROLE_AWARE_MODEL,
+    DEFAULT_ROLE_AWARE_RATE,
+    RoleAwareEdgeCompressor,
+    RoleAwareNodeAggregator,
+)
 import random
 
 class Graph(ABC):
@@ -57,6 +67,21 @@ class Graph(ABC):
                 llmlingua2_min_tokens: int = 20,
                 llmlingua2_compress_code: bool = False,
                 llmlingua2_scope: str = "all",
+                role_aware_compression: bool = False,
+                role_aware_model_name: str = None,
+                role_aware_rate: float = DEFAULT_ROLE_AWARE_RATE,
+                role_aware_sentence_budget: int = 0,
+                role_aware_dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
+                role_aware_min_sentences: int = 2,
+                role_aware_compress_code: bool = False,
+                role_aware_debug: bool = False,
+                node_aware_aggregation: bool = False,
+                node_aware_model_name: str = None,
+                node_aware_rate: float = DEFAULT_NODE_AWARE_RATE,
+                node_aware_total_budget: int = DEFAULT_NODE_AWARE_TOTAL_BUDGET,
+                node_aware_dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
+                node_aware_source_weight: float = DEFAULT_NODE_AWARE_SOURCE_WEIGHT,
+                node_aware_debug: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -89,13 +114,32 @@ class Graph(ABC):
         self.diff=diff
         self.rounds=rounds
         self.message_compression_scope = llmlingua2_scope
-        self.message_compression_enabled = llmlingua2_compression
+        self.message_compression_enabled = (
+            llmlingua2_compression or role_aware_compression or node_aware_aggregation
+        )
         self.message_compressor = self._build_message_compressor(
             enabled=llmlingua2_compression,
             rate=llmlingua2_rate,
             model_name=llmlingua2_model_name,
             min_tokens=llmlingua2_min_tokens,
             compress_code=llmlingua2_compress_code,
+            role_aware_enabled=role_aware_compression,
+            role_aware_model_name=role_aware_model_name,
+            role_aware_rate=role_aware_rate,
+            role_aware_sentence_budget=role_aware_sentence_budget,
+            role_aware_dedup_threshold=role_aware_dedup_threshold,
+            role_aware_min_sentences=role_aware_min_sentences,
+            role_aware_compress_code=role_aware_compress_code,
+            role_aware_debug=role_aware_debug,
+        )
+        self.spatial_aggregator = self._build_spatial_aggregator(
+            enabled=node_aware_aggregation,
+            model_name=node_aware_model_name,
+            rate=node_aware_rate,
+            total_budget=node_aware_total_budget,
+            dedup_threshold=node_aware_dedup_threshold,
+            source_weight=node_aware_source_weight,
+            debug=node_aware_debug,
         )
         # self.dec=False
         self.dec_1=False
@@ -158,7 +202,27 @@ class Graph(ABC):
         model_name: str | None,
         min_tokens: int,
         compress_code: bool,
+        role_aware_enabled: bool,
+        role_aware_model_name: str | None,
+        role_aware_rate: float,
+        role_aware_sentence_budget: int,
+        role_aware_dedup_threshold: float,
+        role_aware_min_sentences: int,
+        role_aware_compress_code: bool,
+        role_aware_debug: bool,
     ):
+        if enabled and role_aware_enabled:
+            raise ValueError("Enable either LLMLingua-2 compression or role-aware compression, not both.")
+        if role_aware_enabled:
+            return RoleAwareEdgeCompressor(
+                model_name=role_aware_model_name or DEFAULT_ROLE_AWARE_MODEL,
+                rate=role_aware_rate,
+                sentence_budget=role_aware_sentence_budget,
+                dedup_threshold=role_aware_dedup_threshold,
+                min_sentences=role_aware_min_sentences,
+                compress_code=role_aware_compress_code,
+                debug=role_aware_debug,
+            )
         if not enabled:
             return None
         return LLMLingua2MessageCompressor(
@@ -168,8 +232,30 @@ class Graph(ABC):
             compress_code=compress_code,
         )
 
+    def _build_spatial_aggregator(
+        self,
+        enabled: bool,
+        model_name: str | None,
+        rate: float,
+        total_budget: int,
+        dedup_threshold: float,
+        source_weight: float,
+        debug: bool,
+    ):
+        if not enabled:
+            return None
+        return RoleAwareNodeAggregator(
+            model_name=model_name or DEFAULT_ROLE_AWARE_MODEL,
+            rate=rate,
+            total_budget=total_budget,
+            dedup_threshold=dedup_threshold,
+            source_weight=source_weight,
+            debug=debug,
+        )
+
     def attach_message_compressor(self):
         message_compressor = self.message_compressor if self.message_compression_enabled else None
+        spatial_aggregator = self.spatial_aggregator if self.message_compression_enabled else None
         if self.message_compression_scope == "final":
             decision_compressor = message_compressor
             node_compressor = None
@@ -180,11 +266,15 @@ class Graph(ABC):
             raise ValueError(f"Unknown LLMLingua-2 compression scope: {self.message_compression_scope}")
 
         self.decision_node.message_compressor = decision_compressor
+        self.decision_node.spatial_aggregator = None
         for node in self.nodes.values():
             node.message_compressor = node_compressor
+            node.spatial_aggregator = spatial_aggregator
 
     def set_message_compression_enabled(self, enabled: bool):
-        self.message_compression_enabled = bool(enabled) and self.message_compressor is not None
+        self.message_compression_enabled = bool(enabled) and (
+            self.message_compressor is not None or self.spatial_aggregator is not None
+        )
         self.attach_message_compressor()
 
     @contextmanager
@@ -197,11 +287,16 @@ class Graph(ABC):
             self.set_message_compression_enabled(previous_enabled)
 
     def message_compression_summary(self) -> str:
-        if self.message_compressor is None:
-            return "LLMLingua-2 compression disabled."
+        if self.message_compressor is None and self.spatial_aggregator is None:
+            return "Message compression disabled."
         if not self.message_compression_enabled:
-            return "LLMLingua-2 compression temporarily disabled."
-        return f"{self.message_compressor.summary()} Scope: {self.message_compression_scope}."
+            return "Message compression temporarily disabled."
+        summaries = []
+        if self.message_compressor is not None:
+            summaries.append(f"{self.message_compressor.summary()} Scope: {self.message_compression_scope}.")
+        if self.spatial_aggregator is not None:
+            summaries.append(self.spatial_aggregator.summary())
+        return " ".join(summaries)
         
     @property
     def spatial_adj_matrix(self):

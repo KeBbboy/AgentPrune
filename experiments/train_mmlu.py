@@ -36,7 +36,7 @@ async def train(graph:Graph,
     restore_message_compression = getattr(graph, "message_compression_enabled", False)
     graph.set_message_compression_enabled(False)
     if restore_message_compression:
-        print("LLMLingua-2 compression disabled during training.")
+        print("Message compression disabled during training.")
     if args.dec:
         graph.optimized_spatial=False
         graph.optimized_temporal=False

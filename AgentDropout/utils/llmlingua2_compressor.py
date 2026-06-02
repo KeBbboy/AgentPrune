@@ -52,6 +52,9 @@ class LLMLingua2MessageCompressor:
         text: Any,
         domain: str = "",
         role: str = "",
+        receiver_role: str = "",
+        receiver_description: str = "",
+        receiver_agent: str = "",
         message_type: str = "full",
         source: str = "spatial",
     ) -> Any:
