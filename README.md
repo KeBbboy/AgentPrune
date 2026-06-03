@@ -75,7 +75,7 @@ python experiments/run_mmlu_pro.py --agent_nums 1 --mode DirectAnswer --decision
 
 ### ✂️ Selective Context Compression
 
-This branch adds an optional Selective Context compressor for inter-agent messages. When enabled, each node keeps the original task intact, preserves the first line of each predecessor agent output as the answer line, and compresses the remaining output before adding it to the downstream prompt. The scorer follows the paper's self-information idea: a small causal LM estimates token surprisal, and low-information phrase/sentence/token units are removed according to the configured ratio.
+This branch adds an optional Selective Context compressor for inter-agent messages. When enabled, each node keeps the original task intact, preserves the first line of each predecessor agent output as the answer line, and compresses the remaining output before adding it to the downstream prompt. The scorer follows the paper's official-style API: `SelectiveContext(model_type="Qwen/Qwen2.5-0.5B", lang="en")` estimates lexical-unit self-information and returns `(context, reduced_content)`.
 
 When `--optimized_spatial` or `--optimized_temporal` triggers AgentPrune training, Selective Context is disabled during training and re-enabled for evaluation/inference.
 
@@ -87,7 +87,13 @@ SELECTIVE_CONTEXT_GRANULARITY=phrase \
 python experiments/run_mmlu.py --agent_nums 5 --mode FullConnected --batch_size 4 --selective_context
 ```
 
-By default, Selective Context uses `distilgpt2` as the local scoring model, preserves the first answer line, and makes the remaining body eligible for compression even when the message is short. Useful knobs are `SELECTIVE_CONTEXT_MODEL`, `SELECTIVE_CONTEXT_MIN_CHARS`, `SELECTIVE_CONTEXT_MIN_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_LINE`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_LAST_UNITS`, `SELECTIVE_CONTEXT_MAX_LENGTH`, `SELECTIVE_CONTEXT_DEVICE`, `SELECTIVE_CONTEXT_LOCAL_FILES_ONLY`, and `SELECTIVE_CONTEXT_FAIL_OPEN`.
+By default, Selective Context uses `Qwen/Qwen2.5-0.5B` as the local scoring model, preserves the first answer line, and makes the remaining body eligible for compression even when the message is short. Useful knobs are `SELECTIVE_CONTEXT_MODEL`, `SELECTIVE_CONTEXT_LANG`, `SELECTIVE_CONTEXT_MIN_CHARS`, `SELECTIVE_CONTEXT_MIN_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_LINE`, `SELECTIVE_CONTEXT_PRESERVE_FIRST_UNITS`, `SELECTIVE_CONTEXT_PRESERVE_LAST_UNITS`, `SELECTIVE_CONTEXT_MAX_LENGTH`, `SELECTIVE_CONTEXT_DEVICE`, `SELECTIVE_CONTEXT_LOCAL_FILES_ONLY`, and `SELECTIVE_CONTEXT_FAIL_OPEN`.
+
+The default `phrase` level follows the official implementation's spaCy tokenizer. Install the English model before running phrase-level compression:
+
+```bash
+python -m spacy download en_core_web_sm
+```
 
 ### 🔗 Integrate into other multi-agent systems frameworks
 

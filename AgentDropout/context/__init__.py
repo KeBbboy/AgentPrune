@@ -1,4 +1,5 @@
 from AgentDropout.context.selective_context import (
+    SelectiveContext,
     SelectiveContextCompressor,
     SelectiveContextConfig,
     TokenScore,
@@ -8,6 +9,7 @@ from AgentDropout.context.selective_context import (
 )
 
 __all__ = [
+    "SelectiveContext",
     "SelectiveContextCompressor",
     "SelectiveContextConfig",
     "TokenScore",

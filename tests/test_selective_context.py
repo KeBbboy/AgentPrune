@@ -1,6 +1,7 @@
 import re
 
 from AgentDropout.context.selective_context import (
+    SelectiveContext,
     SelectiveContextCompressor,
     SelectiveContextConfig,
     TokenScore,
@@ -12,10 +13,90 @@ class FakeScorer:
     def score(self, text):
         token_scores = []
         for match in re.finditer(r"\S+", text):
-            token = match.group(0).lower()
-            score = 10.0 if "rare" in token or "insight" in token else 1.0
+            token = re.sub(r"[^a-z0-9]+", "", match.group(0).lower())
+            if token in {"rare", "insight", "detail"}:
+                score = 10.0
+            elif token == "verylow":
+                score = 0.1
+            elif token == "low":
+                score = 0.2
+            else:
+                score = 1.0
             token_scores.append(TokenScore(match.start(), match.end(), score))
         return token_scores
+
+
+def test_selective_context_default_model_is_qwen():
+    assert SelectiveContextConfig().model_name == "Qwen/Qwen2.5-0.5B"
+
+
+def test_official_style_call_returns_context_and_reduced_content():
+    sc = SelectiveContext(model_type="Qwen/Qwen2.5-0.5B", lang="en", scorer=FakeScorer())
+    text = (
+        "verylow verylow. "
+        "Rare insight sentence should stay. "
+        "low low."
+    )
+
+    context, reduced_content = sc(text, reduce_ratio=0.5, reduce_level="sent")
+
+    assert "Rare insight sentence should stay." in context
+    assert "verylow verylow." not in context
+    assert any("verylow verylow." in unit for unit in reduced_content)
+
+
+def test_phrase_split_uses_official_style_spacy_tokens(monkeypatch):
+    class FakeToken:
+        def __init__(self, text, idx, whitespace):
+            self.text = text
+            self.idx = idx
+            self.whitespace_ = whitespace
+
+    class FakeDoc(list):
+        pass
+
+    sc = SelectiveContext(model_type="Qwen/Qwen2.5-0.5B", lang="en", scorer=FakeScorer())
+
+    def fake_phrase_tokenizer():
+        return lambda text: FakeDoc(
+            [
+                FakeToken("The rare phrase", 0, " "),
+                FakeToken("low", 16, " "),
+                FakeToken("detail", 20, ""),
+            ]
+        )
+
+    monkeypatch.setattr(sc, "_get_phrase_tokenizer", fake_phrase_tokenizer)
+
+    context, reduced_content = sc(
+        "The rare phrase low detail",
+        reduce_ratio=0.5,
+        reduce_level="phrase",
+    )
+
+    assert "The rare phrase" in context
+    assert "detail" in context
+    assert "low" not in context
+    assert reduced_content == ["low"]
+
+
+def test_official_style_reserved_context_ratio_keeps_tail_uncompressed():
+    sc = SelectiveContext(model_type="Qwen/Qwen2.5-0.5B", lang="en", scorer=FakeScorer())
+    text = (
+        "verylow verylow. "
+        "Rare insight sentence should stay. "
+        "Reserved tail should remain untouched."
+    )
+
+    context, reduced_content = sc(
+        text,
+        reduce_ratio=0.5,
+        reduce_level="sent",
+        reserved_context_ratio=0.5,
+    )
+
+    assert "Reserved tail should remain untouched." in context
+    assert reduced_content
 
 
 def test_selective_context_keeps_high_surprisal_and_protected_units():
@@ -23,7 +104,7 @@ def test_selective_context_keeps_high_surprisal_and_protected_units():
         SelectiveContextConfig(
             enabled=True,
             reduce_ratio=0.4,
-            granularity="sentence",
+            granularity="sent",
             min_chars=0,
             min_units=1,
             preserve_first_line=False,
@@ -34,9 +115,9 @@ def test_selective_context_keeps_high_surprisal_and_protected_units():
     )
     text = (
         "First answer should stay. "
-        "Boring middle sentence one. "
+        "verylow verylow. "
         "Rare insight sentence should stay. "
-        "Boring middle sentence two. "
+        "low low. "
         "Final answer should stay."
     )
 
@@ -45,8 +126,8 @@ def test_selective_context_keeps_high_surprisal_and_protected_units():
     assert "First answer should stay." in compressed
     assert "Rare insight sentence should stay." in compressed
     assert "Final answer should stay." in compressed
-    assert "Boring middle sentence one." not in compressed
-    assert "Boring middle sentence two." not in compressed
+    assert "verylow verylow." not in compressed
+    assert "low low." not in compressed
 
 
 def test_selective_context_compresses_string_lists():
@@ -54,7 +135,7 @@ def test_selective_context_compresses_string_lists():
         SelectiveContextConfig(
             enabled=True,
             reduce_ratio=0.5,
-            granularity="sentence",
+            granularity="sent",
             min_chars=0,
             min_units=1,
             preserve_first_line=False,
@@ -64,8 +145,8 @@ def test_selective_context_compresses_string_lists():
         scorer=FakeScorer(),
     )
     payload = [
-        "Boring sentence. Rare insight should stay.",
-        "Another boring sentence. Rare detail should stay.",
+        "verylow verylow. Rare insight should stay.",
+        "low low. Rare detail should stay.",
     ]
 
     compressed = compressor.compress_payload(payload)
@@ -106,7 +187,7 @@ def test_selective_context_preserves_first_line_answer():
         SelectiveContextConfig(
             enabled=True,
             reduce_ratio=0.5,
-            granularity="sentence",
+            granularity="sent",
             min_chars=0,
             min_units=1,
             preserve_first_line=True,
@@ -117,13 +198,13 @@ def test_selective_context_preserves_first_line_answer():
     )
     text = (
         "Answer: B\n"
-        "Boring middle sentence one. "
+        "verylow verylow. "
         "Rare insight sentence should stay. "
-        "Boring middle sentence two."
+        "low low."
     )
 
     compressed = compressor.compress(text)
 
     assert compressed.startswith("Answer: B\n")
     assert "Rare insight sentence should stay." in compressed
-    assert "Boring middle sentence one." not in compressed
+    assert "verylow verylow." not in compressed
