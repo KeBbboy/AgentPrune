@@ -1,4 +1,5 @@
 import glob
+import re
 import pandas as pd
 from typing import Union, List, Literal, Any, Dict
 import numpy as np
@@ -78,12 +79,29 @@ class MMLUDataset(ABC):
                 answer = ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
-        if len(answer) > 0:
-            ans_pos = answer.find("answer is")
-            if ans_pos != -1:
-                answer = answer[ans_pos+len("answer is"):].strip(":").strip().strip("Option").strip()
-            answer = answer[0] # Try to format the answer by taking the first letter
-        return answer
+        answer = answer.strip()
+        if len(answer) == 0:
+            return answer
+
+        first_line = ""
+        for line in answer.splitlines():
+            if line.strip():
+                first_line = line.strip()
+                break
+
+        match = re.match(r"^\**\s*([A-D])(?:\s|$|[).:：,-])", first_line, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+
+        match = re.search(
+            r"\b(?:answer|option|choose)\s*(?:is|:)?\s*(?:option\s+)?([A-D])\b",
+            first_line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).upper()
+
+        return first_line[0]
 
     @staticmethod
     def record_to_target_answer(record: pd.DataFrame) -> str:

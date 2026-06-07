@@ -1,9 +1,8 @@
+import json
 import re
 import random
 from pathlib import Path
 from typing import Dict, Iterator, List
-
-from AgentDropout.tools.reader.readers import JSONLReader
 
 def gsm_data_process(dataset):
     # extract the question, step and answer
@@ -17,6 +16,11 @@ def gsm_data_process(dataset):
         list_data_dict.append(item)
 
     return list_data_dict
+
+
+def _read_jsonl(file_path: Path | str) -> list:
+    with open(file_path, "r", encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def gsm_get_predict(pred_str):
@@ -148,7 +152,7 @@ class GSM8KDataset:
         )
 
     def _load_data(self) -> List[Dict[str, str]]:
-        dataset = JSONLReader.parse_file(self._resolve_dataset_path())
+        dataset = _read_jsonl(self._resolve_dataset_path())
         records = gsm_data_process(dataset)
         random.Random(self._shuffle_seed).shuffle(records)
         print("Total number of questions: ", len(records))
@@ -169,7 +173,7 @@ class GSM8KDataset:
 
 
 def load_gsm8k_dataset(dataset_path: str) -> list[dict[str, str]]:
-    dataset = JSONLReader.parse_file(dataset_path)
+    dataset = _read_jsonl(dataset_path)
     return gsm_data_process(dataset)
 
 

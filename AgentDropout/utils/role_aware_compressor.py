@@ -15,8 +15,48 @@ DEFAULT_DEDUP_THRESHOLD = 0.88
 DEFAULT_NODE_AWARE_TOTAL_BUDGET = 10
 DEFAULT_NODE_AWARE_RATE = 1.0
 DEFAULT_NODE_AWARE_SOURCE_WEIGHT = 0.3
+DEFAULT_QWEN_REWRITE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS = 128
+TEMPORAL_FIELD_PROTOTYPES = {
+    "key_reason": (
+        "important reason",
+        "key clue",
+        "main rationale",
+        "decisive evidence",
+        "core reasoning",
+    ),
+    "evidence": (
+        "supporting fact",
+        "computed result",
+        "observation",
+        "given condition",
+        "calculation detail",
+    ),
+    "disagreement": (
+        "wrong alternative",
+        "contradiction",
+        "rejected option",
+        "incorrect answer",
+        "opposing conclusion",
+    ),
+    "uncertainty": (
+        "uncertain conclusion",
+        "not sure",
+        "ambiguous evidence",
+        "cannot determine",
+        "possible limitation",
+    ),
+}
+TEMPORAL_FIELD_BUDGETS = {
+    "key_reason": 1,
+    "evidence": 1,
+    "disagreement": 1,
+    "uncertainty": 1,
+}
 _EMBEDDER_CACHE = {}
 _EMBEDDER_LOCK = threading.Lock()
+_REWRITER_CACHE = {}
+_REWRITER_LOCK = threading.Lock()
 
 
 class RoleAwareEdgeCompressor:
@@ -31,6 +71,9 @@ class RoleAwareEdgeCompressor:
         min_sentences: int = 2,
         preserve_answer_line: bool = True,
         compress_code: bool = False,
+        rewrite_with_qwen: bool = False,
+        rewrite_model_name: str = DEFAULT_QWEN_REWRITE_MODEL,
+        rewrite_max_new_tokens: int = DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS,
         debug: bool = False,
     ):
         if not 0 < float(rate) <= 1:
@@ -45,17 +88,23 @@ class RoleAwareEdgeCompressor:
         self.min_sentences = max(1, int(min_sentences))
         self.preserve_answer_line = preserve_answer_line
         self.compress_code = compress_code
+        self.rewrite_with_qwen = bool(rewrite_with_qwen)
+        self.rewrite_model_name = rewrite_model_name or DEFAULT_QWEN_REWRITE_MODEL
+        self.rewrite_max_new_tokens = max(1, int(rewrite_max_new_tokens))
         self.debug = debug
         self.num_seen = 0
         self.num_compressed = 0
+        self.num_rewritten = 0
         self.original_sentences = 0
         self.compressed_sentences = 0
         self.last_sentence_scores: list[tuple[str, float]] = []
         self._embedder = None
+        self._rewriter = None
 
     def __getstate__(self):
         state = self.__dict__.copy()
         state["_embedder"] = None
+        state["_rewriter"] = None
         return state
 
     def __setstate__(self, state):
@@ -79,6 +128,8 @@ class RoleAwareEdgeCompressor:
         if not stripped_text:
             return text
         if self._is_code_payload(stripped_text, domain):
+            return text
+        if source == "temporal":
             return text
 
         self.num_seen += 1
@@ -116,9 +167,22 @@ class RoleAwareEdgeCompressor:
         if len(selected_sentences) >= len(sentences):
             return text
 
+        compressed = self._maybe_rewrite(
+            compressed,
+            original_text=stripped_text,
+            domain=domain,
+            sender_role=role,
+            receiver_role=receiver_role,
+            receiver_description=receiver_description,
+            receiver_agent=receiver_agent,
+            message_type=message_type,
+            source=source,
+            answer_line=answer_line,
+        )
+
         self.num_compressed += 1
         self.original_sentences += len(sentences)
-        self.compressed_sentences += len(selected_sentences)
+        self.compressed_sentences += max(1, len(self._split_sentences(compressed)))
         if self.debug:
             self._print_debug(
                 sender_role=role,
@@ -133,13 +197,20 @@ class RoleAwareEdgeCompressor:
 
     def summary(self) -> str:
         if self.num_compressed == 0:
-            return "Role-aware edge compressor compressed 0 messages."
-        ratio = self.compressed_sentences / max(self.original_sentences, 1)
-        return (
-            f"Role-aware edge compressor compressed {self.num_compressed}/{self.num_seen} messages "
-            f"from {self.original_sentences} to {self.compressed_sentences} sentences "
-            f"(keep ratio {ratio:.3f})."
-        )
+            summary = "Role-aware edge compressor compressed 0 messages."
+        else:
+            ratio = self.compressed_sentences / max(self.original_sentences, 1)
+            summary = (
+                f"Role-aware edge compressor compressed {self.num_compressed}/{self.num_seen} messages "
+                f"from {self.original_sentences} to {self.compressed_sentences} sentences "
+                f"(keep ratio {ratio:.3f})."
+            )
+        if self.rewrite_with_qwen:
+            summary += (
+                f" Qwen rewrite accepted {self.num_rewritten} messages "
+                f"with {self.rewrite_model_name}."
+            )
+        return summary
 
     def _load_embedder(self):
         if self._embedder is not None:
@@ -169,10 +240,10 @@ class RoleAwareEdgeCompressor:
             _EMBEDDER_CACHE[self.model_name] = self._embedder
             return self._embedder
 
-    def _score_sentences(self, sentences: list[str], role_query: str):
+    def _embed_texts(self, texts: list[str]) -> np.ndarray:
         tokenizer, model, device = self._load_embedder()
         encoded = tokenizer(
-            [role_query] + sentences,
+            texts,
             padding=True,
             truncation=True,
             return_tensors="pt",
@@ -186,11 +257,230 @@ class RoleAwareEdgeCompressor:
         summed = masked_hidden.sum(dim=1)
         counts = attention_mask.sum(dim=1).clamp(min=1e-9)
         embeddings = torch.nn.functional.normalize(summed / counts, p=2, dim=1)
-        embeddings = embeddings.cpu().numpy().astype(np.float32)
+        return embeddings.cpu().numpy().astype(np.float32)
+
+    def _score_sentences(self, sentences: list[str], role_query: str):
+        embeddings = self._embed_texts([role_query] + sentences)
         role_embedding = embeddings[0]
         sentence_embeddings = embeddings[1:]
         scores = np.matmul(sentence_embeddings, role_embedding)
         return scores.astype(float).tolist(), sentence_embeddings
+
+    def _load_rewriter(self):
+        if self._rewriter is not None:
+            return self._rewriter
+        if self.rewrite_model_name in _REWRITER_CACHE:
+            self._rewriter = _REWRITER_CACHE[self.rewrite_model_name]
+            return self._rewriter
+
+        with _REWRITER_LOCK:
+            if self.rewrite_model_name in _REWRITER_CACHE:
+                self._rewriter = _REWRITER_CACHE[self.rewrite_model_name]
+                return self._rewriter
+            try:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Qwen rewrite is enabled, but `transformers` is not installed. "
+                    "Install project requirements first."
+                ) from exc
+
+            tokenizer = AutoTokenizer.from_pretrained(
+                self.rewrite_model_name,
+                trust_remote_code=True,
+            )
+            load_kwargs = {"trust_remote_code": True}
+            if torch.cuda.is_available():
+                load_kwargs["torch_dtype"] = torch.float16
+            model = AutoModelForCausalLM.from_pretrained(
+                self.rewrite_model_name,
+                **load_kwargs,
+            )
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model = model.to(device)
+            model.eval()
+            self._rewriter = (tokenizer, model, device)
+            _REWRITER_CACHE[self.rewrite_model_name] = self._rewriter
+            return self._rewriter
+
+    def _maybe_rewrite(
+        self,
+        compressed: str,
+        original_text: str,
+        domain: str,
+        sender_role: str,
+        receiver_role: str,
+        receiver_description: str,
+        receiver_agent: str,
+        message_type: str,
+        source: str,
+        answer_line: str | None = None,
+    ) -> str:
+        if not self.rewrite_with_qwen:
+            return compressed
+        if not compressed.strip() or self._is_code_payload(compressed, domain):
+            return compressed
+
+        try:
+            rewritten = self._rewrite_with_qwen(
+                compressed=compressed,
+                original_text=original_text,
+                sender_role=sender_role,
+                receiver_role=receiver_role,
+                receiver_description=receiver_description,
+                receiver_agent=receiver_agent,
+                message_type=message_type,
+                source=source,
+            )
+        except Exception as exc:
+            if self.debug:
+                print(f"[RoleAwareRewrite] skipped after generation error: {exc}")
+            return compressed
+
+        rewritten = self._validate_rewrite(
+            rewritten=rewritten,
+            compressed=compressed,
+            answer_line=answer_line,
+        )
+        if rewritten is None:
+            return compressed
+
+        self.num_rewritten += 1
+        return rewritten
+
+    def _rewrite_with_qwen(
+        self,
+        compressed: str,
+        original_text: str,
+        sender_role: str,
+        receiver_role: str,
+        receiver_description: str,
+        receiver_agent: str,
+        message_type: str,
+        source: str,
+    ) -> str:
+        tokenizer, model, device = self._load_rewriter()
+        prompt = self._rewrite_prompt(
+            compressed=compressed,
+            original_text=original_text,
+            sender_role=sender_role,
+            receiver_role=receiver_role,
+            receiver_description=receiver_description,
+            receiver_agent=receiver_agent,
+            message_type=message_type,
+            source=source,
+        )
+        if hasattr(tokenizer, "apply_chat_template"):
+            prompt_text = tokenizer.apply_chat_template(
+                prompt,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        else:
+            prompt_text = "\n".join(message["content"] for message in prompt)
+
+        encoded = tokenizer(prompt_text, return_tensors="pt")
+        encoded = {key: value.to(device) for key, value in encoded.items()}
+        input_length = encoded["input_ids"].shape[-1]
+        pad_token_id = getattr(tokenizer, "pad_token_id", None)
+        if pad_token_id is None:
+            pad_token_id = getattr(tokenizer, "eos_token_id", None)
+        with torch.no_grad():
+            generated = model.generate(
+                **encoded,
+                max_new_tokens=self.rewrite_max_new_tokens,
+                do_sample=False,
+                pad_token_id=pad_token_id,
+            )
+        generated_tokens = generated[0][input_length:]
+        return tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+
+    def _rewrite_prompt(
+        self,
+        compressed: str,
+        original_text: str,
+        sender_role: str,
+        receiver_role: str,
+        receiver_description: str,
+        receiver_agent: str,
+        message_type: str,
+        source: str,
+    ) -> list[dict[str, str]]:
+        receiver = self._receiver_query(receiver_role, receiver_description, receiver_agent)
+        user_parts = [
+            f"Sender role: {sender_role or 'unknown'}",
+            f"Receiver role: {receiver or 'unknown'}",
+            f"Source: {source}",
+            f"Message type: {message_type}",
+            "Compressed message to rewrite:",
+            compressed,
+        ]
+        if original_text != compressed:
+            user_parts.extend(["Original message for reference:", original_text])
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Rewrite inter-agent reasoning messages into a shorter, clear note. "
+                    "Preserve final answers, option letters, numbers, equations, code, "
+                    "and structured labels exactly. Drop filler. Return only the rewritten note."
+                ),
+            },
+            {"role": "user", "content": "\n".join(user_parts)},
+        ]
+
+    def _validate_rewrite(
+        self,
+        rewritten: str,
+        compressed: str,
+        answer_line: str | None,
+    ) -> str | None:
+        rewritten = self._strip_rewrite_output(rewritten)
+        if not rewritten:
+            return None
+
+        if answer_line is not None:
+            _, rewritten_body = self._split_leading_answer_line(rewritten)
+            rewritten = self._restore_leading_answer_line(rewritten_body.strip(), answer_line)
+
+        rewritten = self._restore_memory_card_constraints(
+            rewritten=rewritten,
+            compressed=compressed,
+        )
+        if rewritten == compressed:
+            return None
+        if self._approx_word_count(rewritten) >= self._approx_word_count(compressed):
+            return None
+        return rewritten
+
+    def _strip_rewrite_output(self, text: str) -> str:
+        text = text.strip()
+        text = re.sub(r"^```(?:text)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+        for prefix in ("rewritten note:", "rewritten message:", "rewrite:"):
+            if text.lower().startswith(prefix):
+                return text[len(prefix):].strip()
+        return text
+
+    def _restore_memory_card_constraints(self, rewritten: str, compressed: str) -> str:
+        if not compressed.lstrip().startswith("[MemoryCard]"):
+            return rewritten
+
+        answer_match = re.search(r"^answer:\s*(.+)$", compressed, flags=re.MULTILINE)
+        if not rewritten.lstrip().startswith("[MemoryCard]"):
+            rewritten = "[MemoryCard]\n" + rewritten.lstrip()
+        if answer_match is None:
+            return rewritten
+
+        answer_line = f"answer: {answer_match.group(1).strip()}"
+        if re.search(rf"^{re.escape(answer_line)}$", rewritten, flags=re.MULTILINE):
+            return rewritten
+
+        lines = rewritten.splitlines()
+        if lines:
+            lines.insert(1, answer_line)
+            return "\n".join(lines).strip()
+        return f"[MemoryCard]\n{answer_line}"
 
     def _select_sentences(
         self,
@@ -279,6 +569,169 @@ class RoleAwareEdgeCompressor:
         if answer_line is None:
             return text
         return f"{answer_line}\n{text}" if text else answer_line
+
+    def _compress_temporal_memory_card(
+        self,
+        text: str,
+        sender_role: str,
+        receiver_role: str,
+        receiver_description: str,
+        receiver_agent: str,
+        domain: str,
+        message_type: str,
+    ) -> str | None:
+        answer_line, compressible_text = self._split_leading_answer_line(text)
+        answer = self._extract_temporal_answer(text, answer_line, domain)
+        sentences = self._split_sentences(compressible_text)
+        if not answer and not sentences:
+            return None
+
+        role_query = self._receiver_query(receiver_role, receiver_description, receiver_agent)
+        fields = self._extract_temporal_fields(sentences, role_query)
+        card = self._format_temporal_memory_card(
+            answer=answer,
+            fields=fields,
+            sender_role=sender_role,
+        )
+        if not card:
+            return None
+        if self._approx_word_count(card) >= self._approx_word_count(text):
+            return None
+
+        card = self._maybe_rewrite(
+            card,
+            original_text=text,
+            domain=domain,
+            sender_role=sender_role,
+            receiver_role=receiver_role,
+            receiver_description=receiver_description,
+            receiver_agent=receiver_agent,
+            message_type=message_type,
+            source="temporal",
+        )
+
+        self.num_compressed += 1
+        self.original_sentences += max(1, len(sentences))
+        self.compressed_sentences += max(1, len(card.splitlines()))
+        return card
+
+    def _extract_temporal_answer(
+        self,
+        text: str,
+        answer_line: str | None,
+        domain: str,
+    ) -> str:
+        if answer_line:
+            return answer_line
+
+        if domain in {"mmlu", "mmlu_pro", ""}:
+            option_match = re.search(
+                r"\b(?:final\s+answer|answer|answer\s+is)\s*(?:is|:)?\s*([A-D])\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+            if option_match is not None:
+                return option_match.group(1).upper()
+
+        numeric_match = re.search(
+            r"\b(?:final\s+answer|answer|answer\s+is)\s*(?:is|:)?\s*(-?\d+(?:\.\d+)?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if numeric_match is not None:
+            return numeric_match.group(1)
+        return ""
+
+    def _extract_temporal_fields(
+        self,
+        sentences: list[str],
+        role_query: str,
+    ) -> dict[str, list[str]]:
+        fields: dict[str, list[tuple[str, float]]] = {
+            field_name: [] for field_name in TEMPORAL_FIELD_BUDGETS
+        }
+        if not sentences:
+            return {field_name: [] for field_name in TEMPORAL_FIELD_BUDGETS}
+
+        role_scores = [0.0] * len(sentences)
+        field_scores = self._score_temporal_fields(sentences)
+        if role_query:
+            role_scores, _ = self._score_sentences(sentences, role_query)
+
+        for idx, sentence in enumerate(sentences):
+            forced_field = self._forced_temporal_field(sentence)
+            if forced_field is not None:
+                field_name = forced_field
+                score = 1.0 + role_scores[idx]
+            else:
+                field_name, score = max(
+                    field_scores[idx].items(),
+                    key=lambda item: item[1],
+                )
+                score += 0.25 * role_scores[idx]
+            fields[field_name].append((sentence, float(score)))
+
+        selected_fields: dict[str, list[str]] = {}
+        for field_name, candidates in fields.items():
+            budget = TEMPORAL_FIELD_BUDGETS[field_name]
+            ranked = sorted(candidates, key=lambda item: item[1], reverse=True)
+            selected_fields[field_name] = [sentence for sentence, _ in ranked[:budget]]
+        return selected_fields
+
+    def _score_temporal_fields(self, sentences: list[str]) -> list[dict[str, float]]:
+        prototype_texts = []
+        prototype_fields = []
+        for field_name, prototypes in TEMPORAL_FIELD_PROTOTYPES.items():
+            for prototype in prototypes:
+                prototype_texts.append(prototype)
+                prototype_fields.append(field_name)
+
+        embeddings = self._embed_texts(sentences + prototype_texts)
+        sentence_embeddings = embeddings[:len(sentences)]
+        prototype_embeddings = embeddings[len(sentences):]
+        similarities = np.matmul(sentence_embeddings, prototype_embeddings.T)
+
+        field_scores = []
+        for row in similarities:
+            scores = {field_name: 0.0 for field_name in TEMPORAL_FIELD_PROTOTYPES}
+            for score, field_name in zip(row, prototype_fields):
+                scores[field_name] = max(scores[field_name], float(score))
+            field_scores.append(scores)
+        return field_scores
+
+    def _forced_temporal_field(self, sentence: str) -> str | None:
+        lower = sentence.lower()
+        if re.search(r"\b(maybe|possibly|unclear|uncertain|not sure|cannot determine)\b", lower):
+            return "uncertainty"
+        disagreement_pattern = (
+            r"\b(wrong|incorrect|reject|rejected|contradict|fails)\b"
+            r"|\b(?:option\s+)?[A-D]\s+(?:is\s+)?not\b"
+            r"|\bis\s+not\s+(?:correct|valid|true|the\s+answer)\b"
+        )
+        if re.search(disagreement_pattern, lower):
+            return "disagreement"
+        return None
+
+    def _format_temporal_memory_card(
+        self,
+        answer: str,
+        fields: dict[str, list[str]],
+        sender_role: str,
+    ) -> str:
+        lines = ["[MemoryCard]"]
+        if answer:
+            lines.append(f"answer: {answer}")
+        for field_name in ("key_reason", "evidence", "disagreement", "uncertainty"):
+            values = fields.get(field_name, [])
+            if not values:
+                continue
+            lines.append(f"{field_name}: {' '.join(values)}")
+        if sender_role:
+            lines.append(f"role: {sender_role}")
+        return "\n".join(lines).strip() if len(lines) > 1 else ""
+
+    def _approx_word_count(self, text: str) -> int:
+        return len(re.findall(r"\S+", text))
 
     def _is_code_payload(self, text: str, domain: str) -> bool:
         if self.compress_code:
@@ -514,6 +967,23 @@ def add_role_aware_args(parser):
         action="store_true",
         help="Aggregate and deduplicate spatial messages at each receiver node.",
     )
+    parser.add_argument(
+        "--role_aware_qwen_rewrite",
+        action="store_true",
+        help="Rewrite role-aware compressed messages with a Qwen 0.5B model when the rewrite is shorter.",
+    )
+    parser.add_argument(
+        "--role_aware_qwen_model_name",
+        type=str,
+        default=DEFAULT_QWEN_REWRITE_MODEL,
+        help="HF model used for optional Qwen rewrite.",
+    )
+    parser.add_argument(
+        "--role_aware_qwen_max_new_tokens",
+        type=int,
+        default=DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS,
+        help="Maximum new tokens for optional Qwen rewrite.",
+    )
 
 
 def role_aware_graph_kwargs(args) -> dict[str, Any]:
@@ -525,6 +995,13 @@ def role_aware_graph_kwargs(args) -> dict[str, Any]:
         "role_aware_dedup_threshold": getattr(args, "role_aware_dedup_threshold", DEFAULT_DEDUP_THRESHOLD),
         "role_aware_min_sentences": getattr(args, "role_aware_min_sentences", 2),
         "role_aware_compress_code": getattr(args, "role_aware_compress_code", False),
+        "role_aware_qwen_rewrite": getattr(args, "role_aware_qwen_rewrite", False),
+        "role_aware_qwen_model_name": getattr(args, "role_aware_qwen_model_name", DEFAULT_QWEN_REWRITE_MODEL),
+        "role_aware_qwen_max_new_tokens": getattr(
+            args,
+            "role_aware_qwen_max_new_tokens",
+            DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS,
+        ),
         "role_aware_debug": getattr(args, "role_aware_debug", False),
         "node_aware_aggregation": getattr(args, "node_aware_aggregation", False),
         "node_aware_model_name": getattr(args, "node_aware_model_name", DEFAULT_ROLE_AWARE_MODEL),

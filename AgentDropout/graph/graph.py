@@ -17,11 +17,14 @@ from AgentDropout.utils.role_aware_compressor import (
     DEFAULT_NODE_AWARE_RATE,
     DEFAULT_NODE_AWARE_SOURCE_WEIGHT,
     DEFAULT_NODE_AWARE_TOTAL_BUDGET,
+    DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS,
+    DEFAULT_QWEN_REWRITE_MODEL,
     DEFAULT_ROLE_AWARE_MODEL,
     DEFAULT_ROLE_AWARE_RATE,
     RoleAwareEdgeCompressor,
     RoleAwareNodeAggregator,
 )
+from AgentDropout.utils.temporal_api_summarizer import TemporalAPISummarizer
 import random
 
 class Graph(ABC):
@@ -74,6 +77,9 @@ class Graph(ABC):
                 role_aware_dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
                 role_aware_min_sentences: int = 2,
                 role_aware_compress_code: bool = False,
+                role_aware_qwen_rewrite: bool = False,
+                role_aware_qwen_model_name: str = DEFAULT_QWEN_REWRITE_MODEL,
+                role_aware_qwen_max_new_tokens: int = DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS,
                 role_aware_debug: bool = False,
                 node_aware_aggregation: bool = False,
                 node_aware_model_name: str = None,
@@ -82,6 +88,12 @@ class Graph(ABC):
                 node_aware_dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
                 node_aware_source_weight: float = DEFAULT_NODE_AWARE_SOURCE_WEIGHT,
                 node_aware_debug: bool = False,
+                temporal_api_summary: bool = False,
+                temporal_summary_mode: str = "answer_only",
+                temporal_option_word_budget: int | None = None,
+                temporal_reason_word_budget: int | None = None,
+                temporal_reliable_majority_threshold: float = 0.75,
+                temporal_full_history_edges: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -113,9 +125,13 @@ class Graph(ABC):
         self.node_kwargs = node_kwargs if node_kwargs is not None else [{} for _ in agent_names]
         self.diff=diff
         self.rounds=rounds
+        self.temporal_full_history_edges = bool(temporal_full_history_edges)
         self.message_compression_scope = llmlingua2_scope
         self.message_compression_enabled = (
-            llmlingua2_compression or role_aware_compression or node_aware_aggregation
+            llmlingua2_compression
+            or role_aware_compression
+            or node_aware_aggregation
+            or temporal_api_summary
         )
         self.message_compressor = self._build_message_compressor(
             enabled=llmlingua2_compression,
@@ -130,6 +146,9 @@ class Graph(ABC):
             role_aware_dedup_threshold=role_aware_dedup_threshold,
             role_aware_min_sentences=role_aware_min_sentences,
             role_aware_compress_code=role_aware_compress_code,
+            role_aware_qwen_rewrite=role_aware_qwen_rewrite,
+            role_aware_qwen_model_name=role_aware_qwen_model_name,
+            role_aware_qwen_max_new_tokens=role_aware_qwen_max_new_tokens,
             role_aware_debug=role_aware_debug,
         )
         self.spatial_aggregator = self._build_spatial_aggregator(
@@ -140,6 +159,13 @@ class Graph(ABC):
             dedup_threshold=node_aware_dedup_threshold,
             source_weight=node_aware_source_weight,
             debug=node_aware_debug,
+        )
+        self.temporal_aggregator = self._build_temporal_aggregator(
+            enabled=temporal_api_summary,
+            summary_mode=temporal_summary_mode,
+            option_word_budget=temporal_option_word_budget,
+            reason_word_budget=temporal_reason_word_budget,
+            reliable_majority_threshold=temporal_reliable_majority_threshold,
         )
         # self.dec=False
         self.dec_1=False
@@ -209,6 +235,9 @@ class Graph(ABC):
         role_aware_dedup_threshold: float,
         role_aware_min_sentences: int,
         role_aware_compress_code: bool,
+        role_aware_qwen_rewrite: bool,
+        role_aware_qwen_model_name: str,
+        role_aware_qwen_max_new_tokens: int,
         role_aware_debug: bool,
     ):
         if enabled and role_aware_enabled:
@@ -221,6 +250,9 @@ class Graph(ABC):
                 dedup_threshold=role_aware_dedup_threshold,
                 min_sentences=role_aware_min_sentences,
                 compress_code=role_aware_compress_code,
+                rewrite_with_qwen=role_aware_qwen_rewrite,
+                rewrite_model_name=role_aware_qwen_model_name,
+                rewrite_max_new_tokens=role_aware_qwen_max_new_tokens,
                 debug=role_aware_debug,
             )
         if not enabled:
@@ -253,6 +285,23 @@ class Graph(ABC):
             debug=debug,
         )
 
+    def _build_temporal_aggregator(
+        self,
+        enabled: bool,
+        summary_mode: str,
+        option_word_budget: int | None,
+        reason_word_budget: int | None,
+        reliable_majority_threshold: float,
+    ):
+        if not enabled:
+            return None
+        return TemporalAPISummarizer(
+            summary_mode=summary_mode,
+            option_word_budget=option_word_budget,
+            reason_word_budget=reason_word_budget,
+            reliable_majority_threshold=reliable_majority_threshold,
+        )
+
     def attach_message_compressor(self):
         message_compressor = self.message_compressor if self.message_compression_enabled else None
         spatial_aggregator = self.spatial_aggregator if self.message_compression_enabled else None
@@ -267,13 +316,17 @@ class Graph(ABC):
 
         self.decision_node.message_compressor = decision_compressor
         self.decision_node.spatial_aggregator = None
+        self.decision_node.temporal_aggregator = None
         for node in self.nodes.values():
             node.message_compressor = node_compressor
             node.spatial_aggregator = spatial_aggregator
+            node.temporal_aggregator = self.temporal_aggregator if self.message_compression_enabled else None
 
     def set_message_compression_enabled(self, enabled: bool):
         self.message_compression_enabled = bool(enabled) and (
-            self.message_compressor is not None or self.spatial_aggregator is not None
+            self.message_compressor is not None
+            or self.spatial_aggregator is not None
+            or self.temporal_aggregator is not None
         )
         self.attach_message_compressor()
 
@@ -287,7 +340,11 @@ class Graph(ABC):
             self.set_message_compression_enabled(previous_enabled)
 
     def message_compression_summary(self) -> str:
-        if self.message_compressor is None and self.spatial_aggregator is None:
+        if (
+            self.message_compressor is None
+            and self.spatial_aggregator is None
+            and self.temporal_aggregator is None
+        ):
             return "Message compression disabled."
         if not self.message_compression_enabled:
             return "Message compression temporarily disabled."
@@ -296,6 +353,8 @@ class Graph(ABC):
             summaries.append(f"{self.message_compressor.summary()} Scope: {self.message_compression_scope}.")
         if self.spatial_aggregator is not None:
             summaries.append(self.spatial_aggregator.summary())
+        if self.temporal_aggregator is not None:
+            summaries.append(self.temporal_aggregator.summary())
         return " ".join(summaries)
         
     @property
@@ -546,10 +605,9 @@ class Graph(ABC):
             if edge_mask == 0.0:
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
-                if not self.check_cycle(in_node, {out_node}):
+                if self.temporal_full_history_edges or not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
                     out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx)
-                    # print(potential_connection)
                 continue
             
             edge_prob = torch.sigmoid(edge_logit / temperature)
@@ -578,7 +636,7 @@ class Graph(ABC):
             if edge_mask == 0.0:
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
-                if not self.check_cycle(in_node, {out_node}):
+                if self.temporal_full_history_edges or not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
                     out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx, round=round)
                 continue

@@ -66,6 +66,7 @@ class Node(ABC):
         self.temporal_message_types: Dict[str, str] = {}
         self.message_compressor = None
         self.spatial_aggregator = None
+        self.temporal_aggregator = None
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}        
 
     @property
@@ -195,6 +196,8 @@ class Node(ABC):
         source: str,
         message_type: str,
     ) -> Any:
+        if source == "temporal":
+            return output
         if self.message_compressor is None:
             return output
         if not isinstance(output, str):
@@ -221,6 +224,34 @@ class Node(ABC):
             receiver_agent=self.agent_name,
         )
 
+    def _aggregate_temporal_info(self, temporal_info: Dict[str, Dict], raw_inputs: Any = None) -> Dict[str, Dict]:
+        if self.temporal_aggregator is None:
+            return temporal_info
+        return self.temporal_aggregator.aggregate(
+            temporal_info,
+            raw_inputs=raw_inputs,
+            domain=self.domain,
+            receiver_id=self.id,
+            receiver_role=self.role,
+            receiver_description=self._receiver_description(),
+            receiver_agent=self.agent_name,
+        )
+
+    async def _aaggregate_temporal_info(self, temporal_info: Dict[str, Dict], raw_inputs: Any = None) -> Dict[str, Dict]:
+        if self.temporal_aggregator is None:
+            return temporal_info
+        if hasattr(self.temporal_aggregator, "aaggregate"):
+            return await self.temporal_aggregator.aaggregate(
+                temporal_info,
+                raw_inputs=raw_inputs,
+                domain=self.domain,
+                receiver_id=self.id,
+                receiver_role=self.role,
+                receiver_description=self._receiver_description(),
+                receiver_agent=self.agent_name,
+            )
+        return self._aggregate_temporal_info(temporal_info)
+
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
         spatial_info = {}
@@ -242,7 +273,7 @@ class Node(ABC):
 
         return self._aggregate_spatial_info(spatial_info)
 
-    def get_temporal_info(self)->Dict[str,Any]:
+    def get_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
         temporal_info = {}
         if self.temporal_predecessors is not None:
             for predecessor in self.temporal_predecessors:
@@ -260,12 +291,32 @@ class Node(ABC):
                     "message_type": message_type,
                 }
         
-        return temporal_info
+        return self._aggregate_temporal_info(temporal_info, raw_inputs=raw_inputs)
+
+    async def aget_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
+        temporal_info = {}
+        if self.temporal_predecessors is not None:
+            for predecessor in self.temporal_predecessors:
+                predecessor_outputs = predecessor.last_memory['outputs']
+                if isinstance(predecessor_outputs, list) and len(predecessor_outputs):
+                    predecessor_output = predecessor_outputs[-1]
+                elif isinstance(predecessor_outputs, list) and len(predecessor_outputs)==0:
+                    continue
+                else:
+                    predecessor_output = predecessor_outputs
+                message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="temporal")
+                temporal_info[predecessor.id] = {
+                    "role": predecessor.role,
+                    "output": selected_output,
+                    "message_type": message_type,
+                }
+
+        return await self._aaggregate_temporal_info(temporal_info, raw_inputs=raw_inputs)
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []
         spatial_info:Dict[str,Dict] = self.get_spatial_info()
-        temporal_info:Dict[str,Dict] = self.get_temporal_info()
+        temporal_info:Dict[str,Dict] = self.get_temporal_info(raw_inputs=input)
         results = [self._execute(input, spatial_info, temporal_info, **kwargs)]
 
         for result in results:
@@ -279,7 +330,7 @@ class Node(ABC):
 
         self.outputs = []
         spatial_info:Dict[str,Any] = self.get_spatial_info()
-        temporal_info:Dict[str,Any] = self.get_temporal_info()
+        temporal_info:Dict[str,Any] = await self.aget_temporal_info(raw_inputs=input)
         # print(temporal_info)
         tasks = [asyncio.create_task(self._async_execute(input, spatial_info, temporal_info, **kwargs))]
         results = await asyncio.gather(*tasks, return_exceptions=False)

@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import wikipedia
 import asyncio
+
+try:
+    import wikipedia
+except ImportError:
+    wikipedia = None
 
 class WikiSearch:
     def __init__(self):
@@ -10,6 +14,8 @@ class WikiSearch:
         self.description = "Seach for an item in Wikipedia"
 
     def search(self, query):
+        if wikipedia is None:
+            return None
         result = wikipedia.search(query[:300], results=1, suggestion=True)
         print(result)
         if len(result[0]) != 0:
@@ -22,6 +28,8 @@ class WikiSearch:
         return None
 
 async def get_wikipedia_summary(title):
+    if wikipedia is None:
+        return ""
     try:
         wikipedia.set_lang("en")
         summ = wikipedia.summary(title)
@@ -32,6 +40,8 @@ async def get_wikipedia_summary(title):
         return ""
 
 async def search_wiki(query):
+    if wikipedia is None:
+        return ""
     wikipedia.set_lang("en")
     result = wikipedia.search(query, results=2, suggestion=True)
     print(result)
@@ -53,6 +63,8 @@ async def search_wiki(query):
 
 
 async def search_wiki_main(queries):
+    if wikipedia is None:
+        return []
     tasks = [search_wiki(query) for query in queries]
     results = await asyncio.gather(*tasks)
     return results

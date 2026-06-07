@@ -74,6 +74,26 @@ class FinalRefer(Node):
         self.llm = LLMRegistry.get(llm_name)
         self.prompt_set = PromptSetRegistry.get(domain)
 
+    def _unanimous_non_scenario_answer(self, raw_inputs: Dict[str, str], spatial_info: Dict[str, Any]) -> str | None:
+        task = str(raw_inputs.get("task", "")) if isinstance(raw_inputs, dict) else ""
+        if "Scenario 1" in task and "Scenario 2" in task:
+            return None
+
+        votes = []
+        for info in spatial_info.values():
+            output = info.get("output", "") if isinstance(info, dict) else ""
+            try:
+                vote = self.prompt_set.postprocess_answer(output)
+            except Exception:
+                vote = ""
+            if not vote:
+                return None
+            votes.append(vote)
+
+        if votes and len(set(votes)) == 1:
+            return votes[0]
+        return None
+
     def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Any], temporal_info:Dict[str,Any], **kwargs)->List[Any]:
         """ To be overriden by the descendant class """
         """ Process the raw_inputs(most of the time is a List[Dict]) """
@@ -91,6 +111,9 @@ class FinalRefer(Node):
     def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
         """ To be overriden by the descendant class """
         """ Use the processed input to get the result """
+        unanimous_answer = self._unanimous_non_scenario_answer(input, spatial_info)
+        if unanimous_answer is not None:
+            return unanimous_answer
   
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
@@ -100,6 +123,10 @@ class FinalRefer(Node):
     async def _async_execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
         """ To be overriden by the descendant class """
         """ Use the processed input to get the result """
+        unanimous_answer = self._unanimous_non_scenario_answer(input, spatial_info)
+        if unanimous_answer is not None:
+            return unanimous_answer
+
         # print(678)
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]

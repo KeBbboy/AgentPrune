@@ -125,6 +125,18 @@ keeps up to 10 spatial sentences per receiver, uses `0.88` for cross-sender
 deduplication, and ranks sentences with `0.7 * sentence_score + 0.3 *
 source_score`.
 
+Temporal history can also be compressed into receiver-scoped peer answer-label
+memory. When `--temporal_api_summary` is enabled, each receiver reads only its
+actual previous-round temporal predecessors and passes each predecessor with a
+parseable answer as a compact label such as `B`; unparseable temporal outputs
+are preserved as a fallback. This keeps temporal masks meaningful while
+avoiding previous-round free-form reasoning text, synthetic shared vote
+summaries, and extra API model calls.
+
+```bash
+python experiments/run_mmlu.py --mode FullConnected --agent_nums 5 --num_rounds 2 --temporal_api_summary
+```
+
 ### ▶️ Run AgentPrune on MMLU-Pro
 
 Place `dev/val` split files under `dataset/mmlu_pro/`. If you are using the official `TIGER-Lab/MMLU-Pro` release, the loader also accepts `validation/test` filenames and maps them to the default `dev/val` behavior. Then run:

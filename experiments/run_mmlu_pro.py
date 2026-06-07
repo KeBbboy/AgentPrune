@@ -8,6 +8,11 @@ import torch
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
+from AgentDropout.utils.role_aware_compressor import add_role_aware_args, role_aware_graph_kwargs
+from AgentDropout.utils.temporal_api_summarizer import (
+    add_temporal_api_summary_args,
+    temporal_api_summary_graph_kwargs,
+)
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, PromptTokens
 from dataset.mmlu_pro_dataset import MMLUProDataset
@@ -46,6 +51,8 @@ def parse_args():
     parser.add_argument('--cot', action='store_true')
     parser.add_argument('--limit_questions', type=int, default=153)
     add_llmlingua2_args(parser)
+    add_role_aware_args(parser)
+    add_temporal_api_summary_args(parser)
     args = parser.parse_args()
 
     (AgentPrune_ROOT / "result").mkdir(exist_ok=True)
@@ -71,6 +78,8 @@ async def main():
         dec=args.dec,
         **kwargs,
         **llmlingua2_graph_kwargs(args),
+        **role_aware_graph_kwargs(args),
+        **temporal_api_summary_graph_kwargs(args),
     )
 
     dataset_train = MMLUProDataset('dev')

@@ -1,5 +1,6 @@
 import aiohttp
 import asyncio
+from contextlib import asynccontextmanager
 import time
 from typing import List, Union, Optional
 from tenacity import retry, wait_random_exponential, stop_after_attempt
@@ -7,8 +8,12 @@ from typing import Dict, Any
 from dotenv import load_dotenv
 import os
 from openai import AsyncOpenAI
-import async_timeout
 from transformers import AutoTokenizer
+
+try:
+    import async_timeout
+except ImportError:
+    async_timeout = None
 
 from AgentDropout.llm.format import Message
 from AgentDropout.llm.price import cost_count, cost_count_llama3, cost_count_deepseek
@@ -38,6 +43,19 @@ LLM_RETRY_ATTEMPTS = max(1, int(os.getenv("LLM_RETRY_ATTEMPTS", "8")))
 _LLM_REQUEST_SEMAPHORE = asyncio.Semaphore(LLM_MAX_CONCURRENT_REQUESTS)
 _LLM_REQUEST_LOCK = asyncio.Lock()
 _LAST_LLM_REQUEST_TS = 0.0
+
+
+@asynccontextmanager
+async def _noop_async_timeout():
+    yield
+
+
+def _llm_timeout(seconds: float):
+    if async_timeout is not None:
+        return async_timeout.timeout(seconds)
+    if hasattr(asyncio, "timeout"):
+        return asyncio.timeout(seconds)
+    return _noop_async_timeout()
 
 
 async def _wait_for_llm_slot() -> None:
@@ -89,7 +107,7 @@ async def achat(model: str, msg: List[Dict],):
         api_kwargs["base_url"] = MINE_BASE_URL
     aclient = AsyncOpenAI(**api_kwargs)
     try:
-        async with async_timeout.timeout(1000):
+        async with _llm_timeout(1000):
             completion = await aclient.chat.completions.create(model=model,messages=msg)
         response_message = completion.choices[0].message.content
         
@@ -108,7 +126,7 @@ async def achat_deepseek(model: str, msg: List[Dict],):
     api_kwargs = dict(api_key = deepseek_api, base_url = deepseek_url)
     aclient = AsyncOpenAI(**api_kwargs)
     try:
-        async with async_timeout.timeout(1000):
+        async with _llm_timeout(1000):
             completion = await aclient.chat.completions.create(model=model,messages=msg)
         # print(completion)
         response_message = completion.choices[0].message.content
@@ -130,7 +148,7 @@ async def achat_llama(model: str, msg: List[Dict]):
     try:
         async with _LLM_REQUEST_SEMAPHORE:
             await _wait_for_llm_slot()
-            async with async_timeout.timeout(1000):
+            async with _llm_timeout(1000):
                 completion = await aclient.chat.completions.create(model=model,messages=msg)
         response_message = completion.choices[0].message.content
         
