@@ -13,14 +13,6 @@ from AgentDropout.utils.llmlingua2_compressor import (
     LLMLingua2MessageCompressor,
 )
 from AgentDropout.utils.role_aware_compressor import (
-    DEFAULT_DEDUP_THRESHOLD,
-    DEFAULT_NODE_AWARE_RATE,
-    DEFAULT_NODE_AWARE_SOURCE_WEIGHT,
-    DEFAULT_NODE_AWARE_TOTAL_BUDGET,
-    DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS,
-    DEFAULT_QWEN_REWRITE_MODEL,
-    DEFAULT_ROLE_AWARE_MODEL,
-    DEFAULT_ROLE_AWARE_RATE,
     RoleAwareEdgeCompressor,
     RoleAwareNodeAggregator,
 )
@@ -71,28 +63,9 @@ class Graph(ABC):
                 llmlingua2_compress_code: bool = False,
                 llmlingua2_scope: str = "all",
                 role_aware_compression: bool = False,
-                role_aware_model_name: str = None,
-                role_aware_rate: float = DEFAULT_ROLE_AWARE_RATE,
-                role_aware_sentence_budget: int = 0,
-                role_aware_dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
-                role_aware_min_sentences: int = 2,
-                role_aware_compress_code: bool = False,
-                role_aware_qwen_rewrite: bool = False,
-                role_aware_qwen_model_name: str = DEFAULT_QWEN_REWRITE_MODEL,
-                role_aware_qwen_max_new_tokens: int = DEFAULT_QWEN_REWRITE_MAX_NEW_TOKENS,
-                role_aware_debug: bool = False,
                 node_aware_aggregation: bool = False,
-                node_aware_model_name: str = None,
-                node_aware_rate: float = DEFAULT_NODE_AWARE_RATE,
-                node_aware_total_budget: int = DEFAULT_NODE_AWARE_TOTAL_BUDGET,
-                node_aware_dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
-                node_aware_source_weight: float = DEFAULT_NODE_AWARE_SOURCE_WEIGHT,
-                node_aware_debug: bool = False,
                 temporal_api_summary: bool = False,
                 temporal_summary_mode: str = "answer_only",
-                temporal_option_word_budget: int | None = None,
-                temporal_reason_word_budget: int | None = None,
-                temporal_reliable_majority_threshold: float = 0.75,
                 temporal_full_history_edges: bool = False,
                 ):
         
@@ -140,32 +113,11 @@ class Graph(ABC):
             min_tokens=llmlingua2_min_tokens,
             compress_code=llmlingua2_compress_code,
             role_aware_enabled=role_aware_compression,
-            role_aware_model_name=role_aware_model_name,
-            role_aware_rate=role_aware_rate,
-            role_aware_sentence_budget=role_aware_sentence_budget,
-            role_aware_dedup_threshold=role_aware_dedup_threshold,
-            role_aware_min_sentences=role_aware_min_sentences,
-            role_aware_compress_code=role_aware_compress_code,
-            role_aware_qwen_rewrite=role_aware_qwen_rewrite,
-            role_aware_qwen_model_name=role_aware_qwen_model_name,
-            role_aware_qwen_max_new_tokens=role_aware_qwen_max_new_tokens,
-            role_aware_debug=role_aware_debug,
         )
-        self.spatial_aggregator = self._build_spatial_aggregator(
-            enabled=node_aware_aggregation,
-            model_name=node_aware_model_name,
-            rate=node_aware_rate,
-            total_budget=node_aware_total_budget,
-            dedup_threshold=node_aware_dedup_threshold,
-            source_weight=node_aware_source_weight,
-            debug=node_aware_debug,
-        )
+        self.spatial_aggregator = self._build_spatial_aggregator(enabled=node_aware_aggregation)
         self.temporal_aggregator = self._build_temporal_aggregator(
             enabled=temporal_api_summary,
             summary_mode=temporal_summary_mode,
-            option_word_budget=temporal_option_word_budget,
-            reason_word_budget=temporal_reason_word_budget,
-            reliable_majority_threshold=temporal_reliable_majority_threshold,
         )
         # self.dec=False
         self.dec_1=False
@@ -229,32 +181,11 @@ class Graph(ABC):
         min_tokens: int,
         compress_code: bool,
         role_aware_enabled: bool,
-        role_aware_model_name: str | None,
-        role_aware_rate: float,
-        role_aware_sentence_budget: int,
-        role_aware_dedup_threshold: float,
-        role_aware_min_sentences: int,
-        role_aware_compress_code: bool,
-        role_aware_qwen_rewrite: bool,
-        role_aware_qwen_model_name: str,
-        role_aware_qwen_max_new_tokens: int,
-        role_aware_debug: bool,
     ):
         if enabled and role_aware_enabled:
             raise ValueError("Enable either LLMLingua-2 compression or role-aware compression, not both.")
         if role_aware_enabled:
-            return RoleAwareEdgeCompressor(
-                model_name=role_aware_model_name or DEFAULT_ROLE_AWARE_MODEL,
-                rate=role_aware_rate,
-                sentence_budget=role_aware_sentence_budget,
-                dedup_threshold=role_aware_dedup_threshold,
-                min_sentences=role_aware_min_sentences,
-                compress_code=role_aware_compress_code,
-                rewrite_with_qwen=role_aware_qwen_rewrite,
-                rewrite_model_name=role_aware_qwen_model_name,
-                rewrite_max_new_tokens=role_aware_qwen_max_new_tokens,
-                debug=role_aware_debug,
-            )
+            return RoleAwareEdgeCompressor()
         if not enabled:
             return None
         return LLMLingua2MessageCompressor(
@@ -264,42 +195,20 @@ class Graph(ABC):
             compress_code=compress_code,
         )
 
-    def _build_spatial_aggregator(
-        self,
-        enabled: bool,
-        model_name: str | None,
-        rate: float,
-        total_budget: int,
-        dedup_threshold: float,
-        source_weight: float,
-        debug: bool,
-    ):
+    def _build_spatial_aggregator(self, enabled: bool):
         if not enabled:
             return None
-        return RoleAwareNodeAggregator(
-            model_name=model_name or DEFAULT_ROLE_AWARE_MODEL,
-            rate=rate,
-            total_budget=total_budget,
-            dedup_threshold=dedup_threshold,
-            source_weight=source_weight,
-            debug=debug,
-        )
+        return RoleAwareNodeAggregator()
 
     def _build_temporal_aggregator(
         self,
         enabled: bool,
         summary_mode: str,
-        option_word_budget: int | None,
-        reason_word_budget: int | None,
-        reliable_majority_threshold: float,
     ):
         if not enabled:
             return None
         return TemporalAPISummarizer(
             summary_mode=summary_mode,
-            option_word_budget=option_word_budget,
-            reason_word_budget=reason_word_budget,
-            reliable_majority_threshold=reliable_majority_threshold,
         )
 
     def attach_message_compressor(self):

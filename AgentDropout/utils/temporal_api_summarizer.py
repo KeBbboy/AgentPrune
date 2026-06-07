@@ -5,12 +5,9 @@ from collections import Counter
 from typing import Any
 
 
-DEFAULT_TEMPORAL_OPTION_WORD_BUDGET = 0
-DEFAULT_TEMPORAL_REASON_WORD_BUDGET = 0
 DEFAULT_TEMPORAL_CONFLICT_OPTION_WORD_BUDGET = 12
 DEFAULT_TEMPORAL_CONFLICT_REASON_WORD_BUDGET = 18
 DEFAULT_TEMPORAL_RELIABLE_MAJORITY_THRESHOLD = 0.75
-DEFAULT_TEMPORAL_IGNORED_ROLES: set[str] = set()
 DEFAULT_TEMPORAL_VOTE_STATE_ID = "__temporal_vote_state__"
 TEMPORAL_SUMMARY_MODES = ("answer_only", "vote_state", "conflict_clue")
 
@@ -20,47 +17,29 @@ class TemporalAPISummarizer:
 
     def __init__(
         self,
-        option_word_budget: int | None = None,
-        reason_word_budget: int | None = None,
-        ignored_sender_roles: set[str] | None = None,
-        include_vote_state: bool = True,
         summary_mode: str | None = None,
-        reliable_majority_threshold: float = DEFAULT_TEMPORAL_RELIABLE_MAJORITY_THRESHOLD,
-        debug: bool = False,
     ):
         if summary_mode is None:
-            summary_mode = "vote_state" if include_vote_state else "answer_only"
+            summary_mode = "vote_state"
         if summary_mode not in TEMPORAL_SUMMARY_MODES:
             raise ValueError(
                 f"Unknown temporal summary mode: {summary_mode}. "
                 f"Choose one of {', '.join(TEMPORAL_SUMMARY_MODES)}."
             )
-        if option_word_budget is None:
-            option_word_budget = (
-                DEFAULT_TEMPORAL_CONFLICT_OPTION_WORD_BUDGET
-                if summary_mode == "conflict_clue"
-                else DEFAULT_TEMPORAL_OPTION_WORD_BUDGET
-            )
-        if reason_word_budget is None:
-            reason_word_budget = (
-                DEFAULT_TEMPORAL_CONFLICT_REASON_WORD_BUDGET
-                if summary_mode == "conflict_clue"
-                else DEFAULT_TEMPORAL_REASON_WORD_BUDGET
-            )
         self.summary_mode = summary_mode
-        self.option_word_budget = max(0, int(option_word_budget))
-        self.reason_word_budget = max(0, int(reason_word_budget))
-        self.reliable_majority_threshold = max(0.5, min(1.0, float(reliable_majority_threshold)))
-        self.ignored_sender_roles = (
-            set(DEFAULT_TEMPORAL_IGNORED_ROLES)
-            if ignored_sender_roles is None
-            else set(ignored_sender_roles)
+        self.option_word_budget = (
+            DEFAULT_TEMPORAL_CONFLICT_OPTION_WORD_BUDGET
+            if summary_mode == "conflict_clue"
+            else 0
         )
-        self.include_vote_state = self.summary_mode in {"vote_state", "conflict_clue"}
-        self.debug = debug
+        self.reason_word_budget = (
+            DEFAULT_TEMPORAL_CONFLICT_REASON_WORD_BUDGET
+            if summary_mode == "conflict_clue"
+            else 0
+        )
+        self.reliable_majority_threshold = DEFAULT_TEMPORAL_RELIABLE_MAJORITY_THRESHOLD
         self.num_seen = 0
         self.num_compressed = 0
-        self.num_role_filtered = 0
         self.original_words = 0
         self.compressed_words = 0
 
@@ -383,7 +362,6 @@ class TemporalAPISummarizer:
         ratio = self.compressed_words / max(self.original_words, 1)
         return (
             f"Temporal {self.summary_mode} compressor compressed {self.num_compressed} messages "
-            f"and filtered {self.num_role_filtered} low-reliability role messages "
             f"from {self.original_words} to {self.compressed_words} words "
             f"(keep ratio {ratio:.3f})."
         )
@@ -395,10 +373,6 @@ class TemporalAPISummarizer:
             if not isinstance(output, str) or not output.strip():
                 continue
             if "None." in output:
-                continue
-            role = str(info.get("role", ""))
-            if role in self.ignored_sender_roles:
-                self.num_role_filtered += 1
                 continue
             eligible_info[sender_id] = info
         return eligible_info
@@ -521,24 +495,6 @@ def add_temporal_api_summary_args(parser):
         ),
     )
     parser.add_argument(
-        "--temporal_option_word_budget",
-        type=int,
-        default=None,
-        help="Optional word budget for option text in temporal summaries.",
-    )
-    parser.add_argument(
-        "--temporal_reason_word_budget",
-        type=int,
-        default=None,
-        help="Optional word budget for conflict rationale clues in temporal summaries.",
-    )
-    parser.add_argument(
-        "--temporal_reliable_majority_threshold",
-        type=float,
-        default=DEFAULT_TEMPORAL_RELIABLE_MAJORITY_THRESHOLD,
-        help="Peer-vote fraction required before temporal memory calls a majority reliable.",
-    )
-    parser.add_argument(
         "--temporal_full_history_edges",
         action="store_true",
         help=(
@@ -552,12 +508,5 @@ def temporal_api_summary_graph_kwargs(args) -> dict[str, Any]:
     return {
         "temporal_api_summary": getattr(args, "temporal_api_summary", False),
         "temporal_summary_mode": getattr(args, "temporal_summary_mode", "answer_only"),
-        "temporal_option_word_budget": getattr(args, "temporal_option_word_budget", None),
-        "temporal_reason_word_budget": getattr(args, "temporal_reason_word_budget", None),
-        "temporal_reliable_majority_threshold": getattr(
-            args,
-            "temporal_reliable_majority_threshold",
-            DEFAULT_TEMPORAL_RELIABLE_MAJORITY_THRESHOLD,
-        ),
         "temporal_full_history_edges": getattr(args, "temporal_full_history_edges", False),
     }
