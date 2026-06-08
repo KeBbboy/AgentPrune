@@ -72,6 +72,8 @@ class RoleAwareEdgeCompressor:
         compressible_text = stripped_text
         if self.preserve_answer_line:
             answer_line, compressible_text = self._split_leading_answer_line(stripped_text)
+            if answer_line is None:
+                answer_line, compressible_text = self._split_trailing_answer_line(stripped_text, domain)
 
         sentences = self._split_sentences(compressible_text)
         if len(sentences) < self.min_sentences:
@@ -242,7 +244,7 @@ class RoleAwareEdgeCompressor:
             stripped = line.strip()
             if not stripped:
                 continue
-            match = re.match(r"^([A-D])(?:$|[\s).:：](.*)$)", stripped)
+            match = re.match(r"^([A-J])(?:$|[\s).:：](.*)$)", stripped)
             if not match:
                 break
 
@@ -255,6 +257,37 @@ class RoleAwareEdgeCompressor:
             compressible_lines.extend(remaining_lines)
             return answer_line, "\n".join(compressible_lines)
         return None, text
+
+    def _split_trailing_answer_line(self, text: str, domain: str) -> tuple[str | None, str]:
+        if domain == "humaneval":
+            return None, text
+
+        lines = text.splitlines()
+        for idx in range(len(lines) - 1, -1, -1):
+            stripped = lines[idx].strip()
+            if not stripped:
+                continue
+            if not self._is_answer_line(stripped):
+                return None, text
+
+            remaining_lines = lines[:idx] + lines[idx + 1:]
+            return stripped, "\n".join(remaining_lines)
+        return None, text
+
+    def _is_answer_line(self, line: str) -> bool:
+        return bool(
+            re.match(r"^[A-J](?:$|[\s).:：,-])", line, flags=re.IGNORECASE)
+            or re.search(
+                r"\b(?:the\s+)?(?:final\s+)?answer\s*(?:is|:)\s*(?:option\s+)?[A-J]\b",
+                line,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"\b(?:the\s+)?(?:final\s+)?answer\s*(?:is|:)\s*-?\d[\d,]*(?:\.\d+)?(?:/\d+)?\b",
+                line,
+                flags=re.IGNORECASE,
+            )
+        )
 
     def _restore_leading_answer_line(self, text: str, answer_line: str | None) -> str:
         if answer_line is None:
@@ -311,7 +344,10 @@ class RoleAwareNodeAggregator(RoleAwareEdgeCompressor):
             if self._is_code_payload(output.strip(), domain):
                 continue
 
-            answer_line, compressible_text = self._split_leading_answer_line(output.strip())
+            stripped_output = output.strip()
+            answer_line, compressible_text = self._split_leading_answer_line(stripped_output)
+            if answer_line is None:
+                answer_line, compressible_text = self._split_trailing_answer_line(stripped_output, domain)
             sentences = self._split_sentences(compressible_text)
             if not sentences:
                 continue

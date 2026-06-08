@@ -10,6 +10,7 @@ DEFAULT_TEMPORAL_CONFLICT_REASON_WORD_BUDGET = 18
 DEFAULT_TEMPORAL_RELIABLE_MAJORITY_THRESHOLD = 0.75
 DEFAULT_TEMPORAL_VOTE_STATE_ID = "__temporal_vote_state__"
 TEMPORAL_SUMMARY_MODES = ("answer_only", "vote_state", "conflict_clue")
+NUMERIC_TEMPORAL_DOMAINS = {"gsm8k", "svamp", "multiarith", "math", "mathc"}
 
 
 class TemporalAPISummarizer:
@@ -66,17 +67,22 @@ class TemporalAPISummarizer:
                 domain=domain,
                 include_conflict_clues=self.summary_mode == "conflict_clue",
             )
-        return self._aggregate_individual_labels(eligible_info, option_map=option_map)
+        return self._aggregate_individual_labels(
+            eligible_info,
+            option_map=option_map,
+            domain=domain,
+        )
 
     def _aggregate_individual_labels(
         self,
         eligible_info: dict[str, dict],
         option_map: dict[str, str] | None = None,
+        domain: str = "",
     ) -> dict[str, dict]:
         compressed_info: dict[str, dict] = {}
         for sender_id, info in eligible_info.items():
             output = str(info.get("output", "")).strip()
-            compressed_output = self._compress_output(output, option_map=option_map)
+            compressed_output = self._compress_output(output, option_map=option_map, domain=domain)
             updated_info = dict(info)
             updated_info["output"] = compressed_output
             updated_info["message_type"] = "temporal_edge_compressed"
@@ -104,7 +110,7 @@ class TemporalAPISummarizer:
         for sender_id, info in eligible_info.items():
             output = str(info.get("output", "")).strip()
             original_words += self._approx_word_count(output)
-            answer = self._extract_answer_label(output)
+            answer = self._extract_answer_label(output, domain=domain)
             if answer:
                 parsed_entries.append(
                     {
@@ -377,8 +383,13 @@ class TemporalAPISummarizer:
             eligible_info[sender_id] = info
         return eligible_info
 
-    def _compress_output(self, output: str, option_map: dict[str, str] | None = None) -> str:
-        answer = self._extract_answer_label(output)
+    def _compress_output(
+        self,
+        output: str,
+        option_map: dict[str, str] | None = None,
+        domain: str = "",
+    ) -> str:
+        answer = self._extract_answer_label(output, domain=domain)
         if answer:
             compressed = answer
             option_text = (option_map or {}).get(answer)
@@ -442,7 +453,7 @@ class TemporalAPISummarizer:
             return text
         return " ".join(words[:budget]).rstrip(".,;:") + "..."
 
-    def _extract_answer_label(self, output: str) -> str | None:
+    def _extract_answer_label(self, output: str, domain: str = "") -> str | None:
         if not output:
             return None
 
@@ -472,7 +483,27 @@ class TemporalAPISummarizer:
             match = re.search(pattern, output, flags=re.IGNORECASE)
             if match:
                 return match.group(1).upper()
+        if domain in NUMERIC_TEMPORAL_DOMAINS:
+            return self._extract_numeric_answer(output)
         return None
+
+    def _extract_numeric_answer(self, output: str) -> str | None:
+        answer_patterns = (
+            r"\b(?:the\s+)?(?:final\s+)?answer\s*(?:is|:)\s*(-?\d[\d,]*(?:\.\d+)?(?:/\d+)?)\b",
+            r"####\s*(-?\d[\d,]*(?:\.\d+)?(?:/\d+)?)\b",
+        )
+        for pattern in answer_patterns:
+            match = re.search(pattern, output, flags=re.IGNORECASE)
+            if match:
+                return self._normalize_numeric_answer(match.group(1))
+
+        numbers = re.findall(r"-?\d[\d,]*(?:\.\d+)?(?:/\d+)?", output)
+        if not numbers:
+            return None
+        return self._normalize_numeric_answer(numbers[-1])
+
+    def _normalize_numeric_answer(self, answer: str) -> str:
+        return answer.strip().rstrip(".,;:").replace(",", "")
 
     def _approx_word_count(self, text: str) -> int:
         return len(re.findall(r"\S+", text))

@@ -17,6 +17,11 @@ sys.stdout.reconfigure(encoding='utf-8')
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
+from AgentDropout.utils.role_aware_compressor import add_role_aware_args, role_aware_graph_kwargs
+from AgentDropout.utils.temporal_api_summarizer import (
+    add_temporal_api_summary_args,
+    temporal_api_summary_graph_kwargs,
+)
 from AgentDropout.tools.reader.readers import JSONLReader, JSONReader
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
@@ -37,6 +42,15 @@ def load_result(result_file):
 
 def dataloader(data_list, batch_size, i_batch):
     return data_list[i_batch*batch_size:i_batch*batch_size + batch_size]
+
+def _record_step(record):
+    if not isinstance(record, dict):
+        return ""
+    for key in ("step", "rationale", "solution", "explanation"):
+        value = record.get(key)
+        if value:
+            return value
+    return ""
 
 def load_config(config_path):
     with open(config_path, 'r',encoding='utf-8') as file:
@@ -70,6 +84,8 @@ def parse_args():
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
     add_llmlingua2_args(parser)
+    add_role_aware_args(parser)
+    add_temporal_api_summary_args(parser)
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -108,7 +124,9 @@ async def main():
                     diff=args.diff,
                     dec=args.dec,
                     **kwargs,
-                    **llmlingua2_graph_kwargs(args))
+                    **llmlingua2_graph_kwargs(args),
+                    **role_aware_graph_kwargs(args),
+                    **temporal_api_summary_graph_kwargs(args))
     
     if args.dec:
         graph.optimized_spatial=False
@@ -160,7 +178,6 @@ async def main():
                 add_loss = loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
                 add_loss=0
                 task = record["task"]
-                step = record["step"]
                 answer = record["answer"]
                 answers.append(answer)
                 input_dict = {"task": task}
@@ -186,7 +203,7 @@ async def main():
                 updated_item = {
                     "Question": task,
                     "Answer": true_answer,
-                    "Step": step,
+                    "Step": _record_step(task),
                     "Response": answer,
                     "Attempt answer": predict_answer,
                     "Solved": is_solved,
@@ -290,7 +307,6 @@ async def main():
                 add_loss = loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
                 
                 task = record["task"]
-                step = record["step"]
                 answer = record["answer"]
                 answers.append(answer)
                 input_dict = {"task": task}
@@ -316,7 +332,7 @@ async def main():
                 updated_item = {
                     "Question": task,
                     "Answer": true_answer,
-                    "Step": step,
+                    "Step": _record_step(task),
                     "Response": answer,
                     "Attempt answer": predict_answer,
                     "Solved": is_solved,
@@ -405,7 +421,6 @@ async def main():
             print("No more data available.")
             break
         
-        print(11111111)
         for i_record, record in enumerate(current_batch):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
@@ -436,7 +451,6 @@ async def main():
             add_loss = loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
             
             task = record["task"]
-            step = record["step"]
             answer = record["answer"]
             answers.append(answer)
             input_dict = {"task": task}
@@ -444,9 +458,7 @@ async def main():
 
             add_losses.append(add_loss)
         
-        print(22222222)
         raw_results = await asyncio.gather(*answer_log_probs)
-        print(33333333)
         raw_answers, log_probs, all_answers = zip(*raw_results)
         loss_list: List[torch.Tensor] = []
         utilities: List[float] = []
@@ -467,7 +479,7 @@ async def main():
             updated_item = {
                 "Question": task,
                 "Answer": true_answer,
-                "Step": step,
+                "Step": _record_step(task),
                 "All_answers": all_answer,
                 "Response": answer,
                 "Attempt answer": predict_answer,

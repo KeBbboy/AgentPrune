@@ -16,6 +16,11 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
+from AgentDropout.utils.role_aware_compressor import add_role_aware_args, role_aware_graph_kwargs
+from AgentDropout.utils.temporal_api_summarizer import (
+    add_temporal_api_summary_args,
+    temporal_api_summary_graph_kwargs,
+)
 from AgentDropout.tools.reader.readers import JSONLReader
 from AgentDropout.tools.coding.python_executor import PyExecutor
 from AgentDropout.utils.globals import Time
@@ -67,6 +72,8 @@ def parse_args():
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
     add_llmlingua2_args(parser)
+    add_role_aware_args(parser)
+    add_temporal_api_summary_args(parser)
     
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
@@ -99,7 +106,9 @@ async def main():
                   diff=args.diff,
                   dec=args.dec,
                   **kwargs,
-                  **llmlingua2_graph_kwargs(args))
+                  **llmlingua2_graph_kwargs(args),
+                  **role_aware_graph_kwargs(args),
+                  **temporal_api_summary_graph_kwargs(args))
 
     if args.dec:
         graph.optimized_spatial=False
