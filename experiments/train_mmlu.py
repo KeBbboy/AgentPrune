@@ -15,19 +15,49 @@ from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
 
 
+def _should_optimize_structure(args) -> bool:
+    if args is None:
+        return True
+    return bool(
+        getattr(args, "optimized_spatial", False)
+        or getattr(args, "optimized_temporal", False)
+        or getattr(args, "dec", False)
+    )
+
+
 def _optimizer_params_with_dgap(graph: Graph, params: list, args=None) -> list:
+    include_structure = _should_optimize_structure(args)
     if not getattr(graph, "message_pruning_enabled", False):
         return params
     dgap_params = graph.message_pruning_parameters()
     if not dgap_params:
         return params
-    return [
-        {"params": params},
+    optimizer_params = []
+    if include_structure:
+        optimizer_params.append({"params": params})
+    optimizer_params.append(
         {
             "params": dgap_params,
             "lr": float(getattr(args, "dgap_lr", 0.001)),
-        },
-    ]
+        }
+    )
+    return optimizer_params
+
+
+def _structure_loss_or_zero(add_loss, args):
+    if _should_optimize_structure(args):
+        return add_loss
+    if torch.is_tensor(add_loss):
+        return torch.zeros_like(add_loss)
+    return 0.0
+
+
+def _structure_policy_loss(log_prob: torch.Tensor, utility: float, args):
+    if _should_optimize_structure(args):
+        return -log_prob * utility
+    if torch.is_tensor(log_prob):
+        return torch.zeros_like(log_prob)
+    return 0.0
 
 def _share_dgap_parameters(realized_graph: Graph, graph: Graph):
     if hasattr(realized_graph, "share_dgap_parameters"):
@@ -179,8 +209,8 @@ async def train(graph:Graph,
                 accuracy.update(answer, correct_answer)
                 utility = accuracy.get()
                 utilities.append(utility)
-                single_loss = - log_prob * utility
-                loss_list.append(single_loss + add_loss + _dgap_content_loss(realized_graph, args, utility))
+                single_loss = _structure_policy_loss(log_prob, utility, args)
+                loss_list.append(single_loss + _structure_loss_or_zero(add_loss, args) + _dgap_content_loss(realized_graph, args, utility))
                 print(f"correct answer:{correct_answer}")
         
             total_loss = torch.mean(torch.stack(loss_list))
@@ -231,8 +261,8 @@ async def train(graph:Graph,
             lr=lr,
         )
     
-    graph.optimized_spatial=True
-    graph.optimized_temporal=True
+    graph.optimized_spatial = bool(getattr(args, "optimized_spatial", graph.optimized_spatial))
+    graph.optimized_temporal = bool(getattr(args, "optimized_temporal", graph.optimized_temporal))
 
     for i_iter in range(num_iters):
         print(f"Train {i_iter + 1}/{num_iters}", 80*'-')
@@ -314,8 +344,8 @@ async def train(graph:Graph,
             accuracy.update(answer, correct_answer)
             utility = accuracy.get()
             utilities.append(utility)
-            single_loss = - log_prob * utility
-            loss_list.append(single_loss + add_loss + _dgap_content_loss(realized_graph, args, utility))
+            single_loss = _structure_policy_loss(log_prob, utility, args)
+            loss_list.append(single_loss + _structure_loss_or_zero(add_loss, args) + _dgap_content_loss(realized_graph, args, utility))
             print(f"correct answer:{correct_answer}")
     
         total_loss = torch.mean(torch.stack(loss_list))
