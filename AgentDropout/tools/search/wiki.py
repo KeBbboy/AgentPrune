@@ -1,8 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import wikipedia
 import asyncio
+
+
+def _load_wikipedia():
+    try:
+        import wikipedia
+    except ImportError as exc:
+        raise RuntimeError(
+            "Wikipedia search requires the `wikipedia` package. "
+            "Install project requirements or run `pip install wikipedia==1.4.0`."
+        ) from exc
+    return wikipedia
 
 class WikiSearch:
     def __init__(self):
@@ -10,6 +20,7 @@ class WikiSearch:
         self.description = "Seach for an item in Wikipedia"
 
     def search(self, query):
+        wikipedia = _load_wikipedia()
         result = wikipedia.search(query[:300], results=1, suggestion=True)
         print(result)
         if len(result[0]) != 0:
@@ -22,6 +33,7 @@ class WikiSearch:
         return None
 
 async def get_wikipedia_summary(title):
+    wikipedia = _load_wikipedia()
     try:
         wikipedia.set_lang("en")
         summ = wikipedia.summary(title)
@@ -32,6 +44,7 @@ async def get_wikipedia_summary(title):
         return ""
 
 async def search_wiki(query):
+    wikipedia = _load_wikipedia()
     wikipedia.set_lang("en")
     result = wikipedia.search(query, results=2, suggestion=True)
     print(result)

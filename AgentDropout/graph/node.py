@@ -65,6 +65,7 @@ class Node(ABC):
         self.spatial_message_types: Dict[str, str] = {}
         self.temporal_message_types: Dict[str, str] = {}
         self.message_compressor = None
+        self.message_pruner = None
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}        
 
     @property
@@ -154,7 +155,13 @@ class Node(ABC):
         _, reasoning = self._split_answer_and_reasoning(predecessor_output)
         return reasoning
 
-    def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
+    def _resolve_message_payload(
+        self,
+        predecessor: 'Node',
+        output: Any,
+        source: str = "spatial",
+        raw_inputs: Any = None,
+    ) -> tuple[str, Any]:
         message_type = "full"
         selected_output = output
         if source == "spatial":
@@ -170,6 +177,13 @@ class Node(ABC):
                 reasoning_payload = self._extract_reasoning_content(output)
                 selected_output = reasoning_payload if reasoning_payload else output.strip()
 
+        selected_output = self._prune_message_payload(
+            predecessor=predecessor,
+            output=selected_output,
+            source=source,
+            message_type=message_type,
+            raw_inputs=raw_inputs,
+        )
         selected_output = self._compress_message_payload(
             predecessor=predecessor,
             output=selected_output,
@@ -177,6 +191,30 @@ class Node(ABC):
             message_type=message_type,
         )
         return message_type, selected_output
+
+    def _prune_message_payload(
+        self,
+        predecessor: 'Node',
+        output: Any,
+        source: str,
+        message_type: str,
+        raw_inputs: Any = None,
+    ) -> Any:
+        if self.message_pruner is None:
+            return output
+        if not isinstance(output, str):
+            return output
+        return self.message_pruner.prune(
+            output,
+            query=raw_inputs,
+            domain=self.domain,
+            sender_role=predecessor.role,
+            receiver_role=self.role or self.agent_name or self.node_name,
+            sender_id=predecessor.id,
+            receiver_id=self.id,
+            source=source,
+            message_type=message_type,
+        )
 
     def _compress_message_payload(
         self,
@@ -197,7 +235,7 @@ class Node(ABC):
             source=source,
         )
 
-    def get_spatial_info(self)->Dict[str,Dict]:
+    def get_spatial_info(self, raw_inputs: Any = None)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
         spatial_info = {}
         if self.spatial_predecessors is not None:
@@ -209,7 +247,12 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="spatial")
+                message_type, selected_output = self._resolve_message_payload(
+                    predecessor,
+                    predecessor_output,
+                    source="spatial",
+                    raw_inputs=raw_inputs,
+                )
                 spatial_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": selected_output,
@@ -218,7 +261,7 @@ class Node(ABC):
 
         return spatial_info
 
-    def get_temporal_info(self)->Dict[str,Any]:
+    def get_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
         temporal_info = {}
         if self.temporal_predecessors is not None:
             for predecessor in self.temporal_predecessors:
@@ -229,7 +272,12 @@ class Node(ABC):
                     continue
                 else:
                     predecessor_output = predecessor_outputs
-                message_type, selected_output = self._resolve_message_payload(predecessor, predecessor_output, source="temporal")
+                message_type, selected_output = self._resolve_message_payload(
+                    predecessor,
+                    predecessor_output,
+                    source="temporal",
+                    raw_inputs=raw_inputs,
+                )
                 temporal_info[predecessor.id] = {
                     "role": predecessor.role,
                     "output": selected_output,
@@ -240,8 +288,8 @@ class Node(ABC):
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []
-        spatial_info:Dict[str,Dict] = self.get_spatial_info()
-        temporal_info:Dict[str,Dict] = self.get_temporal_info()
+        spatial_info:Dict[str,Dict] = self.get_spatial_info(input)
+        temporal_info:Dict[str,Dict] = self.get_temporal_info(input)
         results = [self._execute(input, spatial_info, temporal_info, **kwargs)]
 
         for result in results:
@@ -254,8 +302,8 @@ class Node(ABC):
     async def async_execute(self, input:Any, **kwargs):
 
         self.outputs = []
-        spatial_info:Dict[str,Any] = self.get_spatial_info()
-        temporal_info:Dict[str,Any] = self.get_temporal_info()
+        spatial_info:Dict[str,Any] = self.get_spatial_info(input)
+        temporal_info:Dict[str,Any] = self.get_temporal_info(input)
         # print(temporal_info)
         tasks = [asyncio.create_task(self._async_execute(input, spatial_info, temporal_info, **kwargs))]
         results = await asyncio.gather(*tasks, return_exceptions=False)

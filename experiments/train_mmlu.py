@@ -10,9 +10,102 @@ import copy
 import random
 
 from AgentDropout.graph.graph import Graph
+from AgentDropout.utils.dgap_pruner import (
+    DEFAULT_DGAP_BUDGET_LAMBDA,
+    DEFAULT_DGAP_CONTENT_LAMBDA,
+    DEFAULT_DGAP_LR,
+    DEFAULT_DGAP_REWARD_BASELINE,
+    DEFAULT_DGAP_SELECTION_LAMBDA,
+    DEFAULT_DGAP_SEMANTIC_LAMBDA,
+    DEFAULT_DGAP_TARGET_KEEP_RATE,
+    DEFAULT_DGAP_TASK_LAMBDA,
+)
 from experiments.accuracy import Accuracy
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
+
+
+def _should_optimize_structure(args) -> bool:
+    if args is None:
+        return True
+    return bool(
+        getattr(args, "optimized_spatial", False)
+        or getattr(args, "optimized_temporal", False)
+        or getattr(args, "dec", False)
+    )
+
+
+def _optimizer_params_with_dgap(graph: Graph, params: list, args=None) -> list:
+    include_structure = _should_optimize_structure(args)
+    if not getattr(graph, "message_pruning_enabled", False):
+        return params
+    dgap_params = graph.message_pruning_parameters()
+    if not dgap_params:
+        return params
+    optimizer_params = []
+    if include_structure:
+        optimizer_params.append({"params": params})
+    optimizer_params.append(
+        {
+            "params": dgap_params,
+            "lr": float(getattr(args, "dgap_lr", DEFAULT_DGAP_LR)),
+        }
+    )
+    return optimizer_params
+
+
+def _structure_loss_or_zero(add_loss, args):
+    if _should_optimize_structure(args):
+        return add_loss
+    if torch.is_tensor(add_loss):
+        return torch.zeros_like(add_loss)
+    return 0.0
+
+
+def _structure_policy_loss(log_prob: torch.Tensor, utility: float, args) -> torch.Tensor:
+    if _should_optimize_structure(args):
+        return -log_prob * utility
+    if torch.is_tensor(log_prob):
+        return torch.zeros_like(log_prob)
+    return 0.0
+
+
+
+
+def _share_dgap_parameters(realized_graph: Graph, graph: Graph):
+    if hasattr(realized_graph, "share_dgap_parameters"):
+        realized_graph.share_dgap_parameters(graph)
+
+
+def _dgap_content_loss(
+    realized_graph: Graph,
+    args,
+    utility: float = 0.0,
+) -> torch.Tensor:
+    if not getattr(realized_graph, "message_pruning_enabled", False):
+        return torch.tensor(0.0)
+    keep_weight = float(getattr(args, "dgap_content_lambda", DEFAULT_DGAP_CONTENT_LAMBDA))
+    semantic_weight = float(getattr(args, "dgap_semantic_lambda", DEFAULT_DGAP_SEMANTIC_LAMBDA))
+    selection_weight = float(getattr(args, "dgap_selection_lambda", DEFAULT_DGAP_SELECTION_LAMBDA))
+    task_weight = float(getattr(args, "dgap_task_lambda", DEFAULT_DGAP_TASK_LAMBDA))
+    reward_baseline = float(getattr(args, "dgap_reward_baseline", DEFAULT_DGAP_REWARD_BASELINE))
+    budget_weight = float(getattr(args, "dgap_budget_lambda", DEFAULT_DGAP_BUDGET_LAMBDA))
+    target_keep_rate = float(getattr(args, "dgap_target_keep_rate", DEFAULT_DGAP_TARGET_KEEP_RATE))
+    keep_loss = realized_graph.message_pruning_regularization_loss()
+    semantic_loss = realized_graph.message_pruning_semantic_loss()
+    selection_loss = realized_graph.message_pruning_selection_loss()
+    budget_loss = torch.relu(keep_loss - target_keep_rate).pow(2)
+    task_loss = torch.tensor(0.0, device=keep_loss.device, dtype=keep_loss.dtype)
+    if task_weight != 0.0:
+        advantage = float(utility) - reward_baseline
+        task_loss = -task_weight * advantage * realized_graph.message_pruning_normalized_log_prob()
+    return (
+        keep_weight * keep_loss
+        + budget_weight * budget_loss
+        + semantic_weight * semantic_loss
+        + selection_weight * selection_loss
+        + task_loss
+    )
 
 async def train(graph:Graph,
             dataset,
@@ -33,6 +126,7 @@ async def train(graph:Graph,
                 yield record
     
     loader = infinite_data_loader()
+    graph.set_message_pruning_training(True)
     restore_message_compression = getattr(graph, "message_compression_enabled", False)
     graph.set_message_compression_enabled(False)
     if restore_message_compression:
@@ -42,21 +136,34 @@ async def train(graph:Graph,
         graph.optimized_temporal=False
         
         if not graph.diff:
-            optimizer = torch.optim.Adam([graph.spatial_logits_1,graph.temporal_logits_1], lr=lr)
+            optimizer = torch.optim.Adam(
+                _optimizer_params_with_dgap(graph, [graph.spatial_logits_1, graph.temporal_logits_1], args),
+                lr=lr,
+            )
         # elif graph.diff and graph.dec_1:
         #     optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters())+[graph.decision_logits],lr=lr)
         else:
-            optimizer = torch.optim.Adam(list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),lr=lr)
+            optimizer = torch.optim.Adam(
+                _optimizer_params_with_dgap(
+                    graph,
+                    list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),
+                    args,
+                ),
+                lr=lr,
+            )
         for i_iter in range(num_iters):
             print(f"Train {i_iter + 1}/{num_iters}", 80*'-')
             start_ts = time.time()
             correct_answers = []
             answer_log_probs = []
             add_losses = []
+            realized_graphs = []
             for i_record, record in zip(range(batch_size), loader):
                 realized_graph = copy.deepcopy(graph)
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
+                _share_dgap_parameters(realized_graph, graph)
+                realized_graphs.append(realized_graph)
                 # if graph.dec_1:
                 #     realized_graph.decision_logits = graph.decision_logits
                 
@@ -106,7 +213,7 @@ async def train(graph:Graph,
             utilities: List[float] = []
             answers: List[str] = []
             
-            for raw_answer, log_prob, add_loss, correct_answer in zip(raw_answers, log_probs, add_losses, correct_answers):
+            for raw_answer, log_prob, add_loss, correct_answer, realized_graph in zip(raw_answers, log_probs, add_losses, correct_answers, realized_graphs):
                 answer = dataset.postprocess_answer(raw_answer)
                 answers.append(answer)
                 assert isinstance(correct_answer, str), \
@@ -115,8 +222,8 @@ async def train(graph:Graph,
                 accuracy.update(answer, correct_answer)
                 utility = accuracy.get()
                 utilities.append(utility)
-                single_loss = - log_prob * utility
-                loss_list.append(single_loss+add_loss)
+                single_loss = _structure_policy_loss(log_prob, utility, args)
+                loss_list.append(single_loss + _structure_loss_or_zero(add_loss, args) + _dgap_content_loss(realized_graph, args, utility))
                 print(f"correct answer:{correct_answer}")
         
             total_loss = torch.mean(torch.stack(loss_list))
@@ -151,14 +258,24 @@ async def train(graph:Graph,
     loader = infinite_data_loader()
 
     if not graph.diff:
-        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=lr)
+        optimizer = torch.optim.Adam(
+            _optimizer_params_with_dgap(graph, [graph.spatial_logits, graph.temporal_logits], args),
+            lr=lr,
+        )
     # elif graph.diff and graph.dec_1:
     #     optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters())+[graph.decision_logits],lr=lr)
     else:
-        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=lr)
+        optimizer = torch.optim.Adam(
+            _optimizer_params_with_dgap(
+                graph,
+                list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),
+                args,
+            ),
+            lr=lr,
+        )
     
-    graph.optimized_spatial=True
-    graph.optimized_temporal=True
+    graph.optimized_spatial = bool(getattr(args, "optimized_spatial", graph.optimized_spatial))
+    graph.optimized_temporal = bool(getattr(args, "optimized_temporal", graph.optimized_temporal))
 
     for i_iter in range(num_iters):
         print(f"Train {i_iter + 1}/{num_iters}", 80*'-')
@@ -166,10 +283,13 @@ async def train(graph:Graph,
         correct_answers = []
         answer_log_probs = []
         add_losses = []
+        realized_graphs = []
         for i_record, record in zip(range(batch_size), loader):
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            _share_dgap_parameters(realized_graph, graph)
+            realized_graphs.append(realized_graph)
             # if graph.dec_1:
             #     realized_graph.decision_logits = graph.decision_logits
             
@@ -228,7 +348,7 @@ async def train(graph:Graph,
         utilities: List[float] = []
         answers: List[str] = []
         
-        for raw_answer, log_prob, add_loss, correct_answer in zip(raw_answers, log_probs, add_losses, correct_answers):
+        for raw_answer, log_prob, add_loss, correct_answer, realized_graph in zip(raw_answers, log_probs, add_losses, correct_answers, realized_graphs):
             answer = dataset.postprocess_answer(raw_answer)
             answers.append(answer)
             assert isinstance(correct_answer, str), \
@@ -237,8 +357,8 @@ async def train(graph:Graph,
             accuracy.update(answer, correct_answer)
             utility = accuracy.get()
             utilities.append(utility)
-            single_loss = - log_prob * utility
-            loss_list.append(single_loss+add_loss)
+            single_loss = _structure_policy_loss(log_prob, utility, args)
+            loss_list.append(single_loss + _structure_loss_or_zero(add_loss, args) + _dgap_content_loss(realized_graph, args, utility))
             print(f"correct answer:{correct_answer}")
     
         total_loss = torch.mean(torch.stack(loss_list))

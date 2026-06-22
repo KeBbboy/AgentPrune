@@ -7,10 +7,15 @@ import torch
 import asyncio
 
 from AgentDropout.graph.node import Node
+from AgentDropout.agents import ensure_agent_modules_loaded
 from AgentDropout.agents.agent_registry import AgentRegistry
 from AgentDropout.utils.llmlingua2_compressor import (
     DEFAULT_LLMLINGUA2_MODEL,
     LLMLingua2MessageCompressor,
+)
+from AgentDropout.utils.dgap_pruner import (
+    DEFAULT_DGAP_ENCODER_MODEL,
+    DGAPContentPruner,
 )
 import random
 
@@ -57,6 +62,25 @@ class Graph(ABC):
                 llmlingua2_min_tokens: int = 20,
                 llmlingua2_compress_code: bool = False,
                 llmlingua2_scope: str = "all",
+                dgap_content_pruning: bool = False,
+                dgap_encoder_model_name: str = DEFAULT_DGAP_ENCODER_MODEL,
+                dgap_embedding_dim: int = 384,
+                dgap_hidden_dim: int = 128,
+                dgap_initial_keep_prob: float = 0.85,
+                dgap_threshold: float = 0.35,
+                dgap_temperature: float = 1.0,
+                dgap_kl_temperature: float = 0.1,
+                dgap_gate_beta: float = 0.5,
+                dgap_use_query_gate: bool = True,
+                dgap_max_keep_rate: float = 1.0,
+                dgap_teacher_top_ratio: float = 0.45,
+                dgap_rule_score_weight: float = 0.15,
+                dgap_gate_edges: bool = False,
+                dgap_min_units: int = 2,
+                dgap_min_keep_units: int = 1,
+                dgap_min_tokens: int = 8,
+                dgap_segment_mode: str = "sentence",
+                dgap_scope: str = "all",
                 ):
         
         if fixed_spatial_masks is None:
@@ -75,6 +99,7 @@ class Graph(ABC):
         self.domain:str = domain
         self.llm_name:str = llm_name
         self.agent_names:List[str] = agent_names
+        ensure_agent_modules_loaded([decision_method, *agent_names])
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
         self.optimized_spatial_message_type = False
@@ -97,12 +122,35 @@ class Graph(ABC):
             min_tokens=llmlingua2_min_tokens,
             compress_code=llmlingua2_compress_code,
         )
+        self.message_pruning_scope = dgap_scope
+        self.message_pruning_enabled = dgap_content_pruning
+        self.message_pruning_gate_edges = dgap_gate_edges
+        self.message_pruner = self._build_message_pruner(
+            enabled=dgap_content_pruning,
+            encoder_model_name=dgap_encoder_model_name,
+            embedding_dim=dgap_embedding_dim,
+            hidden_dim=dgap_hidden_dim,
+            initial_keep_probability=dgap_initial_keep_prob,
+            threshold=dgap_threshold,
+            temperature=dgap_temperature,
+            kl_temperature=dgap_kl_temperature,
+            gate_beta=dgap_gate_beta,
+            use_query_gate=dgap_use_query_gate,
+            max_keep_rate=dgap_max_keep_rate,
+            teacher_top_ratio=dgap_teacher_top_ratio,
+            rule_score_weight=dgap_rule_score_weight,
+            min_units=dgap_min_units,
+            min_keep_units=dgap_min_keep_units,
+            min_tokens=dgap_min_tokens,
+            segment_mode=dgap_segment_mode,
+        )
         # self.dec=False
         self.dec_1=False
         self.skip_nodes = []
         
         self.init_nodes() # add nodes to the self.nodes
         self.attach_message_compressor()
+        self.attach_message_pruner()
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
         
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
@@ -168,6 +216,48 @@ class Graph(ABC):
             compress_code=compress_code,
         )
 
+    def _build_message_pruner(
+        self,
+        enabled: bool,
+        encoder_model_name: str,
+        embedding_dim: int,
+        hidden_dim: int,
+        initial_keep_probability: float,
+        threshold: float,
+        temperature: float,
+        kl_temperature: float,
+        gate_beta: float,
+        use_query_gate: bool,
+        max_keep_rate: float,
+        teacher_top_ratio: float,
+        rule_score_weight: float,
+        min_units: int,
+        min_keep_units: int,
+        min_tokens: int,
+        segment_mode: str,
+    ):
+        if not enabled:
+            return None
+        return DGAPContentPruner(
+            encoder_model_name=encoder_model_name,
+            embedding_dim=embedding_dim,
+            hidden_dim=hidden_dim,
+            initial_keep_probability=initial_keep_probability,
+            threshold=threshold,
+            temperature=temperature,
+            kl_temperature=kl_temperature,
+            gate_beta=gate_beta,
+            use_query_gate=use_query_gate,
+            max_keep_rate=max_keep_rate,
+            teacher_top_ratio=teacher_top_ratio,
+            rule_score_weight=rule_score_weight,
+            min_units=min_units,
+            min_keep_units=min_keep_units,
+            min_tokens=min_tokens,
+            segment_mode=segment_mode,
+            preserve_answer_line=True,
+        )
+
     def attach_message_compressor(self):
         message_compressor = self.message_compressor if self.message_compression_enabled else None
         if self.message_compression_scope == "final":
@@ -202,6 +292,92 @@ class Graph(ABC):
         if not self.message_compression_enabled:
             return "LLMLingua-2 compression temporarily disabled."
         return f"{self.message_compressor.summary()} Scope: {self.message_compression_scope}."
+
+    def attach_message_pruner(self):
+        message_pruner = self.message_pruner if self.message_pruning_enabled else None
+        if self.message_pruning_scope == "agent":
+            decision_pruner = None
+            node_pruner = message_pruner
+        elif self.message_pruning_scope == "final":
+            decision_pruner = message_pruner
+            node_pruner = None
+        elif self.message_pruning_scope == "all":
+            decision_pruner = message_pruner
+            node_pruner = message_pruner
+        else:
+            raise ValueError(f"Unknown DGAP pruning scope: {self.message_pruning_scope}")
+
+        self.decision_node.message_pruner = decision_pruner
+        for node in self.nodes.values():
+            node.message_pruner = node_pruner
+
+    def set_message_pruning_enabled(self, enabled: bool):
+        self.message_pruning_enabled = bool(enabled) and self.message_pruner is not None
+        self.attach_message_pruner()
+
+    def set_message_pruning_training(self, enabled: bool):
+        if self.message_pruner is None:
+            return
+        if enabled:
+            self.message_pruner.train()
+        else:
+            self.message_pruner.eval()
+
+    def reset_message_pruning_run_state(self):
+        if self.message_pruner is not None:
+            self.message_pruner.reset_run_state()
+
+    def message_pruning_log_prob(self) -> torch.Tensor:
+        if self.message_pruner is None or not self.message_pruning_enabled:
+            return torch.tensor(0.0)
+        return self.message_pruner.log_prob()
+
+    def message_pruning_normalized_log_prob(self) -> torch.Tensor:
+        if self.message_pruner is None or not self.message_pruning_enabled:
+            return torch.tensor(0.0)
+        return self.message_pruner.normalized_log_prob()
+
+    def message_pruning_regularization_loss(self) -> torch.Tensor:
+        if self.message_pruner is None or not self.message_pruning_enabled:
+            return torch.tensor(0.0)
+        return self.message_pruner.regularization_loss()
+
+    def message_pruning_semantic_loss(self) -> torch.Tensor:
+        if self.message_pruner is None or not self.message_pruning_enabled:
+            return torch.tensor(0.0)
+        return self.message_pruner.semantic_preservation_loss()
+
+    def message_pruning_selection_loss(self) -> torch.Tensor:
+        if self.message_pruner is None or not self.message_pruning_enabled:
+            return torch.tensor(0.0)
+        return self.message_pruner.selection_loss()
+
+    def message_pruning_parameters(self):
+        if self.message_pruner is None:
+            return []
+        return list(self.message_pruner.parameters())
+
+    def message_pruning_summary(self) -> str:
+        if self.message_pruner is None:
+            return "DGAP content pruning disabled."
+        if not self.message_pruning_enabled:
+            return "DGAP content pruning temporarily disabled."
+        return f"{self.message_pruner.summary()} Scope: {self.message_pruning_scope}."
+
+    def share_dgap_parameters(self, source: "Graph"):
+        if self.message_pruner is None or source.message_pruner is None:
+            return
+        self.message_pruner.share_parameters(source.message_pruner)
+        self.attach_message_pruner()
+
+    def _query_pruning_temperature(self, input: Any):
+        if (
+            not self.message_pruning_gate_edges
+            or self.message_pruner is None
+            or not self.message_pruning_enabled
+        ):
+            return 1.0
+        return self.message_pruner.query_temperature(input)
         
     @property
     def spatial_adj_matrix(self):
@@ -354,6 +530,7 @@ class Graph(ABC):
         self.temporal_logits = source.temporal_logits
         self.spatial_message_type_logits = source.spatial_message_type_logits
         self.temporal_message_type_logits = source.temporal_message_type_logits
+        self.share_dgap_parameters(source)
 
     def set_message_type_learning_mode(self, enabled: bool):
         self.enable_spatial_message_type_action = enabled
@@ -509,9 +686,11 @@ class Graph(ABC):
                   max_time: int = 600,) -> List[Any]:
         # inputs:{'task':"xxx"}
         log_probs = 0
+        self.reset_message_pruning_run_state()
+        edge_temperature = self._query_pruning_temperature(inputs)
         for round in range(num_rounds):
-            log_probs += self.construct_spatial_connection()
-            log_probs += self.construct_temporal_connection(round)
+            log_probs += self.construct_spatial_connection(temperature=edge_temperature)
+            log_probs += self.construct_temporal_connection(round, temperature=edge_temperature)
             
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
@@ -564,15 +743,17 @@ class Graph(ABC):
         # inputs:{'task':"xxx"}
         log_probs = 0
         log_probs_skip = 0
+        self.reset_message_pruning_run_state()
+        edge_temperature = self._query_pruning_temperature(input)
         all_answers = []
         for round in range(num_rounds):
             round_answers = {}
             if not self.diff:
-                log_probs += self.construct_spatial_connection()
-                log_probs += self.construct_temporal_connection(round)
+                log_probs += self.construct_spatial_connection(temperature=edge_temperature)
+                log_probs += self.construct_temporal_connection(round, temperature=edge_temperature)
             else:
-                log_probs += self.construct_spatial_connection_diff(round)
-                log_probs += self.construct_temporal_connection_diff(round)
+                log_probs += self.construct_spatial_connection_diff(round, temperature=edge_temperature)
+                log_probs += self.construct_temporal_connection_diff(round, temperature=edge_temperature)
             
             # print(self.num_edges)
 

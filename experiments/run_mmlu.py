@@ -9,6 +9,7 @@ import random
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
+from AgentDropout.utils.dgap_pruner import add_dgap_args, dgap_graph_kwargs
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
 from experiments.train_mmlu import train
@@ -56,6 +57,7 @@ def parse_args():
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
     add_llmlingua2_args(parser)
+    add_dgap_args(parser)
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -84,12 +86,13 @@ async def main():
                   diff=args.diff,
                   dec=args.dec,
                   **kwargs,
-                  **llmlingua2_graph_kwargs(args))
+                  **llmlingua2_graph_kwargs(args),
+                  **dgap_graph_kwargs(args))
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')
     
-    if args.optimized_spatial or args.optimized_temporal:
+    if args.optimized_spatial or args.optimized_temporal or args.dgap_content_pruning:
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
                     lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
         

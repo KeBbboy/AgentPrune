@@ -40,6 +40,9 @@ async def evaluate(
     
     _freeze_parameters(graph.spatial_logits)
     _freeze_parameters(graph.temporal_logits)
+    if getattr(graph, "message_pruner", None) is not None:
+        graph.set_message_pruning_training(False)
+        _freeze_parameters(graph.message_pruning_parameters())
     
     accuracy = Accuracy()
     def eval_loader(batch_size: int) -> Iterator[List[Any]]:
@@ -74,6 +77,9 @@ async def evaluate(
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
+            if hasattr(realized_graph, "share_dgap_parameters"):
+                realized_graph.share_dgap_parameters(graph)
+                realized_graph.set_message_pruning_training(False)
             input_dict = dataset.record_to_input(record)
             # print(input_dict)
             # if dec:

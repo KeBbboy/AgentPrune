@@ -1,5 +1,6 @@
 from typing import Union, Dict, Any, List
 import itertools
+import re
 
 from AgentDropout.prompt.prompt_set import PromptSet
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
@@ -211,6 +212,41 @@ class MMLUPromptSet(PromptSet):
     @staticmethod
     def get_decision_few_shot():
         return ""
+
+    @staticmethod
+    def _extract_option_answer(answer: str, valid_letters: str = "ABCD") -> str:
+        escaped_letters = re.escape(valid_letters)
+        lines = [line.strip() for line in answer.splitlines() if line.strip()]
+        if not lines:
+            return ""
+
+        for pattern in (
+            rf"(?:final\s+answer|correct\s+answer|answer)\s*(?:is|:)?\s*(?:\*\*)?\s*(?:option\s*)?([{escaped_letters}])(?:\*\*)?\b",
+            rf"(?:therefore|thus|so),?\s*(?:the\s+)?(?:answer|correct\s+answer)\s*(?:is|:)?\s*(?:\*\*)?\s*(?:option\s*)?([{escaped_letters}])(?:\*\*)?\b",
+        ):
+            match = re.search(pattern, answer, flags=re.IGNORECASE)
+            if match is not None:
+                return match.group(1).upper()
+
+        first_line_match = re.match(
+            rf"^(?:\*\*)?\s*(?:option\s*)?([{escaped_letters}])(?:\s*(?:\*\*)?)?(?:[\s\).:：-]|$)",
+            lines[0],
+            flags=re.IGNORECASE,
+        )
+        if first_line_match is not None:
+            return first_line_match.group(1).upper()
+
+        option_mentions = {
+            match.group(1).upper()
+            for match in re.finditer(
+                rf"\boption\s+([{escaped_letters}])\b",
+                answer,
+                flags=re.IGNORECASE,
+            )
+        }
+        if len(option_mentions) == 1:
+            return next(iter(option_mentions))
+        return ""
     
     def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
         if isinstance(answer, list):
@@ -220,9 +256,7 @@ class MMLUPromptSet(PromptSet):
                 answer = ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
-        if len(answer) > 0:
-            answer = answer[0] # Try to format the answer by taking the first letter
-        return answer
+        return self._extract_option_answer(answer)
 
 
 @PromptSetRegistry.register('mmlu_pro')
