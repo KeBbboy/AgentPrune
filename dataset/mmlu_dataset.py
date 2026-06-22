@@ -3,7 +3,6 @@ import pandas as pd
 from typing import Union, List, Literal, Any, Dict
 import numpy as np
 from abc import ABC
-import re
 
 class MMLUDataset(ABC):
     def __init__(self,
@@ -71,44 +70,6 @@ class MMLUDataset(ABC):
         input_dict = {"task": demo_question}
         return input_dict
 
-    @staticmethod
-    def _extract_option_answer(answer: str, valid_letters: str = "ABCD") -> str:
-        escaped_letters = re.escape(valid_letters)
-        lines = [line.strip() for line in answer.splitlines() if line.strip()]
-        if not lines:
-            return ""
-
-        explicit_patterns = (
-            rf"(?:final\s+answer|correct\s+answer|answer)\s*(?:is|:)?\s*(?:\*\*)?\s*(?:option\s*)?([{escaped_letters}])(?:\*\*)?\b",
-            rf"(?:therefore|thus|so),?\s*(?:the\s+)?(?:answer|correct\s+answer)\s*(?:is|:)?\s*(?:\*\*)?\s*(?:option\s*)?([{escaped_letters}])(?:\*\*)?\b",
-        )
-        for pattern in explicit_patterns:
-            match = re.search(pattern, answer, flags=re.IGNORECASE)
-            if match is not None:
-                return match.group(1).upper()
-
-        first_line = lines[0].strip()
-        first_line_match = re.match(
-            rf"^(?:\*\*)?\s*(?:option\s*)?([{escaped_letters}])(?:\s*(?:\*\*)?)?(?:[\s\).:：-]|$)",
-            first_line,
-            flags=re.IGNORECASE,
-        )
-        if first_line_match is not None:
-            return first_line_match.group(1).upper()
-
-        option_mentions = {
-            match.group(1).upper()
-            for match in re.finditer(
-                rf"\boption\s+([{escaped_letters}])\b",
-                answer,
-                flags=re.IGNORECASE,
-            )
-        }
-        if len(option_mentions) == 1:
-            return next(iter(option_mentions))
-
-        return ""
-
     def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
         if isinstance(answer, list):
             if len(answer) > 0:
@@ -117,7 +78,12 @@ class MMLUDataset(ABC):
                 answer = ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
-        return self._extract_option_answer(answer)
+        if len(answer) > 0:
+            ans_pos = answer.find("answer is")
+            if ans_pos != -1:
+                answer = answer[ans_pos+len("answer is"):].strip(":").strip().strip("Option").strip()
+            answer = answer[0] # Try to format the answer by taking the first letter
+        return answer
 
     @staticmethod
     def record_to_target_answer(record: pd.DataFrame) -> str:
