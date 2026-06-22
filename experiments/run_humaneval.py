@@ -16,20 +16,12 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
-from AgentDropout.utils.dgap_pruner import add_dgap_args, dgap_graph_kwargs
 from AgentDropout.tools.reader.readers import JSONLReader
 from AgentDropout.tools.coding.python_executor import PyExecutor
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
-from experiments.train_mmlu import (
-    _dgap_content_loss,
-    _optimizer_params_with_dgap,
-    _share_dgap_parameters,
-    _structure_policy_loss,
-    _structure_loss_or_zero,
-)
 
 def load_result(result_file):
     if not result_file.exists():
@@ -75,7 +67,6 @@ def parse_args():
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
     add_llmlingua2_args(parser)
-    add_dgap_args(parser)
     
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
@@ -108,36 +99,23 @@ async def main():
                   diff=args.diff,
                   dec=args.dec,
                   **kwargs,
-                  **llmlingua2_graph_kwargs(args),
-                  **dgap_graph_kwargs(args))
-    graph.set_message_pruning_training(True)
+                  **llmlingua2_graph_kwargs(args))
 
     if args.dec:
         graph.optimized_spatial=False
         graph.optimized_temporal=False
         total_solved, total_executed = (0, 0)
         if not graph.diff:
-            optimizer = torch.optim.Adam(
-                _optimizer_params_with_dgap(graph, [graph.spatial_logits_1, graph.temporal_logits_1], args),
-                lr=args.lr,
-            )
+            optimizer = torch.optim.Adam([graph.spatial_logits_1,graph.temporal_logits_1], lr=args.lr)
         else:
-            optimizer = torch.optim.Adam(
-                _optimizer_params_with_dgap(
-                    graph,
-                    list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),
-                    args,
-                ),
-                lr=args.lr,
-            )
+            optimizer = torch.optim.Adam(list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),lr=args.lr)
 
-        for i_batch in range(args.num_iterations):
+        for i_batch in range(2):
             print(f"dec Batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []
             tests = []
             add_losses = []        
-            realized_graphs = []
             current_batch = dataloader(dataset,20,i_batch)
             if current_batch is None:
                 print("No more data available.")
@@ -147,8 +125,6 @@ async def main():
                 realized_graph = copy.deepcopy(graph)
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
-                _share_dgap_parameters(realized_graph, graph)
-                realized_graphs.append(realized_graph)
             
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits_1.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -187,7 +163,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
                 
-            for task, answer, log_prob, add_loss, test, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, tests, realized_graphs):
+            for task, answer, log_prob, add_loss, test in zip(current_batch, raw_answers, log_probs, add_losses, tests):
                 if not isinstance(answer,list):
                     raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
                 answer = answer[0].lstrip("```python\n").rstrip("\n```")
@@ -197,8 +173,8 @@ async def main():
                 accuracy = total_solved/ total_executed
                 utility = is_solved
                 utilities.append(utility)
-                single_loss = _structure_policy_loss(log_prob, utility, args)
-                loss_list.append(single_loss + _structure_loss_or_zero(add_loss, args) + _dgap_content_loss(realized_graph, args, utility))
+                single_loss = -log_prob * utility
+                loss_list.append(single_loss+add_loss)
                 updated_item = {
                     "Question": task,
                     "Tests": test,
@@ -252,34 +228,23 @@ async def main():
         graph.update_masks_dec()
     
     if not graph.diff:
-        optimizer = torch.optim.Adam(
-            _optimizer_params_with_dgap(graph, [graph.spatial_logits, graph.temporal_logits], args),
-            lr=args.lr,
-        )
+        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
     else:
-        optimizer = torch.optim.Adam(
-            _optimizer_params_with_dgap(
-                graph,
-                list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),
-                args,
-            ),
-            lr=args.lr,
-        )
+        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=args.lr)  
 
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
 
-    if args.optimized_temporal or args.optimized_spatial or args.dgap_content_pruning:
-        graph.optimized_spatial = bool(args.optimized_spatial)
-        graph.optimized_temporal = bool(args.optimized_temporal)
+    if args.optimized_temporal or args.optimized_spatial:
+        graph.optimized_spatial=True
+        graph.optimized_temporal=True
 
-        for i_batch in range(args.num_iterations):
+        for i_batch in range(4):
             print(f"train Batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []
             tests = []
             add_losses = []        
-            realized_graphs = []
             current_batch = dataloader(dataset,10,i_batch)
             if current_batch is None:
                 print("No more data available.")
@@ -289,8 +254,6 @@ async def main():
                 realized_graph = copy.deepcopy(graph)
                 realized_graph.spatial_logits = graph.spatial_logits
                 realized_graph.temporal_logits = graph.temporal_logits
-                _share_dgap_parameters(realized_graph, graph)
-                realized_graphs.append(realized_graph)
             
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -329,7 +292,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
                 
-            for task, answer, log_prob, add_loss, test, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, tests, realized_graphs):
+            for task, answer, log_prob, add_loss, test in zip(current_batch, raw_answers, log_probs, add_losses, tests):
                 if not isinstance(answer,list):
                     raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
                 answer = answer[0].lstrip("```python\n").rstrip("\n```")
@@ -339,8 +302,8 @@ async def main():
                 accuracy = total_solved/ total_executed
                 utility = is_solved
                 utilities.append(utility)
-                single_loss = _structure_policy_loss(log_prob, utility, args)
-                loss_list.append(single_loss + _structure_loss_or_zero(add_loss, args) + _dgap_content_loss(realized_graph, args, utility))
+                single_loss = -log_prob * utility
+                loss_list.append(single_loss+add_loss)
                 updated_item = {
                     "Question": task,
                     "Tests": test,
@@ -356,10 +319,9 @@ async def main():
                 json.dump(data, file, indent=4)
             
             total_loss = torch.mean(torch.stack(loss_list))
-            if args.optimized_spatial or args.optimized_temporal or args.dgap_content_pruning:
-                optimizer.zero_grad()
-                total_loss.backward()
-                optimizer.step()
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
             if not graph.diff:
                 spatial_probs = torch.sigmoid(graph.spatial_logits)
                 temporal_probs = torch.sigmoid(graph.temporal_logits)
@@ -401,7 +363,6 @@ async def main():
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
     total_solved, total_executed = (0, 0)
-    graph.set_message_pruning_training(False)
 
     for i_batch in range(4,17):
         print(f"Batch {i_batch}",80*'-')
@@ -418,8 +379,6 @@ async def main():
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
-            _share_dgap_parameters(realized_graph, graph)
-            realized_graph.set_message_pruning_training(False)
         
             if not graph.diff:
                 spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))

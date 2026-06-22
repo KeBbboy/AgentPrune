@@ -10,29 +10,6 @@ import torch.nn.functional as F
 
 
 DEFAULT_DGAP_ENCODER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-DEFAULT_DGAP_EMBEDDING_DIM = 384
-DEFAULT_DGAP_HIDDEN_DIM = 512
-DEFAULT_DGAP_INITIAL_KEEP_PROB = 0.65
-DEFAULT_DGAP_THRESHOLD = 0.5
-DEFAULT_DGAP_TEMPERATURE = 1.0
-DEFAULT_DGAP_KL_TEMPERATURE = 0.1
-DEFAULT_DGAP_GATE_BETA = 0.5
-DEFAULT_DGAP_MAX_KEEP_RATE = 0.45
-DEFAULT_DGAP_TEACHER_TOP_RATIO = 0.45
-DEFAULT_DGAP_RULE_SCORE_WEIGHT = 0.2
-DEFAULT_DGAP_MIN_UNITS = 2
-DEFAULT_DGAP_MIN_KEEP_UNITS = 1
-DEFAULT_DGAP_MIN_TOKENS = 8
-DEFAULT_DGAP_SEGMENT_MODE = "sentence"
-DEFAULT_DGAP_SCOPE = "all"
-DEFAULT_DGAP_CONTENT_LAMBDA = 0.001
-DEFAULT_DGAP_TARGET_KEEP_RATE = 0.45
-DEFAULT_DGAP_BUDGET_LAMBDA = 2.0
-DEFAULT_DGAP_LR = 0.001
-DEFAULT_DGAP_TASK_LAMBDA = 0.002
-DEFAULT_DGAP_REWARD_BASELINE = 0.5
-DEFAULT_DGAP_SEMANTIC_LAMBDA = 0.5
-DEFAULT_DGAP_SELECTION_LAMBDA = 1.0
 _SENTENCE_TRANSFORMER_CACHE = {}
 _SENTENCE_TRANSFORMER_LOCK = threading.Lock()
 
@@ -43,21 +20,21 @@ class DGAPContentPruner(torch.nn.Module):
     def __init__(
         self,
         encoder_model_name: str = DEFAULT_DGAP_ENCODER_MODEL,
-        embedding_dim: int = DEFAULT_DGAP_EMBEDDING_DIM,
-        hidden_dim: int = DEFAULT_DGAP_HIDDEN_DIM,
-        initial_keep_probability: float = DEFAULT_DGAP_INITIAL_KEEP_PROB,
-        threshold: float = DEFAULT_DGAP_THRESHOLD,
-        temperature: float = DEFAULT_DGAP_TEMPERATURE,
-        kl_temperature: float = DEFAULT_DGAP_KL_TEMPERATURE,
-        gate_beta: float = DEFAULT_DGAP_GATE_BETA,
+        embedding_dim: int = 384,
+        hidden_dim: int = 128,
+        initial_keep_probability: float = 0.85,
+        threshold: float = 0.35,
+        temperature: float = 1.0,
+        kl_temperature: float = 0.1,
+        gate_beta: float = 0.5,
         use_query_gate: bool = True,
-        max_keep_rate: float = DEFAULT_DGAP_MAX_KEEP_RATE,
-        teacher_top_ratio: float = DEFAULT_DGAP_TEACHER_TOP_RATIO,
-        rule_score_weight: float = DEFAULT_DGAP_RULE_SCORE_WEIGHT,
-        min_units: int = DEFAULT_DGAP_MIN_UNITS,
-        min_keep_units: int = DEFAULT_DGAP_MIN_KEEP_UNITS,
-        min_tokens: int = DEFAULT_DGAP_MIN_TOKENS,
-        segment_mode: str = DEFAULT_DGAP_SEGMENT_MODE,
+        max_keep_rate: float = 1.0,
+        teacher_top_ratio: float = 0.45,
+        rule_score_weight: float = 0.15,
+        min_units: int = 2,
+        min_keep_units: int = 1,
+        min_tokens: int = 8,
+        segment_mode: str = "sentence",
         preserve_answer_line: bool = True,
     ):
         super().__init__()
@@ -498,43 +475,43 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_embedding_dim",
         type=int,
-        default=DEFAULT_DGAP_EMBEDDING_DIM,
+        default=384,
         help="DGAP encoder embedding dimension. all-MiniLM-L6-v2 uses 384.",
     )
     parser.add_argument(
         "--dgap_hidden_dim",
         type=int,
-        default=DEFAULT_DGAP_HIDDEN_DIM,
+        default=128,
         help="Hidden dimension for DGAP content and query-gate MLPs.",
     )
     parser.add_argument(
         "--dgap_initial_keep_prob",
         type=float,
-        default=DEFAULT_DGAP_INITIAL_KEEP_PROB,
+        default=0.85,
         help="Initial expected keep probability for DGAP content units.",
     )
     parser.add_argument(
         "--dgap_threshold",
         type=float,
-        default=DEFAULT_DGAP_THRESHOLD,
+        default=0.35,
         help="Deterministic inference threshold for DGAP content units.",
     )
     parser.add_argument(
         "--dgap_temperature",
         type=float,
-        default=DEFAULT_DGAP_TEMPERATURE,
+        default=1.0,
         help="Base DGAP sampling temperature.",
     )
     parser.add_argument(
         "--dgap_kl_temperature",
         type=float,
-        default=DEFAULT_DGAP_KL_TEMPERATURE,
+        default=0.1,
         help="Softmax temperature used by DGAP KL semantic preservation loss.",
     )
     parser.add_argument(
         "--dgap_gate_beta",
         type=float,
-        default=DEFAULT_DGAP_GATE_BETA,
+        default=0.5,
         help="Strength of the DGAP query-adaptive temperature gate.",
     )
     parser.add_argument(
@@ -550,99 +527,99 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_max_keep_rate",
         type=float,
-        default=DEFAULT_DGAP_MAX_KEEP_RATE,
+        default=1.0,
         help="Hard maximum fraction of reasoning units kept per message by DGAP.",
     )
     parser.add_argument(
         "--dgap_teacher_top_ratio",
         type=float,
-        default=DEFAULT_DGAP_TEACHER_TOP_RATIO,
+        default=0.45,
         help="Fraction of reasoning units treated as pseudo-teacher positives for DGAP selection loss.",
     )
     parser.add_argument(
         "--dgap_rule_score_weight",
         type=float,
-        default=DEFAULT_DGAP_RULE_SCORE_WEIGHT,
+        default=0.15,
         help="Inference-time weight for rule-protected DGAP units such as answers, options, numbers, and conclusions.",
     )
     parser.add_argument(
         "--dgap_min_units",
         type=int,
-        default=DEFAULT_DGAP_MIN_UNITS,
+        default=2,
         help="Skip DGAP content pruning for messages with fewer units.",
     )
     parser.add_argument(
         "--dgap_min_keep_units",
         type=int,
-        default=DEFAULT_DGAP_MIN_KEEP_UNITS,
+        default=1,
         help="Minimum number of reasoning units DGAP keeps on each retained message edge.",
     )
     parser.add_argument(
         "--dgap_min_tokens",
         type=int,
-        default=DEFAULT_DGAP_MIN_TOKENS,
+        default=8,
         help="Skip DGAP content pruning for shorter messages.",
     )
     parser.add_argument(
         "--dgap_segment_mode",
         type=str,
         choices=("sentence", "clause", "line"),
-        default=DEFAULT_DGAP_SEGMENT_MODE,
+        default="sentence",
         help="Semantic unit granularity for DGAP content pruning.",
     )
     parser.add_argument(
         "--dgap_scope",
         type=str,
         choices=("agent", "final", "all"),
-        default=DEFAULT_DGAP_SCOPE,
+        default="all",
         help="Where DGAP prunes messages: agent edges, final-decision edges, or both.",
     )
     parser.add_argument(
         "--dgap_content_lambda",
         type=float,
-        default=DEFAULT_DGAP_CONTENT_LAMBDA,
+        default=0.002,
         help="Regularization weight for expected DGAP content keep rate.",
     )
     parser.add_argument(
         "--dgap_target_keep_rate",
         type=float,
-        default=DEFAULT_DGAP_TARGET_KEEP_RATE,
+        default=1.0,
         help="Target maximum expected DGAP content keep rate used by the budget penalty.",
     )
     parser.add_argument(
         "--dgap_budget_lambda",
         type=float,
-        default=DEFAULT_DGAP_BUDGET_LAMBDA,
+        default=0.0,
         help="Penalty weight for expected DGAP content keep rate above --dgap_target_keep_rate.",
     )
     parser.add_argument(
         "--dgap_lr",
         type=float,
-        default=DEFAULT_DGAP_LR,
+        default=0.001,
         help="Learning rate for DGAP content and query-gate MLP parameters.",
     )
     parser.add_argument(
         "--dgap_task_lambda",
         type=float,
-        default=DEFAULT_DGAP_TASK_LAMBDA,
+        default=0.02,
         help="Policy-gradient weight that updates DGAP sentence masks from final task utility.",
     )
     parser.add_argument(
         "--dgap_reward_baseline",
         type=float,
-        default=DEFAULT_DGAP_REWARD_BASELINE,
+        default=0.5,
         help="Baseline subtracted from task utility for DGAP content policy-gradient updates.",
     )
     parser.add_argument(
         "--dgap_semantic_lambda",
         type=float,
-        default=DEFAULT_DGAP_SEMANTIC_LAMBDA,
+        default=1.0,
         help="Weight for semantic preservation between original and soft-pruned reasoning embeddings.",
     )
     parser.add_argument(
         "--dgap_selection_lambda",
         type=float,
-        default=DEFAULT_DGAP_SELECTION_LAMBDA,
+        default=0.0,
         help="Weight for query-aware pseudo-teacher sentence selection loss.",
     )
 
@@ -651,21 +628,21 @@ def dgap_graph_kwargs(args) -> dict[str, Any]:
     return {
         "dgap_content_pruning": getattr(args, "dgap_content_pruning", False),
         "dgap_encoder_model_name": getattr(args, "dgap_encoder_model_name", DEFAULT_DGAP_ENCODER_MODEL),
-        "dgap_embedding_dim": getattr(args, "dgap_embedding_dim", DEFAULT_DGAP_EMBEDDING_DIM),
-        "dgap_hidden_dim": getattr(args, "dgap_hidden_dim", DEFAULT_DGAP_HIDDEN_DIM),
-        "dgap_initial_keep_prob": getattr(args, "dgap_initial_keep_prob", DEFAULT_DGAP_INITIAL_KEEP_PROB),
-        "dgap_threshold": getattr(args, "dgap_threshold", DEFAULT_DGAP_THRESHOLD),
-        "dgap_temperature": getattr(args, "dgap_temperature", DEFAULT_DGAP_TEMPERATURE),
-        "dgap_kl_temperature": getattr(args, "dgap_kl_temperature", DEFAULT_DGAP_KL_TEMPERATURE),
-        "dgap_gate_beta": getattr(args, "dgap_gate_beta", DEFAULT_DGAP_GATE_BETA),
+        "dgap_embedding_dim": getattr(args, "dgap_embedding_dim", 384),
+        "dgap_hidden_dim": getattr(args, "dgap_hidden_dim", 128),
+        "dgap_initial_keep_prob": getattr(args, "dgap_initial_keep_prob", 0.85),
+        "dgap_threshold": getattr(args, "dgap_threshold", 0.35),
+        "dgap_temperature": getattr(args, "dgap_temperature", 1.0),
+        "dgap_kl_temperature": getattr(args, "dgap_kl_temperature", 0.1),
+        "dgap_gate_beta": getattr(args, "dgap_gate_beta", 0.5),
         "dgap_use_query_gate": not getattr(args, "dgap_no_query_gate", False),
-        "dgap_max_keep_rate": getattr(args, "dgap_max_keep_rate", DEFAULT_DGAP_MAX_KEEP_RATE),
-        "dgap_teacher_top_ratio": getattr(args, "dgap_teacher_top_ratio", DEFAULT_DGAP_TEACHER_TOP_RATIO),
-        "dgap_rule_score_weight": getattr(args, "dgap_rule_score_weight", DEFAULT_DGAP_RULE_SCORE_WEIGHT),
+        "dgap_max_keep_rate": getattr(args, "dgap_max_keep_rate", 1.0),
+        "dgap_teacher_top_ratio": getattr(args, "dgap_teacher_top_ratio", 0.45),
+        "dgap_rule_score_weight": getattr(args, "dgap_rule_score_weight", 0.15),
         "dgap_gate_edges": getattr(args, "dgap_gate_edges", False),
-        "dgap_min_units": getattr(args, "dgap_min_units", DEFAULT_DGAP_MIN_UNITS),
-        "dgap_min_keep_units": getattr(args, "dgap_min_keep_units", DEFAULT_DGAP_MIN_KEEP_UNITS),
-        "dgap_min_tokens": getattr(args, "dgap_min_tokens", DEFAULT_DGAP_MIN_TOKENS),
-        "dgap_segment_mode": getattr(args, "dgap_segment_mode", DEFAULT_DGAP_SEGMENT_MODE),
-        "dgap_scope": getattr(args, "dgap_scope", DEFAULT_DGAP_SCOPE),
+        "dgap_min_units": getattr(args, "dgap_min_units", 2),
+        "dgap_min_keep_units": getattr(args, "dgap_min_keep_units", 1),
+        "dgap_min_tokens": getattr(args, "dgap_min_tokens", 8),
+        "dgap_segment_mode": getattr(args, "dgap_segment_mode", "sentence"),
+        "dgap_scope": getattr(args, "dgap_scope", "all"),
     }
