@@ -41,13 +41,13 @@ def _dgap_content_loss(
 ) -> torch.Tensor:
     if not getattr(realized_graph, "message_pruning_enabled", False):
         return torch.tensor(0.0)
-    keep_weight = float(getattr(args, "dgap_content_lambda", 0.0))
-    semantic_weight = float(getattr(args, "dgap_semantic_lambda", 0.0))
-    selection_weight = float(getattr(args, "dgap_selection_lambda", 0.0))
-    task_weight = float(getattr(args, "dgap_task_lambda", 0.0))
+    keep_weight = float(getattr(args, "dgap_content_lambda", 0.001))
+    semantic_weight = float(getattr(args, "dgap_semantic_lambda", 0.5))
+    selection_weight = float(getattr(args, "dgap_selection_lambda", 1.0))
+    task_weight = float(getattr(args, "dgap_task_lambda", 0.002))
     reward_baseline = float(getattr(args, "dgap_reward_baseline", 0.5))
-    budget_weight = float(getattr(args, "dgap_budget_lambda", 0.0))
-    target_keep_rate = float(getattr(args, "dgap_target_keep_rate", 1.0))
+    budget_weight = float(getattr(args, "dgap_budget_lambda", 2.0))
+    target_keep_rate = float(getattr(args, "dgap_target_keep_rate", 0.45))
     keep_loss = realized_graph.message_pruning_regularization_loss()
     semantic_loss = realized_graph.message_pruning_semantic_loss()
     selection_loss = realized_graph.message_pruning_selection_loss()
@@ -231,9 +231,6 @@ async def train(graph:Graph,
             lr=lr,
         )
     
-    graph.optimized_spatial=True
-    graph.optimized_temporal=True
-
     for i_iter in range(num_iters):
         print(f"Train {i_iter + 1}/{num_iters}", 80*'-')
         start_ts = time.time()
@@ -346,7 +343,7 @@ async def train(graph:Graph,
         print(f"PromptTokens {PromptTokens.instance().value}")
         print(f"CompletionTokens {CompletionTokens.instance().value}")
         
-        if (i_iter+1)%imp_per_iters == 0:
+        if (i_iter+1)%imp_per_iters == 0 and (graph.optimized_spatial or graph.optimized_temporal):
             if not graph.diff:
                 spatial_masks, temporal_masks = graph.update_masks(pruning_rate)
             else:

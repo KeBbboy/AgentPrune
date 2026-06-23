@@ -21,16 +21,16 @@ class DGAPContentPruner(torch.nn.Module):
         self,
         encoder_model_name: str = DEFAULT_DGAP_ENCODER_MODEL,
         embedding_dim: int = 384,
-        hidden_dim: int = 128,
-        initial_keep_probability: float = 0.85,
-        threshold: float = 0.35,
+        hidden_dim: int = 512,
+        initial_keep_probability: float = 0.65,
+        threshold: float = 0.5,
         temperature: float = 1.0,
         kl_temperature: float = 0.1,
         gate_beta: float = 0.5,
         use_query_gate: bool = True,
-        max_keep_rate: float = 1.0,
+        max_keep_rate: float = 0.45,
         teacher_top_ratio: float = 0.45,
-        rule_score_weight: float = 0.15,
+        rule_score_weight: float = 0.2,
         min_units: int = 2,
         min_keep_units: int = 1,
         min_tokens: int = 8,
@@ -481,19 +481,19 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_hidden_dim",
         type=int,
-        default=128,
+        default=512,
         help="Hidden dimension for DGAP content and query-gate MLPs.",
     )
     parser.add_argument(
         "--dgap_initial_keep_prob",
         type=float,
-        default=0.85,
+        default=0.65,
         help="Initial expected keep probability for DGAP content units.",
     )
     parser.add_argument(
         "--dgap_threshold",
         type=float,
-        default=0.35,
+        default=0.5,
         help="Deterministic inference threshold for DGAP content units.",
     )
     parser.add_argument(
@@ -527,7 +527,7 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_max_keep_rate",
         type=float,
-        default=1.0,
+        default=0.45,
         help="Hard maximum fraction of reasoning units kept per message by DGAP.",
     )
     parser.add_argument(
@@ -539,7 +539,7 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_rule_score_weight",
         type=float,
-        default=0.15,
+        default=0.2,
         help="Inference-time weight for rule-protected DGAP units such as answers, options, numbers, and conclusions.",
     )
     parser.add_argument(
@@ -577,19 +577,19 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_content_lambda",
         type=float,
-        default=0.002,
+        default=0.001,
         help="Regularization weight for expected DGAP content keep rate.",
     )
     parser.add_argument(
         "--dgap_target_keep_rate",
         type=float,
-        default=1.0,
+        default=0.45,
         help="Target maximum expected DGAP content keep rate used by the budget penalty.",
     )
     parser.add_argument(
         "--dgap_budget_lambda",
         type=float,
-        default=0.0,
+        default=2.0,
         help="Penalty weight for expected DGAP content keep rate above --dgap_target_keep_rate.",
     )
     parser.add_argument(
@@ -601,7 +601,7 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_task_lambda",
         type=float,
-        default=0.02,
+        default=0.002,
         help="Policy-gradient weight that updates DGAP sentence masks from final task utility.",
     )
     parser.add_argument(
@@ -613,13 +613,13 @@ def add_dgap_args(parser):
     parser.add_argument(
         "--dgap_semantic_lambda",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Weight for semantic preservation between original and soft-pruned reasoning embeddings.",
     )
     parser.add_argument(
         "--dgap_selection_lambda",
         type=float,
-        default=0.0,
+        default=1.0,
         help="Weight for query-aware pseudo-teacher sentence selection loss.",
     )
 
@@ -629,16 +629,16 @@ def dgap_graph_kwargs(args) -> dict[str, Any]:
         "dgap_content_pruning": getattr(args, "dgap_content_pruning", False),
         "dgap_encoder_model_name": getattr(args, "dgap_encoder_model_name", DEFAULT_DGAP_ENCODER_MODEL),
         "dgap_embedding_dim": getattr(args, "dgap_embedding_dim", 384),
-        "dgap_hidden_dim": getattr(args, "dgap_hidden_dim", 128),
-        "dgap_initial_keep_prob": getattr(args, "dgap_initial_keep_prob", 0.85),
-        "dgap_threshold": getattr(args, "dgap_threshold", 0.35),
+        "dgap_hidden_dim": getattr(args, "dgap_hidden_dim", 512),
+        "dgap_initial_keep_prob": getattr(args, "dgap_initial_keep_prob", 0.65),
+        "dgap_threshold": getattr(args, "dgap_threshold", 0.5),
         "dgap_temperature": getattr(args, "dgap_temperature", 1.0),
         "dgap_kl_temperature": getattr(args, "dgap_kl_temperature", 0.1),
         "dgap_gate_beta": getattr(args, "dgap_gate_beta", 0.5),
         "dgap_use_query_gate": not getattr(args, "dgap_no_query_gate", False),
-        "dgap_max_keep_rate": getattr(args, "dgap_max_keep_rate", 1.0),
+        "dgap_max_keep_rate": getattr(args, "dgap_max_keep_rate", 0.45),
         "dgap_teacher_top_ratio": getattr(args, "dgap_teacher_top_ratio", 0.45),
-        "dgap_rule_score_weight": getattr(args, "dgap_rule_score_weight", 0.15),
+        "dgap_rule_score_weight": getattr(args, "dgap_rule_score_weight", 0.2),
         "dgap_gate_edges": getattr(args, "dgap_gate_edges", False),
         "dgap_min_units": getattr(args, "dgap_min_units", 2),
         "dgap_min_keep_units": getattr(args, "dgap_min_keep_units", 1),
