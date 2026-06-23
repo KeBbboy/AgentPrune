@@ -8,6 +8,7 @@ import torch
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
+from AgentDropout.utils.dgap_pruner import add_dgap_args, dgap_graph_kwargs
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, PromptTokens
 from dataset.mmlu_pro_dataset import MMLUProDataset
@@ -46,6 +47,7 @@ def parse_args():
     parser.add_argument('--cot', action='store_true')
     parser.add_argument('--limit_questions', type=int, default=153)
     add_llmlingua2_args(parser)
+    add_dgap_args(parser)
     args = parser.parse_args()
 
     (AgentPrune_ROOT / "result").mkdir(exist_ok=True)
@@ -71,12 +73,13 @@ async def main():
         dec=args.dec,
         **kwargs,
         **llmlingua2_graph_kwargs(args),
+        **dgap_graph_kwargs(args),
     )
 
     dataset_train = MMLUProDataset('dev')
     dataset_val = MMLUProDataset('val')
 
-    if args.optimized_spatial or args.optimized_temporal:
+    if args.optimized_spatial or args.optimized_temporal or args.dgap_content_pruning:
         await train(
             graph=graph,
             dataset=dataset_train,

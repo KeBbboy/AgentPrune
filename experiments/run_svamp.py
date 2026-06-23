@@ -17,6 +17,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
+from AgentDropout.utils.dgap_pruner import add_dgap_args, dgap_graph_kwargs
 from AgentDropout.tools.reader.readers import JSONReader, JSONLReader
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
@@ -25,6 +26,7 @@ from dataset.gsm8k_dataset import svamp_data_process,gsm_get_predict, gsm_data_p
 from dataset.aqua_dataset import aqua_data_process,aqua_get_predict
 from AgentDropout.utils.globals import PromptTokens, CompletionTokens
 from AgentDropout.agents.agent_registry import AgentRegistry
+from experiments.train_mmlu import _dgap_content_loss, _optimizer_params_with_dgap, _share_dgap_parameters
 
 def load_result(result_file):
     if not result_file.exists():
@@ -70,6 +72,7 @@ def parse_args():
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
     add_llmlingua2_args(parser)
+    add_dgap_args(parser)
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -109,16 +112,28 @@ async def main():
                     diff=args.diff,
                     dec=args.dec,
                     **kwargs,
-                    **llmlingua2_graph_kwargs(args))
+                    **llmlingua2_graph_kwargs(args),
+                    **dgap_graph_kwargs(args))
     
     if args.dec:
         graph.optimized_spatial=False
         graph.optimized_temporal=False
         total_solved, total_executed = (0, 0)
+        graph.set_message_pruning_training(True)
         if not graph.diff:
-            optimizer = torch.optim.Adam([graph.spatial_logits_1,graph.temporal_logits_1], lr=args.lr)
+            optimizer = torch.optim.Adam(
+                _optimizer_params_with_dgap(graph, [graph.spatial_logits_1,graph.temporal_logits_1], args),
+                lr=args.lr,
+            )
         else:
-            optimizer = torch.optim.Adam(list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),lr=args.lr)
+            optimizer = torch.optim.Adam(
+                _optimizer_params_with_dgap(
+                    graph,
+                    list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),
+                    args,
+                ),
+                lr=args.lr,
+            )
         for i_batch in range(args.num_iterations):
             print(f"Train batch {i_batch}",80*'-')
             start_ts = time.time()
@@ -135,6 +150,7 @@ async def main():
                 realized_graph = copy.deepcopy(graph)
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
+                _share_dgap_parameters(realized_graph, graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits_1.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -183,7 +199,7 @@ async def main():
                 utility = is_solved
                 utilities.append(utility)
                 single_loss = -log_prob * utility
-                loss_list.append(single_loss+add_loss)
+                loss_list.append(single_loss+add_loss+_dgap_content_loss(realized_graph, args, utility))
                 updated_item = {
                     "Question": task,
                     "Answer": true_answer,
@@ -237,15 +253,26 @@ async def main():
         graph.update_masks_dec()
 
     if not graph.diff:
-        optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
+        optimizer = torch.optim.Adam(
+            _optimizer_params_with_dgap(graph, [graph.spatial_logits,graph.temporal_logits], args),
+            lr=args.lr,
+        )
     else:
-        optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=args.lr)  
+        optimizer = torch.optim.Adam(
+            _optimizer_params_with_dgap(
+                graph,
+                list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),
+                args,
+            ),
+            lr=args.lr,
+        )
     
     num_batches = int(len(dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
     
     
-    if args.optimized_temporal or args.optimized_spatial:
+    if args.optimized_temporal or args.optimized_spatial or args.dgap_content_pruning:
+        graph.set_message_pruning_training(True)
         # graph.optimized_spatial=True
         # graph.optimized_temporal=True
         for i_batch in range(0):
@@ -264,6 +291,7 @@ async def main():
                 realized_graph = copy.deepcopy(graph)
                 realized_graph.spatial_logits = graph.spatial_logits
                 realized_graph.temporal_logits = graph.temporal_logits
+                _share_dgap_parameters(realized_graph, graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -312,7 +340,7 @@ async def main():
                 utility = is_solved
                 utilities.append(utility)
                 single_loss = -log_prob * utility
-                loss_list.append(single_loss+add_loss)
+                loss_list.append(single_loss+add_loss+_dgap_content_loss(realized_graph, args, utility))
                 updated_item = {
                     "Question": task,
                     "Answer": true_answer,
@@ -376,6 +404,7 @@ async def main():
 
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
+    graph.set_message_pruning_training(False)
     total_solved, total_executed = (0, 0)
 
     # graph.clear_spatial_connection()
