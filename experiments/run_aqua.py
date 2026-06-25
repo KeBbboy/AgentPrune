@@ -139,6 +139,7 @@ async def main():
             answer_log_probs = []
             answers = []
             add_losses = []
+            realized_graphs = []
             
             current_batch = dataloader(train_dataset,20,i_batch)
             if current_batch is None:
@@ -150,6 +151,7 @@ async def main():
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
                 _share_dgap_parameters(realized_graph, graph)
+                realized_graphs.append(realized_graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits_1.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -189,7 +191,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
             
-            for task, answer, log_prob, add_loss, true_answer in zip(current_batch, raw_answers, log_probs, add_losses, answers):
+            for task, answer, log_prob, add_loss, true_answer, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, answers, realized_graphs):
                 predict_answer = aqua_get_predict(answer[0])
                 is_solved = predict_answer==true_answer
                 total_solved = total_solved + is_solved
@@ -283,6 +285,7 @@ async def main():
             answer_log_probs = []
             answers = []
             add_losses = []
+            realized_graphs = []
             
             current_batch = dataloader(train_dataset,10,i_batch)
             if current_batch is None:
@@ -294,6 +297,7 @@ async def main():
                 realized_graph.spatial_logits = graph.spatial_logits
                 realized_graph.temporal_logits = graph.temporal_logits
                 _share_dgap_parameters(realized_graph, graph)
+                realized_graphs.append(realized_graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -333,7 +337,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
             
-            for task, answer, log_prob, add_loss, true_answer in zip(current_batch, raw_answers, log_probs, add_losses, answers):
+            for task, answer, log_prob, add_loss, true_answer, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, answers, realized_graphs):
                 predict_answer = aqua_get_predict(answer[0])
                 is_solved = predict_answer==true_answer
                 total_solved = total_solved + is_solved
@@ -360,7 +364,7 @@ async def main():
                 json.dump(data, file, indent=4)
             
             total_loss = torch.mean(torch.stack(loss_list))
-            if args.optimized_spatial or args.optimized_temporal:
+            if args.optimized_spatial or args.optimized_temporal or args.dgap_content_pruning:
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()

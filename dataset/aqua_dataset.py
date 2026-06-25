@@ -221,8 +221,10 @@ def aqua_data_process(dataset):
             f"Option E: {option_values[4]}"
         )
         answer = data.get("correct") or data.get("correct_option") or data.get("answer") or data.get("Answer", "")
+        step = data.get("step") or data.get("rationale") or data.get("solution") or data.get("explanation") or ""
         record = dict(data)
         record["task"] = task
         record["answer"] = str(answer).strip().upper()[:1]
+        record["step"] = str(step)
         records.append(record)
     return records

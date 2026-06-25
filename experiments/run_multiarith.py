@@ -23,6 +23,7 @@ from AgentDropout.utils.globals import Time
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
 from dataset.gsm8k_dataset import svamp_data_process,gsm_get_predict, gsm_data_process,multiarith_data_process
+from dataset.multiarith_dataset import load_multiarith_dataset
 from dataset.aqua_dataset import aqua_data_process,aqua_get_predict
 from AgentDropout.utils.globals import PromptTokens, CompletionTokens
 from AgentDropout.agents.agent_registry import AgentRegistry
@@ -38,7 +39,18 @@ def load_result(result_file):
     return data
 
 def dataloader(data_list, batch_size, i_batch):
-    return data_list[i_batch*batch_size:i_batch*batch_size + batch_size]
+    batch = data_list[i_batch*batch_size:i_batch*batch_size + batch_size]
+    return batch if batch else None
+
+def load_non_empty_multiarith_dataset(dataset_path, split_name):
+    records = load_multiarith_dataset(dataset_path)
+    if len(records) == 0:
+        raise ValueError(
+            f"No MultiArith {split_name} records loaded from {dataset_path}. "
+            "Please check that the file exists and contains valid JSON/JSONL records."
+        )
+    print(f"Loaded {len(records)} MultiArith {split_name} records from {dataset_path}.")
+    return records
 
 def load_config(config_path):
     with open(config_path, 'r',encoding='utf-8') as file:
@@ -84,13 +96,16 @@ def parse_args():
 async def main():
     args = parse_args()
     result_file = None
-    dataset = JSONReader.parse_file(args.dataset_json)
-    dataset = multiarith_data_process(dataset)
-    train_dataset_path = Path('dataset/multiarith/train.json')
-    if not train_dataset_path.exists():
-        train_dataset_path = Path(args.dataset_json)
-    train_dataset = JSONReader.parse_file(train_dataset_path)
-    train_dataset = multiarith_data_process(train_dataset)
+    dataset = load_non_empty_multiarith_dataset(Path(args.dataset_json), "evaluation")
+    train_dataset_path = next(
+        (
+            path
+            for path in (Path('dataset/multiarith/train.json'), Path('dataset/multiarith/train.jsonl'))
+            if path.exists()
+        ),
+        Path(args.dataset_json),
+    )
+    train_dataset = load_non_empty_multiarith_dataset(train_dataset_path, "training")
 
     current_time = Time.instance().value or time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     Time.instance().value = current_time
@@ -140,6 +155,7 @@ async def main():
             answer_log_probs = []
             answers = []
             add_losses = []
+            realized_graphs = []
             
             current_batch = dataloader(train_dataset,20,i_batch)
             if current_batch is None:
@@ -151,6 +167,7 @@ async def main():
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
                 _share_dgap_parameters(realized_graph, graph)
+                realized_graphs.append(realized_graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits_1.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -190,7 +207,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
             
-            for task, answer, log_prob, add_loss, true_answer in zip(current_batch, raw_answers, log_probs, add_losses, answers):
+            for task, answer, log_prob, add_loss, true_answer, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, answers, realized_graphs):
                 predict_answer = gsm_get_predict(answer[0])
                 is_solved = float(predict_answer)==float(true_answer)
                 total_solved = total_solved + is_solved
@@ -283,6 +300,7 @@ async def main():
             answer_log_probs = []
             answers = []
             add_losses = []
+            realized_graphs = []
             
             current_batch = dataloader(train_dataset,10,i_batch)
             if current_batch is None:
@@ -294,6 +312,7 @@ async def main():
                 realized_graph.spatial_logits = graph.spatial_logits
                 realized_graph.temporal_logits = graph.temporal_logits
                 _share_dgap_parameters(realized_graph, graph)
+                realized_graphs.append(realized_graph)
                 
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -333,7 +352,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
             
-            for task, answer, log_prob, add_loss, true_answer in zip(current_batch, raw_answers, log_probs, add_losses, answers):
+            for task, answer, log_prob, add_loss, true_answer, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, answers, realized_graphs):
                 predict_answer = gsm_get_predict(answer[0])
                 is_solved = float(predict_answer)==float(true_answer)
                 total_solved = total_solved + is_solved
@@ -360,7 +379,7 @@ async def main():
                 json.dump(data, file, indent=4)
             
             total_loss = torch.mean(torch.stack(loss_list))
-            if args.optimized_spatial or args.optimized_temporal:
+            if args.optimized_spatial or args.optimized_temporal or args.dgap_content_pruning:
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
