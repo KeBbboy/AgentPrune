@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import copy
 from typing import List,Union,Literal
 import random
+import re
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -27,6 +28,7 @@ from experiments.train_mmlu import _dgap_content_loss, _optimizer_params_with_dg
 
 def load_result(result_file):
     if not result_file.exists():
+        result_file.parent.mkdir(parents=True, exist_ok=True)
         with open(result_file, 'w',encoding='utf-8') as file:
             json.dump([], file)
 
@@ -35,11 +37,15 @@ def load_result(result_file):
     return data
 
 def dataloader(data_list, batch_size, i_batch):
-    return data_list[i_batch*batch_size:i_batch*batch_size + batch_size]
+    batch = data_list[i_batch*batch_size:i_batch*batch_size + batch_size]
+    return batch if batch else None
 
 def load_config(config_path):
     with open(config_path, 'r',encoding='utf-8') as file:
         return yaml.safe_load(file)
+
+def safe_filename_component(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "model"
     
 def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on HumanEval")
@@ -87,7 +93,7 @@ async def main():
     Time.instance().value = current_time
     result_dir = Path(f"{AgentPrune_ROOT}/result/eval")
     result_dir.mkdir(parents=True, exist_ok=True)
-    result_file = result_dir / f"{args.llm_name}_{current_time}.json"
+    result_file = result_dir / f"{safe_filename_component(args.llm_name)}_{current_time}.json"
     
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     decision_method = args.decision_method
@@ -125,13 +131,14 @@ async def main():
                 lr=args.lr,
             )
 
-        for i_batch in range(2):
+        for i_batch in range(args.num_iterations):
             print(f"dec Batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []
             tests = []
-            add_losses = []        
-            current_batch = dataloader(dataset,20,i_batch)
+            add_losses = []
+            realized_graphs = []
+            current_batch = dataloader(dataset,args.batch_size,i_batch)
             if current_batch is None:
                 print("No more data available.")
                 break
@@ -141,6 +148,7 @@ async def main():
                 realized_graph.spatial_logits_1 = graph.spatial_logits_1
                 realized_graph.temporal_logits_1 = graph.temporal_logits_1
                 _share_dgap_parameters(realized_graph, graph)
+                realized_graphs.append(realized_graph)
             
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits_1.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -179,7 +187,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
                 
-            for task, answer, log_prob, add_loss, test in zip(current_batch, raw_answers, log_probs, add_losses, tests):
+            for task, answer, log_prob, add_loss, test, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, tests, realized_graphs):
                 if not isinstance(answer,list):
                     raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
                 answer = answer[0].lstrip("```python\n").rstrip("\n```")
@@ -268,13 +276,14 @@ async def main():
         if args.optimized_temporal:
             graph.optimized_temporal=True
 
-        for i_batch in range(4):
+        for i_batch in range(args.num_iterations):
             print(f"train Batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []
             tests = []
-            add_losses = []        
-            current_batch = dataloader(dataset,10,i_batch)
+            add_losses = []
+            realized_graphs = []
+            current_batch = dataloader(dataset,args.batch_size,i_batch)
             if current_batch is None:
                 print("No more data available.")
                 break
@@ -284,6 +293,7 @@ async def main():
                 realized_graph.spatial_logits = graph.spatial_logits
                 realized_graph.temporal_logits = graph.temporal_logits
                 _share_dgap_parameters(realized_graph, graph)
+                realized_graphs.append(realized_graph)
             
                 if not graph.diff:
                     spatial_matrix_train = realized_graph.spatial_logits.reshape((sum(args.agent_nums),sum(args.agent_nums)))
@@ -322,7 +332,7 @@ async def main():
             utilities: List[float] = []
             data = load_result(result_file)
                 
-            for task, answer, log_prob, add_loss, test in zip(current_batch, raw_answers, log_probs, add_losses, tests):
+            for task, answer, log_prob, add_loss, test, realized_graph in zip(current_batch, raw_answers, log_probs, add_losses, tests, realized_graphs):
                 if not isinstance(answer,list):
                     raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
                 answer = answer[0].lstrip("```python\n").rstrip("\n```")
@@ -370,7 +380,7 @@ async def main():
             print("Spatial probs:", spatial_probs)
             print("Temporal probs:", temporal_probs)
 
-            if (i_batch+1)%2 == 0 and i_batch < 4 and (args.optimized_spatial or args.optimized_temporal):
+            if (i_batch+1)%args.imp_per_iterations == 0 and i_batch < args.num_iterations and (args.optimized_spatial or args.optimized_temporal):
                 if not graph.diff:
                     spatial_masks, temporal_masks = graph.update_masks(args.pruning_rate)
                 else:
@@ -395,13 +405,14 @@ async def main():
     graph.set_message_pruning_training(False)
     total_solved, total_executed = (0, 0)
 
-    for i_batch in range(4,17):
+    train_batches = args.num_iterations if (args.optimized_temporal or args.optimized_spatial or args.dgap_content_pruning) else 0
+    for i_batch in range(train_batches, num_batches):
         print(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
         answer_log_probs = []
         tests = []
         add_losses = []        
-        current_batch = dataloader(dataset,10,i_batch)
+        current_batch = dataloader(dataset,args.batch_size,i_batch)
         if current_batch is None:
             print("No more data available.")
             break
