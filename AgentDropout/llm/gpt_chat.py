@@ -45,6 +45,7 @@ LLM_MAX_CONCURRENT_REQUESTS = max(1, int(os.getenv("LLM_MAX_CONCURRENT_REQUESTS"
 LLM_REQUEST_INTERVAL_SECONDS = max(0.0, float(os.getenv("LLM_REQUEST_INTERVAL_SECONDS", "0")))
 LLM_RETRY_ATTEMPTS = max(1, int(os.getenv("LLM_RETRY_ATTEMPTS", "8")))
 LOG_MINIMAX_TOKEN_USAGE = os.getenv("LOG_MINIMAX_TOKEN_USAGE", "0").lower() in {"1", "true", "yes"}
+MINIMAX_DEFAULT_MAX_TOKENS = max(1, int(os.getenv("MINIMAX_MAX_TOKENS", "2048")))
 
 _LLM_REQUEST_SEMAPHORE = asyncio.Semaphore(LLM_MAX_CONCURRENT_REQUESTS)
 _LLM_REQUEST_LOCK = asyncio.Lock()
@@ -475,11 +476,11 @@ async def achat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] =
                 completion = await aclient.chat.completions.create(
                     model=model,
                     messages=msg,
-                    max_tokens=max_tokens or 1000,
+                    max_tokens=max_tokens or MINIMAX_DEFAULT_MAX_TOKENS,
                     temperature=temperature or 0.2
                 )
         response_message = completion.choices[0].message.content
-        
+
         if isinstance(response_message, str):
             prompt = "".join([item['content'] for item in msg])
             _record_minimax_usage(prompt, response_message, usage=completion.usage)
@@ -498,11 +499,11 @@ def chat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, 
         completion = client.chat.completions.create(
             model=model,
             messages=msg,
-            max_tokens=max_tokens or 1000,
+            max_tokens=max_tokens or MINIMAX_DEFAULT_MAX_TOKENS,
             temperature=temperature or 0.2
         )
         response_message = completion.choices[0].message.content
-        
+
         if isinstance(response_message, str):
             prompt = "".join([item['content'] for item in msg])
             _record_minimax_usage(prompt, response_message, usage=completion.usage)

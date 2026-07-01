@@ -1,5 +1,6 @@
 from typing import Union, Dict, Any, List
 import itertools
+import re
 
 from AgentDropout.prompt.prompt_set import PromptSet
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
@@ -212,6 +213,24 @@ class MMLUPromptSet(PromptSet):
     def get_decision_few_shot():
         return ""
     
+    @staticmethod
+    def _extract_option_letter(answer: str) -> str:
+        if not isinstance(answer, str) or not answer:
+            return ""
+        # 1) "The answer is (X)" / "answer is X" (官方 MMLU-Pro 解析)
+        match = re.search(r"answer\s+is\s*\(?\s*([A-J])\s*\)?", answer, flags=re.IGNORECASE)
+        if match is not None:
+            return match.group(1).upper()
+        # 2) "Answer: X" 形式
+        match = re.search(r"answer\s*:\s*\(?\s*([A-J])\s*\)?", answer, flags=re.IGNORECASE)
+        if match is not None:
+            return match.group(1).upper()
+        # 3) 兜底: 第一个独立的 A-J 字母
+        match = re.search(r"\b([A-J])\b", answer)
+        if match is not None:
+            return match.group(1).upper()
+        return ""
+
     def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
         if isinstance(answer, list):
             if len(answer) > 0:
@@ -220,9 +239,7 @@ class MMLUPromptSet(PromptSet):
                 answer = ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
-        if len(answer) > 0:
-            answer = answer[0] # Try to format the answer by taking the first letter
-        return answer
+        return self._extract_option_letter(answer)
 
 
 @PromptSetRegistry.register('mmlu_pro')

@@ -86,8 +86,9 @@ class FinalRefer(Node):
                 vote = self.prompt_set.postprocess_answer(output)
             except Exception:
                 vote = ""
-            if not vote:
-                return None
+            # 非法/空 vote 视为弃权, 不计入投票也不阻断后续
+            if not vote or vote not in "ABCDEFGHIJ":
+                continue
             votes.append(vote)
 
         if votes and len(set(votes)) == 1:
