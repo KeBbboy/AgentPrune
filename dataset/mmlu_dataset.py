@@ -71,7 +71,7 @@ class MMLUDataset(ABC):
         input_dict = {"task": demo_question}
         return input_dict
 
-    def postprocess_answer(self, answer):
+    def postprocess_answer(self, answer, llm_name: str | None = None):
         if isinstance(answer, list):
             answer = answer[0] if answer else ""
         if not isinstance(answer, str):
@@ -80,34 +80,27 @@ class MMLUDataset(ABC):
         if not answer:
             return answer
 
-        # `` block stripping is opt-in per dataset/model. By default we leave
-        # Qwen-style answers intact and only strip when a subclass sets
-        # `self.strip_think_blocks = True`, or the caller sets the
-        # MMLU_STRIP_THINK_BLOCKS env var (used by MiniMax-M3 runs).
-        import os
-        want_strip = bool(getattr(self, "strip_think_blocks", False)) or os.getenv(
-            "MMLU_STRIP_THINK_BLOCKS", ""
-        ).lower() in {"1", "true", "yes"}
-        if want_strip:
-            TAG_OPEN = "think"
-            TAG_CLOSE = "/think"
-            LOW_OPEN = "<" + TAG_OPEN + ">"
-            LOW_CLOSE = "<" + TAG_CLOSE + ">"
-            OPEN_LEN = len(LOW_OPEN)
-            CLOSE_LEN = len(LOW_CLOSE)
+        # Decide extraction strategy based on the LLM that produced the
+        # answer. MiniMax-M3 replies wrap reasoning in ``...``
+        # blocks before the final letter; other models (e.g. Qwen3-14B)
+        # reply with the letter directly, so we keep the original tight
+        # logic intact for them.
+        is_minimax = bool(llm_name) and "MiniMax-M3" in llm_name
 
+        if is_minimax:
+            OPEN_T = "think"
+            CLOSE_T = "/" + OPEN_T
             lower = answer.lower()
-            if LOW_OPEN in lower:
-                open_idx = lower.index(LOW_OPEN) + OPEN_LEN
-                close_idx = lower.find(LOW_CLOSE, open_idx)
+            if OPEN_T in lower:
+                open_idx = lower.index(OPEN_T) + len(OPEN_T)
+                close_idx = lower.find(CLOSE_T, open_idx)
                 if close_idx != -1:
-                    answer = answer[close_idx + CLOSE_LEN:].strip()
-                else:
-                    answer = ""
+                    answer = answer[close_idx + len(CLOSE_T):].strip()
+                # else: unclosed thinking block; leave the rest so the
+                # regex fallback below can still pick out the answer.
         if not answer:
             return ""
 
-        # first non-empty line of the remainder
         first_line = ""
         for line in answer.splitlines():
             if line.strip():
@@ -116,35 +109,46 @@ class MMLUDataset(ABC):
         if not first_line:
             return ""
 
-        # 1) leading "A" / "**B**" / "(C)" etc.
+        # 1) Leading "A" / "**B**" / "(C)" — applies to all models.
         match = re.match(
             r"^\**\s*([A-D])(?:\s|$|[).:：,-])", first_line, flags=re.IGNORECASE
         )
         if match:
             return match.group(1).upper()
 
-        # 2) descriptive form: "The answer is B", "choose D"
-        match = re.search(
-            r"\b(?:answer|option|choose)\b[^A-D\n]{0,20}([A-D])\b",
-            first_line, flags=re.IGNORECASE,
-        )
-        if not match:
+        if is_minimax:
+            # 2) Descriptive form, e.g. "The answer is B" / "choose D".
             match = re.search(
-                r"\b(?:answer|option|choose)\s*(?:is|:|：)?\s*(?:option\s+)?([A-D])\b",
+                r"\b(?:answer|option|choose)\b[^A-D\n]{0,20}([A-D])\b",
                 first_line, flags=re.IGNORECASE,
             )
+            if not match:
+                match = re.search(
+                    r"\b(?:answer|option|choose)\s*(?:is|:|：)?\s*(?:option\s+)?([A-D])\b",
+                    first_line, flags=re.IGNORECASE,
+                )
+            if match:
+                return match.group(1).upper()
+
+            # 3) Last standalone A-D anywhere in the response — covers
+            # ``\n\nB`` style outputs where the letter is alone on a line.
+            for scope in (first_line, answer):
+                candidates = re.findall(
+                    r"(?<![A-Za-z0-9])([A-D])(?![A-Za-z0-9])", scope
+                )
+                if candidates:
+                    return candidates[-1].upper()
+
+            return first_line[0]
+
+        # Original tight logic for non-MiniMax models.
+        match = re.search(
+            r"\b(?:answer|option|choose)\s*(?:is|:)?\s*(?:option\s+)?([A-D])\b",
+            first_line, flags=re.IGNORECASE,
+        )
         if match:
             return match.group(1).upper()
-
-        # 3) last standalone A-D anywhere in the response (covers "C")
-        for scope in (first_line, answer):
-            candidates = re.findall(
-                r"(?<![A-Za-z0-9])([A-D])(?![A-Za-z0-9])", scope
-            )
-            if candidates:
-                return candidates[-1].upper()
-
-        return first_line[0]  # last-ditch fallback
+        return first_line[0]  # original last-ditch fallback
 
     @staticmethod
     def record_to_target_answer(record: pd.DataFrame) -> str:

@@ -34,7 +34,16 @@ async def evaluate(
         eval_batch_size: int = 4,
         dec: bool = False,
         args=None,
+        llm_name: Optional[str] = None,
         ) -> float:
+    # Per-dataset answer extraction needs to know which LLM produced the
+    # text (e.g. MiniMax-M3 wraps its reply in `` blocks).
+    # Resolve in priority: explicit arg > args.llm_name > graph.llm_name.
+    model_name = (
+        llm_name
+        or (getattr(args, "llm_name", None) if args is not None else None)
+        or getattr(graph, "llm_name", None)
+    )
 
     print(f"Evaluating AgentDropout on {dataset.__class__.__name__} split {dataset.split}")
     
@@ -86,7 +95,7 @@ async def evaluate(
         print(f"Batch time {time.time() - start_ts:.3f}")
         for raw_answer, record, all_answer in zip(raw_answers, record_batch, all_answers):
             print("Raw answer:", raw_answer)
-            answer = dataset.postprocess_answer(raw_answer)
+            answer = dataset.postprocess_answer(raw_answer, llm_name=model_name)
             print("Postprocessed answer:", answer)
             correct_answer = dataset.record_to_target_answer(record)
             print("Correct answer:", correct_answer)

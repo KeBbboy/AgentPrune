@@ -322,13 +322,35 @@ class MMLUProDataset:
 
         return random.Random(answer).choice(valid_letters)
 
-    def postprocess_answer(self, answer, record: Dict[str, Any] | None = None) -> str:
+    def postprocess_answer(
+        self,
+        answer,
+        record: Dict[str, Any] | None = None,
+        llm_name: str | None = None,
+    ) -> str:
         if isinstance(answer, list):
             answer = answer[0] if len(answer) > 0 else ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
+        answer = answer.strip()
         if not answer:
             return ""
+
+        # MiniMax-M3 wraps its reasoning in ``...``; strip the block
+        # when we know that model produced the reply. Other models keep
+        # their original answer text.
+        is_minimax = bool(llm_name) and "MiniMax-M3" in llm_name
+        if is_minimax:
+            OPEN_T = "think"
+            CLOSE_T = "/" + OPEN_T
+            lower = answer.lower()
+            if OPEN_T in lower:
+                open_idx = lower.index(OPEN_T) + len(OPEN_T)
+                close_idx = lower.find(CLOSE_T, open_idx)
+                if close_idx != -1:
+                    answer = answer[close_idx + len(CLOSE_T):].strip()
+                # else: unclosed block; let the regex still try.
+
         valid_letters = self._get_valid_option_letters(record)
         return self._extract_answer_letter(answer, valid_letters)
 
