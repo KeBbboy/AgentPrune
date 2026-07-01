@@ -71,37 +71,73 @@ class MMLUDataset(ABC):
         input_dict = {"task": demo_question}
         return input_dict
 
-    def postprocess_answer(self, answer: Union[str, List[str]]) -> str:
+    def postprocess_answer(self, answer):
         if isinstance(answer, list):
-            if len(answer) > 0:
-                answer = answer[0]
-            else:
-                answer = ""
+            answer = answer[0] if answer else ""
         if not isinstance(answer, str):
             raise Exception("Expected string")
         answer = answer.strip()
-        if len(answer) == 0:
+        if not answer:
             return answer
 
+        TAG_OPEN = "think"
+        TAG_CLOSE = "/think"
+        LOW_OPEN = "<" + TAG_OPEN + ">"
+        LOW_CLOSE = "<" + TAG_CLOSE + ">"
+        OPEN_LEN = len(LOW_OPEN)
+        CLOSE_LEN = len(LOW_CLOSE)
+
+        lower = answer.lower()
+        # `` blocks first
+        if LOW_OPEN in lower:
+            open_idx = lower.index(LOW_OPEN) + OPEN_LEN
+            close_idx = lower.find(LOW_CLOSE, open_idx)
+            if close_idx != -1:
+                answer = answer[close_idx + CLOSE_LEN:].strip()
+            else:
+                # thinking block never closed -> drop everything
+                answer = ""
+        if not answer:
+            return ""
+
+        # first non-empty line of the remainder
         first_line = ""
         for line in answer.splitlines():
             if line.strip():
                 first_line = line.strip()
                 break
+        if not first_line:
+            return ""
 
-        match = re.match(r"^\**\s*([A-D])(?:\s|$|[).:：,-])", first_line, flags=re.IGNORECASE)
-        if match:
-            return match.group(1).upper()
-
-        match = re.search(
-            r"\b(?:answer|option|choose)\s*(?:is|:)?\s*(?:option\s+)?([A-D])\b",
-            first_line,
-            flags=re.IGNORECASE,
+        # 1) leading "A" / "**B**" / "(C)" etc.
+        match = re.match(
+            r"^\**\s*([A-D])(?:\s|$|[).:：,-])", first_line, flags=re.IGNORECASE
         )
         if match:
             return match.group(1).upper()
 
-        return first_line[0]
+        # 2) descriptive form: "The answer is B", "choose D"
+        match = re.search(
+            r"\b(?:answer|option|choose)\b[^A-D\n]{0,20}([A-D])\b",
+            first_line, flags=re.IGNORECASE,
+        )
+        if not match:
+            match = re.search(
+                r"\b(?:answer|option|choose)\s*(?:is|:|：)?\s*(?:option\s+)?([A-D])\b",
+                first_line, flags=re.IGNORECASE,
+            )
+        if match:
+            return match.group(1).upper()
+
+        # 3) last standalone A-D anywhere in the response (covers "C")
+        for scope in (first_line, answer):
+            candidates = re.findall(
+                r"(?<![A-Za-z0-9])([A-D])(?![A-Za-z0-9])", scope
+            )
+            if candidates:
+                return candidates[-1].upper()
+
+        return first_line[0]  # last-ditch fallback
 
     @staticmethod
     def record_to_target_answer(record: pd.DataFrame) -> str:
