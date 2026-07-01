@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
-from dataset.evaluators.metrics import evaluate_gaia, evaluate_gpqa, evaluate_math, evaluate_musique, evaluate_qa
+from AgentDropout.benchmarks.evaluators.metrics import (
+    evaluate_gaia,
+    evaluate_gpqa,
+    evaluate_math,
+    evaluate_musique,
+    evaluate_qa,
+)
 
 
 QA_DATASETS = {"gaia", "hle", "musique"}
