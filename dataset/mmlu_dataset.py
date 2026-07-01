@@ -80,23 +80,30 @@ class MMLUDataset(ABC):
         if not answer:
             return answer
 
-        TAG_OPEN = "think"
-        TAG_CLOSE = "/think"
-        LOW_OPEN = "<" + TAG_OPEN + ">"
-        LOW_CLOSE = "<" + TAG_CLOSE + ">"
-        OPEN_LEN = len(LOW_OPEN)
-        CLOSE_LEN = len(LOW_CLOSE)
+        # `` block stripping is opt-in per dataset/model. By default we leave
+        # Qwen-style answers intact and only strip when a subclass sets
+        # `self.strip_think_blocks = True`, or the caller sets the
+        # MMLU_STRIP_THINK_BLOCKS env var (used by MiniMax-M3 runs).
+        import os
+        want_strip = bool(getattr(self, "strip_think_blocks", False)) or os.getenv(
+            "MMLU_STRIP_THINK_BLOCKS", ""
+        ).lower() in {"1", "true", "yes"}
+        if want_strip:
+            TAG_OPEN = "think"
+            TAG_CLOSE = "/think"
+            LOW_OPEN = "<" + TAG_OPEN + ">"
+            LOW_CLOSE = "<" + TAG_CLOSE + ">"
+            OPEN_LEN = len(LOW_OPEN)
+            CLOSE_LEN = len(LOW_CLOSE)
 
-        lower = answer.lower()
-        # `` blocks first
-        if LOW_OPEN in lower:
-            open_idx = lower.index(LOW_OPEN) + OPEN_LEN
-            close_idx = lower.find(LOW_CLOSE, open_idx)
-            if close_idx != -1:
-                answer = answer[close_idx + CLOSE_LEN:].strip()
-            else:
-                # thinking block never closed -> drop everything
-                answer = ""
+            lower = answer.lower()
+            if LOW_OPEN in lower:
+                open_idx = lower.index(LOW_OPEN) + OPEN_LEN
+                close_idx = lower.find(LOW_CLOSE, open_idx)
+                if close_idx != -1:
+                    answer = answer[close_idx + CLOSE_LEN:].strip()
+                else:
+                    answer = ""
         if not answer:
             return ""
 
