@@ -22,8 +22,11 @@ paper/
 HeatMap/
 __pycache__/
 hidden/
+result/
 
 # Local AQuA dataset files
 dataset/aqua/train.jsonl
 dataset/aqua/dev.jsonl
 dataset/aqua/test.jsonl
+/dataset
+dataset/
