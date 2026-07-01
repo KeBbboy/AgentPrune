@@ -27,6 +27,13 @@ class CompletionTokens(Singleton):
     def __init__(self):
         self.value = 0.0
 
+class TokenUsageRecords(Singleton):
+    def __init__(self):
+        self.value = []
+
+    def reset(self):
+        self.value = []
+
 class Time(Singleton):
     def __init__(self):
         self.value = ""
