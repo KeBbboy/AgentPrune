@@ -46,6 +46,9 @@ LLM_REQUEST_INTERVAL_SECONDS = max(0.0, float(os.getenv("LLM_REQUEST_INTERVAL_SE
 LLM_RETRY_ATTEMPTS = max(1, int(os.getenv("LLM_RETRY_ATTEMPTS", "8")))
 LOG_MINIMAX_TOKEN_USAGE = os.getenv("LOG_MINIMAX_TOKEN_USAGE", "0").lower() in {"1", "true", "yes"}
 MINIMAX_DEFAULT_MAX_TOKENS = max(1, int(os.getenv("MINIMAX_MAX_TOKENS", "2048")))
+# 官方 MMLU-Pro 推理参数：temperature=0.0, top_p=0.95
+MINIMAX_DEFAULT_TEMPERATURE = float(os.getenv("MINIMAX_TEMPERATURE", "0.0"))
+MINIMAX_DEFAULT_TOP_P = float(os.getenv("MINIMAX_TOP_P", "0.95"))
 
 _LLM_REQUEST_SEMAPHORE = asyncio.Semaphore(LLM_MAX_CONCURRENT_REQUESTS)
 _LLM_REQUEST_LOCK = asyncio.Lock()
@@ -466,7 +469,7 @@ class LlamaChat(LLM):
 
 
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(LLM_RETRY_ATTEMPTS), reraise=True)
-async def achat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperature: Optional[float] = None):
+async def achat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
     api_kwargs = dict(api_key=MINE_API_KEYS, base_url=MINE_BASE_URL)
     aclient = AsyncOpenAI(**api_kwargs)
     try:
@@ -477,7 +480,8 @@ async def achat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] =
                     model=model,
                     messages=msg,
                     max_tokens=max_tokens or MINIMAX_DEFAULT_MAX_TOKENS,
-                    temperature=temperature or 0.2
+                    temperature=temperature if temperature is not None else MINIMAX_DEFAULT_TEMPERATURE,
+                    top_p=top_p if top_p is not None else MINIMAX_DEFAULT_TOP_P,
                 )
         response_message = completion.choices[0].message.content
 
@@ -492,7 +496,7 @@ async def achat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] =
 
 
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(LLM_RETRY_ATTEMPTS), reraise=True)
-def chat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperature: Optional[float] = None):
+def chat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperature: Optional[float] = None, top_p: Optional[float] = None):
     api_kwargs = dict(api_key=MINE_API_KEYS, base_url=MINE_BASE_URL)
     client = AsyncOpenAI(**api_kwargs)
     try:
@@ -500,7 +504,8 @@ def chat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, 
             model=model,
             messages=msg,
             max_tokens=max_tokens or MINIMAX_DEFAULT_MAX_TOKENS,
-            temperature=temperature or 0.2
+            temperature=temperature if temperature is not None else MINIMAX_DEFAULT_TEMPERATURE,
+            top_p=top_p if top_p is not None else MINIMAX_DEFAULT_TOP_P,
         )
         response_message = completion.choices[0].message.content
 
@@ -526,18 +531,21 @@ class MiniMaxChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        top_p: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         if max_tokens is None:
             max_tokens = self.DEFAULT_MAX_TOKENS
         if temperature is None:
             temperature = self.DEFAULT_TEMPERATURE
+        if top_p is None:
+            top_p = MINIMAX_DEFAULT_TOP_P
         if num_comps is None:
             num_comps = self.DEFUALT_NUM_COMPLETIONS
         
         if isinstance(messages, str):
             messages = [Message(role="user", content=messages)]
-        return await achat_minimax(self.model_name, messages, max_tokens=max_tokens, temperature=temperature)
+        return await achat_minimax(self.model_name, messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
     
     def gen(
         self,
@@ -545,14 +553,17 @@ class MiniMaxChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        top_p: Optional[float] = None,
     ) -> Union[List[str], str]:
         if max_tokens is None:
             max_tokens = self.DEFAULT_MAX_TOKENS
         if temperature is None:
             temperature = self.DEFAULT_TEMPERATURE
+        if top_p is None:
+            top_p = MINIMAX_DEFAULT_TOP_P
         if num_comps is None:
             num_comps = self.DEFUALT_NUM_COMPLETIONS
 
         if isinstance(messages, str):
             messages = [Message(role="user", content=messages)]
-        return chat_minimax(self.model_name, messages, max_tokens=max_tokens, temperature=temperature)
+        return chat_minimax(self.model_name, messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p)

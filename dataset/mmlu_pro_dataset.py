@@ -256,7 +256,7 @@ class MMLUProDataset:
 
         cot_content = record.get("cot_content", "").strip()
         if cot_content:
-            return f"{prompt}\nAnswer: Let's think step by step.\n{cot_content}\n\n"
+            return f"{prompt}\nAnswer: Let's think step by step.\n{cot_content}\nThe answer is ({record['correct_answer']}).\n\n"
         return f"{prompt}\nAnswer: The answer is ({record['correct_answer']}).\n\n"
 
     def _select_few_shot_examples(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -277,6 +277,14 @@ class MMLUProDataset:
         prompt_parts.append(f"{question_block}\nAnswer: Let's think step by step.")
 
         return {"task": "\n".join(prompt_parts).strip() + "\n"}
+
+    def get_system_prompt(self) -> str:
+        # 官方 MMLU-Pro system prompt（与 TIGER-Lab/MMLU-Pro evaluation/eval.py 对齐）
+        return (
+            "The following are multiple choice questions (with answers) about a specific subject. "
+            "Think step by step and then output the answer in the format of "
+            "\"The answer is (X)\" at the end, where X is the letter of the correct option."
+        )
 
     @staticmethod
     def _get_valid_option_letters(record: Dict[str, Any] | None) -> List[str]:

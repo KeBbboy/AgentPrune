@@ -28,6 +28,12 @@ class AnalyzeAgent(Node):
         """ To be overriden by the descendant class """
         """ Process the raw_inputs(most of the time is a List[Dict]) """              
         system_prompt = f"{self.constraint}"
+        # 官方 MMLU-Pro system prompt（与 TIGER-Lab/MMLU-Pro 对齐；不影响智能体角色）
+        dataset_obj = kwargs.get("dataset") or (self.prompt_set.get_dataset() if hasattr(self.prompt_set, "get_dataset") else None)
+        if dataset_obj is not None and hasattr(dataset_obj, "get_system_prompt"):
+            sys_extra = dataset_obj.get_system_prompt()
+            if sys_extra:
+                system_prompt = f"{sys_extra}\n\n{system_prompt}"
         user_prompt = f"The task is: {raw_inputs['task']}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
         spatial_str = ""
         temporal_str = ""

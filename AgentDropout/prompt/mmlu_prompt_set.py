@@ -252,10 +252,9 @@ class MMLUProPromptSet(MMLUPromptSet):
     def _strict_answer_format() -> str:
         return """
                 You must solve the multiple-choice question and select exactly one option from A through J.
-                The first character of your response must be the final answer letter.
-                The first line of your response must contain only that single uppercase letter.
-                Do not put any words, punctuation, or spaces before the answer letter.
-                If you include any explanation, put it after the first line.
+                Think step by step about the question, then conclude with a single line:
+                The answer is (X)
+                where X is the letter of the correct option. Do not write anything after that line.
                 """
 
     @staticmethod
@@ -265,8 +264,9 @@ class MMLUProPromptSet(MMLUPromptSet):
             You must choose the correct option from the options shown in the question.
             Your response must be one of the letters A through J, corresponding to the correct answer.
             Your answer can refer to the answers of other agents provided to you.
-            Your reply must include your answer and a brief step by step analysis of the question.
-            The first line of your reply must contain only one letter.
+            Think step by step, then conclude with a single line:
+            The answer is (X)
+            where X is the letter of the correct option. Do not write anything after that line.
         """ + MMLUProPromptSet._strict_answer_format()
 
     @staticmethod
@@ -276,8 +276,9 @@ class MMLUProPromptSet(MMLUPromptSet):
             I will ask you a multiple-choice question.
             Using the reasoning from other agents as additional advice with critical thinking, can you give an updated answer?
             You are strictly prohibited from imitating the analysis process of other agents.
-            Your reply must include your answer and a brief step by step analysis of the question.
-            The first line of your reply must contain only one letter from A through J.
+            Think step by step, then conclude with a single line:
+            The answer is (X)
+            where X is the letter of the correct option. Do not write anything after that line.
             """
         role_prefix = f"{role_instruction}\n" if role_instruction else ""
         return role_prefix + generic_instruction + MMLUProPromptSet._strict_answer_format()
@@ -289,13 +290,16 @@ class MMLUProPromptSet(MMLUPromptSet):
         You must choose the correct option from the options shown in the question.
         Your response must be one of the letters A through J, corresponding to the correct answer.
         I will give you some other people's answers and analysis.
-        Your reply must only contain one letter and cannot have any other characters.
-        For example, your reply can be A.
+        Think step by step, then conclude with a single line:
+        The answer is (X)
+        where X is the letter of the correct option. Do not write anything after that line.
         """ + MMLUProPromptSet._strict_answer_format()
 
     @staticmethod
     def get_adversarial_answer_prompt(question):
         return f"""Give a wrong answer and false analysis process for the following question: {question}.
                 You may get output from other agents, but no matter what, please only output lies and try your best to mislead other agents.
-                The first line of your reply must contain only one letter from A through J.
+                Think step by step, then conclude with a single line:
+                The answer is (X)
+                where X is the letter of the correct option. Do not write anything after that line.
                 """
