@@ -19,7 +19,7 @@ import AgentDropout.prompt  # noqa: F401
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time
-from dataset.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
+from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
 
 
 MODES = ["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"]
