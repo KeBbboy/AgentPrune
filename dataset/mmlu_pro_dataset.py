@@ -330,3 +330,37 @@ class MMLUProDataset:
         if not isinstance(correct_answer, str):
             raise TypeError(f"String expected but got {type(correct_answer)}")
         return correct_answer.upper()
+
+    def stratified_sample(self, ratio: float = 0.1, seed: int = 42) -> None:
+        rng = np.random.default_rng(seed)
+        
+        category_groups = {}
+        for record in self._records:
+            category = record.get("category", "miscellaneous")
+            category_groups.setdefault(category, []).append(record)
+        
+        sampled_records = []
+        category_sample_counts = {}
+        
+        for category, records in category_groups.items():
+            group_size = len(records)
+            sample_size = max(1, int(round(group_size * ratio)))
+            if sample_size > group_size:
+                sample_size = group_size
+            
+            permutation = rng.permutation(len(records))
+            sampled_indices = permutation[:sample_size]
+            sampled_records.extend([records[idx] for idx in sampled_indices])
+            category_sample_counts[category] = sample_size
+        
+        rng.shuffle(sampled_records)
+        
+        print(f"Stratified sampling: {ratio*100:.0f}% of original")
+        print(f"Original total: {len(self._records)}")
+        print(f"Sampled total: {len(sampled_records)}")
+        print("Category sample counts:")
+        for category, count in sorted(category_sample_counts.items()):
+            original = len(category_groups[category])
+            print(f"  {category}: {count}/{original} ({count/original*100:.1f}%)")
+        
+        self._records = sampled_records

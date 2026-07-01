@@ -19,6 +19,6 @@ class LLMRegistry:
     def get(cls, model_name: Optional[str] = None) -> LLM:
         model_name = "MiniMax-M3"
 
-        model = cls.registry.get('GPTChat', model_name)
+        model = cls.registry.get('minimax', model_name)
 
         return model

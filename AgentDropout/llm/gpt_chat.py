@@ -462,3 +462,96 @@ class LlamaChat(LLM):
         num_comps: Optional[int] = None,
     ) -> Union[List[str], str]:
         pass
+
+
+@retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(LLM_RETRY_ATTEMPTS), reraise=True)
+async def achat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperature: Optional[float] = None):
+    api_kwargs = dict(api_key=MINE_API_KEYS, base_url=MINE_BASE_URL)
+    aclient = AsyncOpenAI(**api_kwargs)
+    try:
+        async with _LLM_REQUEST_SEMAPHORE:
+            await _wait_for_llm_slot()
+            async with _llm_timeout(1000):
+                completion = await aclient.chat.completions.create(
+                    model=model,
+                    messages=msg,
+                    max_tokens=max_tokens or 1000,
+                    temperature=temperature or 0.2
+                )
+        response_message = completion.choices[0].message.content
+        
+        if isinstance(response_message, str):
+            prompt = "".join([item['content'] for item in msg])
+            _record_minimax_usage(prompt, response_message, usage=completion.usage)
+            return response_message
+
+    except Exception as e:
+        print(f"Error in achat_minimax: {e}")
+        raise
+
+
+@retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(LLM_RETRY_ATTEMPTS), reraise=True)
+def chat_minimax(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperature: Optional[float] = None):
+    api_kwargs = dict(api_key=MINE_API_KEYS, base_url=MINE_BASE_URL)
+    client = AsyncOpenAI(**api_kwargs)
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=msg,
+            max_tokens=max_tokens or 1000,
+            temperature=temperature or 0.2
+        )
+        response_message = completion.choices[0].message.content
+        
+        if isinstance(response_message, str):
+            prompt = "".join([item['content'] for item in msg])
+            _record_minimax_usage(prompt, response_message, usage=completion.usage)
+            return response_message
+
+    except Exception as e:
+        print(f"Error in chat_minimax: {e}")
+        raise
+
+
+@LLMRegistry.register('minimax')
+class MiniMaxChat(LLM):
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+
+    async def agen(
+        self,
+        messages: List[Message],
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        num_comps: Optional[int] = None,
+        ) -> Union[List[str], str]:
+
+        if max_tokens is None:
+            max_tokens = self.DEFAULT_MAX_TOKENS
+        if temperature is None:
+            temperature = self.DEFAULT_TEMPERATURE
+        if num_comps is None:
+            num_comps = self.DEFUALT_NUM_COMPLETIONS
+        
+        if isinstance(messages, str):
+            messages = [Message(role="user", content=messages)]
+        return await achat_minimax(self.model_name, messages, max_tokens=max_tokens, temperature=temperature)
+    
+    def gen(
+        self,
+        messages: List[Message],
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        num_comps: Optional[int] = None,
+    ) -> Union[List[str], str]:
+        if max_tokens is None:
+            max_tokens = self.DEFAULT_MAX_TOKENS
+        if temperature is None:
+            temperature = self.DEFAULT_TEMPERATURE
+        if num_comps is None:
+            num_comps = self.DEFUALT_NUM_COMPLETIONS
+
+        if isinstance(messages, str):
+            messages = [Message(role="user", content=messages)]
+        return chat_minimax(self.model_name, messages, max_tokens=max_tokens, temperature=temperature)

@@ -6,6 +6,7 @@ from AgentDropout.prompt.aqua_prompt_set import AQUAPromptSet
 from AgentDropout.prompt.math_prompt_set import MathPromptSet
 from AgentDropout.prompt.mathc_prompt_set import MathcPromptSet
 from AgentDropout.prompt.cl_bench_prompt_set import CLBenchPromptSet
+from AgentDropout.prompt.swe_bench_lite_prompt_set import SWEBenchLitePromptSet
 
 __all__ = ['MMLUPromptSet',
            'MMLUProPromptSet',
@@ -16,4 +17,5 @@ __all__ = ['MMLUPromptSet',
            'MathPromptSet',
            'MathcPromptSet',
            'CLBenchPromptSet',
+           'SWEBenchLitePromptSet',
            ]

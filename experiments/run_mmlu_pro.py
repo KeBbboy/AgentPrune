@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument('--imp_per_iterations', type=int, default=5)
     parser.add_argument('--num_rounds', type=int, default=1)
     parser.add_argument('--pruning_rate', type=float, default=0.25)
-    parser.add_argument('--llm_name', type=str, default="gpt-3.5-turbo")
+    parser.add_argument('--llm_name', type=str, default="MiniMax-M3")
     parser.add_argument('--domain', type=str, default="mmlu_pro")
     parser.add_argument('--decision_method', type=str, default="FinalRefer")
     parser.add_argument('--optimized_spatial', action='store_true')
@@ -49,7 +49,8 @@ def parse_args():
     parser.add_argument('--diff', action='store_true')
     parser.add_argument('--dec', action='store_true')
     parser.add_argument('--cot', action='store_true')
-    parser.add_argument('--limit_questions', type=int, default=153)
+    parser.add_argument('--sample_ratio', type=float, default=0.1, help="Ratio of dataset to sample (0.1 = 10%)")
+    parser.add_argument('--sample_seed', type=int, default=42, help="Random seed for stratified sampling")
     add_llmlingua2_args(parser)
     add_role_aware_args(parser)
     add_temporal_api_summary_args(parser)
@@ -85,6 +86,8 @@ async def main():
     dataset_train = MMLUProDataset('dev')
     dataset_val = MMLUProDataset('val')
 
+    dataset_val.stratified_sample(ratio=args.sample_ratio, seed=args.sample_seed)
+
     if args.optimized_spatial or args.optimized_temporal:
         await train(
             graph=graph,
@@ -118,7 +121,7 @@ async def main():
         graph=graph,
         dataset=dataset_val,
         num_rounds=args.num_rounds,
-        limit_questions=args.limit_questions,
+        limit_questions=None,
         eval_batch_size=args.batch_size,
         dec=args.dec,
         args=args,
