@@ -1,4 +1,5 @@
 from AgentDropout.agents.analyze_agent import AnalyzeAgent
+from AgentDropout.agents.benchmark_agent import BenchmarkAgent
 from AgentDropout.agents.code_writing import CodeWriting
 from AgentDropout.agents.math_solver import MathSolver
 from AgentDropout.agents.math_solver_aqua import MathSolver_aqua
@@ -7,6 +8,7 @@ from AgentDropout.agents.final_decision import FinalRefer,FinalDirect,FinalWrite
 from AgentDropout.agents.agent_registry import AgentRegistry
 
 __all__ =  ['AnalyzeAgent',
+            'BenchmarkAgent',
             'CodeWriting',
             'MathSolver',
             'MathSolver_aqua',
