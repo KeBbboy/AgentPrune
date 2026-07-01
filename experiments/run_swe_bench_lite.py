@@ -250,8 +250,11 @@ async def main():
     if args.debug:
         logger.setLevel(logging.DEBUG)
 
+    cmd_line = " ".join([sys.executable] + sys.argv)
     logger.info(f"=" * 80)
     logger.info(f"SWE-bench Lite Evaluation Script (Official Mode)")
+    logger.info(f"=" * 80)
+    logger.info(f"Command: {cmd_line}")
     logger.info(f"=" * 80)
     logger.info(f"Mode: {args.mode}")
     logger.info(f"LLM Model: {args.llm_name}")
@@ -329,6 +332,7 @@ async def main():
         end_time = time.time()
 
         output = {
+            "command": cmd_line,
             "metadata": {
                 "model": args.llm_name,
                 "dataset": args.dataset_name,
@@ -406,6 +410,7 @@ async def main():
         category_accuracy = {}
 
     output = {
+        "command": cmd_line,
         "metadata": {
             "model": args.llm_name,
             "dataset": args.dataset_name,
