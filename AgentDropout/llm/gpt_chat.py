@@ -75,6 +75,40 @@ MINIMAX_DEFAULT_TEMPERATURE = TEMPERATURE
 TOP_P = float(os.getenv("MINIMAX_TOP_P", "0.95"))
 MINIMAX_DEFAULT_TOP_P = TOP_P
 
+# --- Thinking mode toggle (default: ON) ---------------------------------------
+# All three providers that we route to (MiniMax, Qwen/SiliconFlow, etc.) support a
+# "thinking" parameter that lets the model emit a chain-of-thought before the
+# final answer. We expose a single global switch so callers don't need to know
+# which provider they're hitting.
+#   LLM_ENABLE_THINKING = "1" / "0" (default "1" — thinking ON)
+#   LLM_THINKING_BUDGET = integer token budget for Qwen3-style providers
+#   MINIMAX_THINKING_TYPE = "adaptive" / "disabled" (default "adaptive")
+LLM_ENABLE_THINKING = os.getenv("LLM_ENABLE_THINKING", "1").lower() in {"1", "true", "yes", "on"}
+LLM_THINKING_BUDGET = int(os.getenv("LLM_THINKING_BUDGET", "4096"))
+MINIMAX_THINKING_TYPE = os.getenv("MINIMAX_THINKING_TYPE", "adaptive")
+
+
+def _thinking_extra_body(model: str) -> Dict[str, Any]:
+    """Build the per-provider extra_body that controls thinking mode.
+
+    Returns an empty dict when thinking is disabled or when the provider
+    doesn't expose a switch. Callers should pass it via ``extra_body=`` to
+    the OpenAI-compatible client so unknown keys are forwarded verbatim.
+    """
+    if not LLM_ENABLE_THINKING:
+        return {}
+    model_lower = (model or "").lower()
+    # Qwen3 / SiliconFlow path: enable_thinking + thinking_budget.
+    if "qwen" in model_lower:
+        body: Dict[str, Any] = {"enable_thinking": True}
+        if 128 <= LLM_THINKING_BUDGET <= 32768:
+            body["thinking_budget"] = LLM_THINKING_BUDGET
+        return body
+    # MiniMax-M3 path: thinking.type ∈ {adaptive, disabled}.
+    if "minimax" in model_lower or "MiniMax" in model:
+        return {"thinking": {"type": MINIMAX_THINKING_TYPE}}
+    return {}
+
 _SEMA = asyncio.Semaphore(MAX_CONCURRENCY)
 _LLM_REQUEST_SEMAPHORE = _SEMA
 _LOCK = asyncio.Lock()
@@ -300,7 +334,11 @@ async def achat_qwen(model: str, msg: List[Dict]):
         async with _SEMA:
             await _wait_slot()
             async with _timeout(1000):
-                completion = await client.chat.completions.create(model=model, messages=msg)
+                completion = await client.chat.completions.create(
+                    model=model,
+                    messages=msg,
+                    extra_body=_thinking_extra_body(model),
+                )
         text = completion.choices[0].message.content
         if isinstance(text, str):
             prompt = "".join(item["content"] for item in msg)
@@ -427,6 +465,7 @@ async def achat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=Non
                     max_tokens=max_tokens or MAX_TOKENS,
                     temperature=temperature if temperature is not None else TEMPERATURE,
                     top_p=top_p if top_p is not None else TOP_P,
+                    extra_body=_thinking_extra_body(model),
                 )
         text = completion.choices[0].message.content
         if isinstance(text, str):
@@ -452,6 +491,7 @@ def chat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=None, top_
             max_tokens=max_tokens or MAX_TOKENS,
             temperature=temperature if temperature is not None else TEMPERATURE,
             top_p=top_p if top_p is not None else TOP_P,
+            extra_body=_thinking_extra_body(model),
         )
         text = completion.choices[0].message.content
         if isinstance(text, str):
