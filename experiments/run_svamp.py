@@ -16,6 +16,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.graph import Graph
+from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.tools.reader.readers import JSONReader, JSONLReader
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
@@ -68,6 +69,13 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
+    parser.add_argument('--llm_enable_thinking', type=parse_bool_arg, default=True,
+                        help='Enable model thinking mode: true or false')
+    parser.add_argument('--llm_thinking_budget', type=int, default=8192,
+                        help='Thinking token budget for Qwen3-style providers')
+    parser.add_argument('--minimax_thinking_type', type=str, default='adaptive',
+                        choices=['adaptive', 'disabled'],
+                        help='MiniMax thinking mode type')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -78,6 +86,11 @@ def parse_args():
 
 async def main():
     args = parse_args()
+    configure_thinking(
+        enable_thinking=args.llm_enable_thinking,
+        thinking_budget=args.llm_thinking_budget,
+        minimax_thinking_type=args.minimax_thinking_type,
+    )
     result_file = None
     dataset = JSONReader.parse_file(args.dataset_json)
     dataset = svamp_data_process(dataset)

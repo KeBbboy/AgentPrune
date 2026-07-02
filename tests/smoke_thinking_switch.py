@@ -9,12 +9,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from AgentDropout.llm.gpt_chat import (
     _thinking_extra_body,
+    configure_thinking,
     LLM_ENABLE_THINKING,
     LLM_THINKING_BUDGET,
     MINIMAX_THINKING_TYPE,
 )
 
-print("=== env-derived config ===")
+print("=== arg-style default config ===")
 print(f"  LLM_ENABLE_THINKING  = {LLM_ENABLE_THINKING}")
 print(f"  LLM_THINKING_BUDGET  = {LLM_THINKING_BUDGET}")
 print(f"  MINIMAX_THINKING_TYPE= {MINIMAX_THINKING_TYPE}")
@@ -53,15 +54,14 @@ async def call_real(label, model, **extra):
 
 async def main():
     # Default (ON).
+    configure_thinking(enable_thinking=True, thinking_budget=8192, minimax_thinking_type="adaptive")
     await call_real("ON (default)", "Qwen/Qwen3-14B")
-    # Forced OFF via env override.
-    os.environ["LLM_ENABLE_THINKING"] = "0"
-    # Re-import not needed; helper reads env at call time, but the constant is
-    # captured at import. Re-evaluate helper directly.
-    print(f"\n  (env LLM_ENABLE_THINKING=0 -> helper returns {_thinking_extra_body('Qwen/Qwen3-14B')})")
-    await call_real("OFF (env override)", "Qwen/Qwen3-14B")
+    # Forced OFF via the same in-process config path used by argparse runners.
+    configure_thinking(enable_thinking=False, thinking_budget=8192, minimax_thinking_type="adaptive")
+    print(f"\n  (configure_thinking(enable_thinking=False) -> helper returns {_thinking_extra_body('Qwen/Qwen3-14B')})")
+    await call_real("OFF (arg override)", "Qwen/Qwen3-14B")
 
-    os.environ["LLM_ENABLE_THINKING"] = "1"
+    configure_thinking(enable_thinking=True, thinking_budget=8192, minimax_thinking_type="adaptive")
     await call_real("ON  (MiniMax-M3)", "MiniMax-M3")
 
 

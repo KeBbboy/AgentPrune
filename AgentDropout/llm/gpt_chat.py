@@ -75,17 +75,37 @@ MINIMAX_DEFAULT_TEMPERATURE = TEMPERATURE
 TOP_P = float(os.getenv("MINIMAX_TOP_P", "0.95"))
 MINIMAX_DEFAULT_TOP_P = TOP_P
 
-# --- Thinking mode toggle (default: ON) ---------------------------------------
-# All three providers that we route to (MiniMax, Qwen/SiliconFlow, etc.) support a
-# "thinking" parameter that lets the model emit a chain-of-thought before the
-# final answer. We expose a single global switch so callers don't need to know
-# which provider they're hitting.
-#   LLM_ENABLE_THINKING = "1" / "0" (default "1" — thinking ON)
-#   LLM_THINKING_BUDGET = integer token budget for Qwen3-style providers
-#   MINIMAX_THINKING_TYPE = "adaptive" / "disabled" (default "adaptive")
-LLM_ENABLE_THINKING = os.getenv("LLM_ENABLE_THINKING", "1").lower() in {"1", "true", "yes", "on"}
-LLM_THINKING_BUDGET = int(os.getenv("LLM_THINKING_BUDGET", "4096"))
-MINIMAX_THINKING_TYPE = os.getenv("MINIMAX_THINKING_TYPE", "adaptive")
+# --- Thinking mode toggle (configured by experiment args; default: ON) --------
+# All providers routed here can accept a provider-specific thinking parameter.
+# Keep this as an in-process setting instead of reading it from environment
+# variables so experiments can control it via argparse.
+LLM_ENABLE_THINKING = True
+LLM_THINKING_BUDGET = 8192
+MINIMAX_THINKING_TYPE = "adaptive"
+
+
+def configure_thinking(
+    enable_thinking: bool = True,
+    thinking_budget: int = 8192,
+    minimax_thinking_type: str = "adaptive",
+) -> None:
+    """Configure provider-specific thinking parameters for this process."""
+    global LLM_ENABLE_THINKING, LLM_THINKING_BUDGET, MINIMAX_THINKING_TYPE
+    LLM_ENABLE_THINKING = bool(enable_thinking)
+    LLM_THINKING_BUDGET = int(thinking_budget)
+    MINIMAX_THINKING_TYPE = minimax_thinking_type
+
+
+def parse_bool_arg(value: Any) -> bool:
+    """Parse true/false CLI values without argparse's bool('false') pitfall."""
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "y", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "n", "off"}:
+        return False
+    raise ValueError("expected true or false")
 
 
 def _thinking_extra_body(model: str) -> Dict[str, Any]:
