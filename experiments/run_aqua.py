@@ -460,7 +460,8 @@ async def main():
         utilities: List[float] = []
         data = load_result(result_file)
         
-        for task, answer, log_prob, add_loss, true_answer, all_answer in zip(current_batch, raw_answers, log_probs, add_losses, answers, all_answers):
+        for record, answer, log_prob, add_loss, true_answer, all_answer in zip(current_batch, raw_answers, log_probs, add_losses, answers, all_answers):
+            task = record["task"]
             predict_answer =aqua_get_predict(answer[0])
             # predict_answer =gsm_get_predict(answer[0])
             is_solved = predict_answer==true_answer
@@ -475,7 +476,7 @@ async def main():
             updated_item = {
                 "Question": task,
                 "Answer": true_answer,
-                "Step": _record_step(task),
+                "Step": _record_step(record),
                 "All_answers": all_answer,
                 "Response": answer,
                 "Attempt answer": predict_answer,

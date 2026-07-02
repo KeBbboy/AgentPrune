@@ -223,6 +223,7 @@ def aqua_data_process(dataset):
         option_values = [str(value) for value in option_values[:5]]
         while len(option_values) < 5:
             option_values.append("")
+        option_values = [AQuADataset._clean_option_text(value) for value in option_values]
 
         task = (
             f"{data.get('question', data.get('Question', ''))}\n"
