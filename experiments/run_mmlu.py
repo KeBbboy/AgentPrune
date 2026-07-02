@@ -67,8 +67,48 @@ def parse_args():
         
     return args
 
-async def main():
+def setup_logging(llm_name: str, domain: str, mode: str) -> str:
+    """Redirect stdout/stderr to <llm_name>/<domain>/baseline/<mode>.log.
+    
+    Returns the log file path. Pass-through if directory creation fails.
+    """
+    import io
+    from datetime import datetime
+    safe_llm = llm_name.replace("/", "_")
+    log_dir = f"{safe_llm}/{domain}/baseline"
+    log_path = f"{log_dir}/{mode}.log"
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_fh = open(log_path, "a", encoding="utf-8")
+        log_fh.write(f"\n\n========== {ts} ==========\n")
+        log_fh.flush()
+        
+        class _Tee(io.TextIOBase):
+            def __init__(self, *streams):
+                self._streams = streams
+            def write(self, s):
+                for st in self._streams:
+                    st.write(s)
+                return len(s)
+            def flush(self):
+                for st in self._streams:
+                    try:
+                        st.flush()
+                    except Exception:
+                        pass
+        
+        sys.stdout = _Tee(sys.stdout, log_fh)
+        sys.stderr = _Tee(sys.stderr, log_fh)
+    except Exception as e:
+        print(f"[logging setup failed: {e}]", file=sys.__stderr__)
+    return log_path
+
+async def main(setup_log: bool = True):
     args = parse_args()
+    if setup_log:
+        log_path = setup_logging(args.llm_name, args.domain, args.mode)
+        print(f"[logging to {log_path}]")
     configure_thinking(
         enable_thinking=args.llm_enable_thinking,
         thinking_budget=args.llm_thinking_budget,
@@ -206,4 +246,4 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
             "node_kwargs":node_kwargs}    
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(setup_log=True))
