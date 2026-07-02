@@ -203,3 +203,26 @@ class GPQAPromptSet(BenchmarkPromptSet):
 @PromptSetRegistry.register("aime")
 class AIMEPromptSet(BenchmarkPromptSet):
     answer_kind = "math"
+
+    @classmethod
+    def _answer_format(cls) -> str:
+        # Stricter AIME-specific contract: the answer is always a non-negative
+        # integer in [0, 999], and we ask the model to emit it in two redundant
+        # markers so the official extractor (extract_official_numeric_answer
+        # in AgentDropout/benchmarks/agent_benchmarks.py) can recover it even
+        # if the model is truncated mid-reasoning.
+        #
+        # The previous wording ("End with exactly one line: The answer is N,
+        # where N is the final integer.") was too permissive and produced
+        # predictions like "Wait, let" or "</think>" in MiniMax-M3 logs when
+        # the model ran out of tokens before producing a final line. Asking
+        # for \boxed{N} on a dedicated line gives the extractor an anchor
+        # that survives the answer_key line being dropped.
+        return (
+            "The answer is a non-negative integer between 0 and 999.\n"
+            "End your reply with exactly these two lines and nothing after:\n"
+            "The answer is N\n"
+            "\\boxed{N}\n"
+            "where N is the same integer in both lines. Do not write any text\n"
+            "after the \\boxed{N} line."
+        )
