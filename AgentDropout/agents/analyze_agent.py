@@ -50,10 +50,7 @@ class AnalyzeAgent(Node):
         for id, info in temporal_info.items():
             if 'None.' in (info['output'] if isinstance(info['output'], list) else [info['output']]):
                 continue
-            if info.get("message_type") == "temporal_vote_state":
-                temporal_str += f"{info['output']}\n\n"
-            else:
-                temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {info['output']}\n\n"
+            temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {info['output']}\n\n"
             
         user_prompt += f"At the same time, the outputs of other agents are as follows:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
         user_prompt += (

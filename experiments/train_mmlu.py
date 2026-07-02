@@ -33,10 +33,6 @@ async def train(graph:Graph,
                 yield record
     
     loader = infinite_data_loader()
-    restore_message_compression = getattr(graph, "message_compression_enabled", False)
-    graph.set_message_compression_enabled(False)
-    if restore_message_compression:
-        print("Message compression disabled during training.")
     if args.dec:
         graph.optimized_spatial=False
         graph.optimized_temporal=False
@@ -282,10 +278,6 @@ async def train(graph:Graph,
             else:
                 print("spatial sparsity:",spatial_masks[0].sum()/spatial_masks[0].numel())
                 print("temporal sparsity:",temporal_masks[0].sum()/temporal_masks[0].numel())
-
-    # graph.optimized_spatial=False
-    # graph.optimized_temporal=False        
-    graph.set_message_compression_enabled(restore_message_compression)
 
 
 def connectivity_loss(A: torch.Tensor) -> torch.Tensor:

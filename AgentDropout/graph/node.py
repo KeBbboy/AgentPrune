@@ -62,12 +62,7 @@ class Node(ABC):
         self.outputs: List[Any] = []
         self.raw_inputs: List[Any] = []
         self.role = ""
-        self.spatial_message_types: Dict[str, str] = {}
-        self.temporal_message_types: Dict[str, str] = {}
-        self.message_compressor = None
-        self.spatial_aggregator = None
-        self.temporal_aggregator = None
-        self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}        
+        self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}
 
     @property
     def node_name(self):
@@ -157,100 +152,7 @@ class Node(ABC):
         return reasoning
 
     def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
-        message_type = "full"
-        selected_output = output
-        if source == "spatial":
-            message_type = predecessor.spatial_message_types.get(self.id, "full")
-        elif source == "temporal":
-            message_type = predecessor.temporal_message_types.get(self.id, "full")
-
-        if isinstance(output, str):
-            if message_type == "answer":
-                answer_payload = self._extract_answer_content(output)
-                selected_output = answer_payload if answer_payload else output.strip()
-            elif message_type == "reason":
-                reasoning_payload = self._extract_reasoning_content(output)
-                selected_output = reasoning_payload if reasoning_payload else output.strip()
-
-        selected_output = self._compress_message_payload(
-            predecessor=predecessor,
-            output=selected_output,
-            source=source,
-            message_type=message_type,
-        )
-        return message_type, selected_output
-
-    def _receiver_description(self) -> str:
-        parts = []
-        role = getattr(self, "role", "")
-        constraint = getattr(self, "constraint", "")
-        for value in (role, constraint):
-            if value and value not in parts:
-                parts.append(str(value))
-        return ". ".join(parts)
-
-    def _compress_message_payload(
-        self,
-        predecessor: 'Node',
-        output: Any,
-        source: str,
-        message_type: str,
-    ) -> Any:
-        if source == "temporal":
-            return output
-        if self.message_compressor is None:
-            return output
-        if not isinstance(output, str):
-            return output
-        return self.message_compressor.compress(
-            output,
-            domain=self.domain,
-            role=predecessor.role,
-            receiver_role=self.role,
-            receiver_description=self._receiver_description(),
-            receiver_agent=self.agent_name,
-            message_type=message_type,
-            source=source,
-        )
-
-    def _aggregate_spatial_info(self, spatial_info: Dict[str, Dict]) -> Dict[str, Dict]:
-        if self.spatial_aggregator is None:
-            return spatial_info
-        return self.spatial_aggregator.aggregate(
-            spatial_info,
-            domain=self.domain,
-            receiver_role=self.role,
-            receiver_description=self._receiver_description(),
-            receiver_agent=self.agent_name,
-        )
-
-    def _aggregate_temporal_info(self, temporal_info: Dict[str, Dict], raw_inputs: Any = None) -> Dict[str, Dict]:
-        if self.temporal_aggregator is None:
-            return temporal_info
-        return self.temporal_aggregator.aggregate(
-            temporal_info,
-            raw_inputs=raw_inputs,
-            domain=self.domain,
-            receiver_id=self.id,
-            receiver_role=self.role,
-            receiver_description=self._receiver_description(),
-            receiver_agent=self.agent_name,
-        )
-
-    async def _aaggregate_temporal_info(self, temporal_info: Dict[str, Dict], raw_inputs: Any = None) -> Dict[str, Dict]:
-        if self.temporal_aggregator is None:
-            return temporal_info
-        if hasattr(self.temporal_aggregator, "aaggregate"):
-            return await self.temporal_aggregator.aaggregate(
-                temporal_info,
-                raw_inputs=raw_inputs,
-                domain=self.domain,
-                receiver_id=self.id,
-                receiver_role=self.role,
-                receiver_description=self._receiver_description(),
-                receiver_agent=self.agent_name,
-            )
-        return self._aggregate_temporal_info(temporal_info)
+        return "full", output
 
     def get_spatial_info(self)->Dict[str,Dict]:
         """ Return a dict that maps id to info. """
@@ -271,7 +173,7 @@ class Node(ABC):
                     "message_type": message_type,
                 }
 
-        return self._aggregate_spatial_info(spatial_info)
+        return spatial_info
 
     def get_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
         temporal_info = {}
@@ -290,8 +192,8 @@ class Node(ABC):
                     "output": selected_output,
                     "message_type": message_type,
                 }
-        
-        return self._aggregate_temporal_info(temporal_info, raw_inputs=raw_inputs)
+
+        return temporal_info
 
     async def aget_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
         temporal_info = {}
@@ -311,7 +213,7 @@ class Node(ABC):
                     "message_type": message_type,
                 }
 
-        return await self._aaggregate_temporal_info(temporal_info, raw_inputs=raw_inputs)
+        return temporal_info
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []

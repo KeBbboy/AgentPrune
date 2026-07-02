@@ -1,5 +1,4 @@
 import shortuuid
-from contextlib import contextmanager
 from typing import Any, List, Optional, Dict
 from abc import ABC
 import numpy as np
@@ -8,15 +7,6 @@ import asyncio
 
 from AgentDropout.graph.node import Node
 from AgentDropout.agents.agent_registry import AgentRegistry
-from AgentDropout.utils.llmlingua2_compressor import (
-    DEFAULT_LLMLINGUA2_MODEL,
-    LLMLingua2MessageCompressor,
-)
-from AgentDropout.utils.role_aware_compressor import (
-    RoleAwareEdgeCompressor,
-    RoleAwareNodeAggregator,
-)
-from AgentDropout.utils.temporal_api_summarizer import TemporalAPISummarizer
 import random
 
 class Graph(ABC):
@@ -41,7 +31,7 @@ class Graph(ABC):
         run(inputs, num_steps=10, single_agent=False): Executes the graph for a specified number of steps, processing provided inputs.
     """
 
-    def __init__(self, 
+    def __init__(self,
                 domain: str,
                 llm_name: Optional[str],
                 agent_names: List[str],
@@ -56,17 +46,6 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
-                llmlingua2_compression: bool = False,
-                llmlingua2_rate: float = 0.5,
-                llmlingua2_model_name: str = None,
-                llmlingua2_min_tokens: int = 20,
-                llmlingua2_compress_code: bool = False,
-                llmlingua2_scope: str = "all",
-                role_aware_compression: bool = False,
-                node_aware_aggregation: bool = False,
-                temporal_api_summary: bool = False,
-                temporal_summary_mode: str = "answer_only",
-                temporal_full_history_edges: bool = False,
                 ):
         
         if fixed_spatial_masks is None:
@@ -87,10 +66,6 @@ class Graph(ABC):
         self.agent_names:List[str] = agent_names
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
-        self.optimized_spatial_message_type = False
-        self.optimized_temporal_message_type = False
-        self.enable_spatial_message_type_action = False
-        self.enable_temporal_message_type_action = False
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.llm_name})
         self.nodes:Dict[str,Node] = {}
         self.potential_spatial_edges:List[List[str, str]] = []
@@ -98,38 +73,15 @@ class Graph(ABC):
         self.node_kwargs = node_kwargs if node_kwargs is not None else [{} for _ in agent_names]
         self.diff=diff
         self.rounds=rounds
-        self.temporal_full_history_edges = bool(temporal_full_history_edges)
-        self.message_compression_scope = llmlingua2_scope
-        self.message_compression_enabled = (
-            llmlingua2_compression
-            or role_aware_compression
-            or node_aware_aggregation
-            or temporal_api_summary
-        )
-        self.message_compressor = self._build_message_compressor(
-            enabled=llmlingua2_compression,
-            rate=llmlingua2_rate,
-            model_name=llmlingua2_model_name,
-            min_tokens=llmlingua2_min_tokens,
-            compress_code=llmlingua2_compress_code,
-            role_aware_enabled=role_aware_compression,
-        )
-        self.spatial_aggregator = self._build_spatial_aggregator(enabled=node_aware_aggregation)
-        self.temporal_aggregator = self._build_temporal_aggregator(
-            enabled=temporal_api_summary,
-            summary_mode=temporal_summary_mode,
-        )
         # self.dec=False
         self.dec_1=False
         self.skip_nodes = []
-        
+
         self.init_nodes() # add nodes to the self.nodes
-        self.attach_message_compressor()
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
-        
+
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
-        init_message_type_logit = 0.0
 
         print(self.potential_spatial_edges)
         if dec:
@@ -141,15 +93,7 @@ class Graph(ABC):
         if not diff:
             self.spatial_masks = torch.nn.Parameter(fixed_spatial_masks,requires_grad=False)  # fixed edge masks
             self.spatial_logits = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial) # trainable edge logits
-            self.spatial_message_type_logits = torch.nn.Parameter(
-                torch.ones(len(self.potential_spatial_edges), requires_grad=False) * init_message_type_logit,
-                requires_grad=False,
-            )
             self.temporal_logits = torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) # trainable edge logits
-            self.temporal_message_type_logits = torch.nn.Parameter(
-                torch.ones(len(self.potential_temporal_edges), requires_grad=False) * init_message_type_logit,
-                requires_grad=False,
-            )
             self.temporal_masks = torch.nn.Parameter(fixed_temporal_masks,requires_grad=False)  # fixed edge masks
             if dec:
                 self.spatial_logits_1 = torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial)
@@ -162,110 +106,9 @@ class Graph(ABC):
                 self.temporal_logits_1 = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) for _ in range(rounds-1)])
             self.spatial_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_spatial_masks.clone(), requires_grad=False) for _ in range(rounds)])  # fixed edge masks
             self.spatial_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial) for _ in range(rounds)])
-            self.spatial_message_type_logits = torch.nn.ParameterList([
-                torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=False) * init_message_type_logit, requires_grad=False)
-                for _ in range(rounds)
-            ])
             self.temporal_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) for _ in range(rounds-1)])
-            self.temporal_message_type_logits = torch.nn.ParameterList([
-                torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=False) * init_message_type_logit, requires_grad=False)
-                for _ in range(rounds-1)
-            ])
             self.temporal_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_temporal_masks.clone(), requires_grad=False) for _ in range(rounds-1)])
 
-    def _build_message_compressor(
-        self,
-        enabled: bool,
-        rate: float,
-        model_name: str | None,
-        min_tokens: int,
-        compress_code: bool,
-        role_aware_enabled: bool,
-    ):
-        if enabled and role_aware_enabled:
-            raise ValueError("Enable either LLMLingua-2 compression or role-aware compression, not both.")
-        if role_aware_enabled:
-            return RoleAwareEdgeCompressor()
-        if not enabled:
-            return None
-        return LLMLingua2MessageCompressor(
-            model_name=model_name or DEFAULT_LLMLINGUA2_MODEL,
-            rate=rate,
-            min_tokens=min_tokens,
-            compress_code=compress_code,
-        )
-
-    def _build_spatial_aggregator(self, enabled: bool):
-        if not enabled:
-            return None
-        return RoleAwareNodeAggregator()
-
-    def _build_temporal_aggregator(
-        self,
-        enabled: bool,
-        summary_mode: str,
-    ):
-        if not enabled:
-            return None
-        return TemporalAPISummarizer(
-            summary_mode=summary_mode,
-        )
-
-    def attach_message_compressor(self):
-        message_compressor = self.message_compressor if self.message_compression_enabled else None
-        spatial_aggregator = self.spatial_aggregator if self.message_compression_enabled else None
-        if self.message_compression_scope == "final":
-            decision_compressor = message_compressor
-            node_compressor = None
-        elif self.message_compression_scope == "all":
-            decision_compressor = None
-            node_compressor = message_compressor
-        else:
-            raise ValueError(f"Unknown LLMLingua-2 compression scope: {self.message_compression_scope}")
-
-        self.decision_node.message_compressor = decision_compressor
-        self.decision_node.spatial_aggregator = None
-        self.decision_node.temporal_aggregator = None
-        for node in self.nodes.values():
-            node.message_compressor = node_compressor
-            node.spatial_aggregator = spatial_aggregator
-            node.temporal_aggregator = self.temporal_aggregator if self.message_compression_enabled else None
-
-    def set_message_compression_enabled(self, enabled: bool):
-        self.message_compression_enabled = bool(enabled) and (
-            self.message_compressor is not None
-            or self.spatial_aggregator is not None
-            or self.temporal_aggregator is not None
-        )
-        self.attach_message_compressor()
-
-    @contextmanager
-    def message_compression_disabled(self):
-        previous_enabled = self.message_compression_enabled
-        self.set_message_compression_enabled(False)
-        try:
-            yield
-        finally:
-            self.set_message_compression_enabled(previous_enabled)
-
-    def message_compression_summary(self) -> str:
-        if (
-            self.message_compressor is None
-            and self.spatial_aggregator is None
-            and self.temporal_aggregator is None
-        ):
-            return "Message compression disabled."
-        if not self.message_compression_enabled:
-            return "Message compression temporarily disabled."
-        summaries = []
-        if self.message_compressor is not None:
-            summaries.append(f"{self.message_compressor.summary()} Scope: {self.message_compression_scope}.")
-        if self.spatial_aggregator is not None:
-            summaries.append(self.spatial_aggregator.summary())
-        if self.temporal_aggregator is not None:
-            summaries.append(self.temporal_aggregator.summary())
-        return " ".join(summaries)
-        
     @property
     def spatial_adj_matrix(self):
         matrix = np.zeros((len(self.nodes), len(self.nodes)))
@@ -319,10 +162,7 @@ class Graph(ABC):
                 kwargs["llm_name"] = self.llm_name
                 agent_instance = AgentRegistry.get(agent_name, **kwargs)
                 self.add_node(agent_instance)
-        for node in self.nodes.values():
-            node.spatial_message_types = {}
-            node.temporal_message_types = {}
-    
+
     def init_potential_edges(self):
         """
         Creates and potential edges to the graph.
@@ -339,11 +179,9 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].spatial_predecessors = []
             self.nodes[node_id].spatial_successors = []
-            self.nodes[node_id].spatial_message_types = {}
         self.decision_node.spatial_predecessors = []
         self.decision_node.spatial_successors = []
-        self.decision_node.spatial_message_types = {}
-    
+
     def clear_temporal_connection(self):
         """
         Clear all the temporal connection of the nodes in the graph.
@@ -351,7 +189,6 @@ class Graph(ABC):
         for node_id in self.nodes.keys():
             self.nodes[node_id].temporal_predecessors = []
             self.nodes[node_id].temporal_successors = []
-            self.nodes[node_id].temporal_message_types = {}
 
     def _iter_parameters(self, value):
         if isinstance(value, torch.nn.Parameter):
@@ -359,74 +196,6 @@ class Graph(ABC):
         if isinstance(value, torch.nn.ParameterList):
             return list(value)
         return list(value)
-
-    def _message_type_logits_for(self, edge_kind: str, round: int = 0):
-        if edge_kind == "spatial":
-            logits = self.spatial_message_type_logits
-            return logits[round] if self.diff else logits
-        if edge_kind == "temporal":
-            logits = self.temporal_message_type_logits
-            return logits[round - 1] if self.diff else logits
-        raise ValueError(f"Unknown edge_kind: {edge_kind}")
-
-    def sample_message_type(self, edge_kind: str, edge_idx: int, round: int = 0, return_log_prob: bool = False):
-        if edge_kind == "spatial":
-            enabled = self.enable_spatial_message_type_action
-            optimized = self.optimized_spatial_message_type
-        elif edge_kind == "temporal":
-            enabled = self.enable_temporal_message_type_action
-            optimized = self.optimized_temporal_message_type
-        else:
-            raise ValueError(f"Unknown edge_kind: {edge_kind}")
-
-        logits = self._message_type_logits_for(edge_kind, round)
-        if not enabled:
-            if return_log_prob:
-                return "full", torch.tensor(0.0, device=logits.device)
-            return "full"
-
-        if not optimized:
-            message_type = "reason" if logits[edge_idx].item() >= 0 else "answer"
-            if return_log_prob:
-                return message_type, torch.tensor(0.0, device=logits.device)
-            return message_type
-
-        reason_prob = torch.sigmoid(logits[edge_idx])
-        if torch.rand(1, device=reason_prob.device) < reason_prob:
-            message_type = "reason"
-            log_prob = torch.log(reason_prob)
-        else:
-            message_type = "answer"
-            log_prob = torch.log(1 - reason_prob)
-        if return_log_prob:
-            return message_type, log_prob
-        return message_type
-
-    def second_stage_optimizer_parameters(self):
-        params = []
-        params.extend(self._iter_parameters(self.spatial_logits))
-        params.extend(self._iter_parameters(self.temporal_logits))
-        if self.enable_spatial_message_type_action:
-            params.extend(self._iter_parameters(self.spatial_message_type_logits))
-        if self.enable_temporal_message_type_action:
-            params.extend(self._iter_parameters(self.temporal_message_type_logits))
-        return params
-
-    def share_second_stage_parameters(self, source: "Graph"):
-        self.spatial_logits = source.spatial_logits
-        self.temporal_logits = source.temporal_logits
-        self.spatial_message_type_logits = source.spatial_message_type_logits
-        self.temporal_message_type_logits = source.temporal_message_type_logits
-
-    def set_message_type_learning_mode(self, enabled: bool):
-        self.enable_spatial_message_type_action = enabled
-        self.enable_temporal_message_type_action = enabled
-        self.optimized_spatial_message_type = enabled and self.optimized_spatial
-        self.optimized_temporal_message_type = enabled and self.optimized_temporal
-        for param in self._iter_parameters(self.spatial_message_type_logits):
-            param.requires_grad_(self.optimized_spatial_message_type)
-        for param in self._iter_parameters(self.temporal_message_type_logits):
-            param.requires_grad_(self.optimized_temporal_message_type)
 
     def connect_decision_node(self):
         for node_id in self.nodes.keys():
@@ -436,8 +205,8 @@ class Graph(ABC):
 
     def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
         self.clear_spatial_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial or self.optimized_spatial_message_type)]
-        
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
+
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_logits, self.spatial_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
@@ -447,7 +216,6 @@ class Graph(ABC):
             elif edge_mask == 1.0 and self.optimized_spatial==False:
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'spatial')
-                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx)
                     # print(potential_connection)
                 continue
             if not self.check_cycle(in_node, {out_node}):
@@ -458,20 +226,17 @@ class Graph(ABC):
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
                     log_probs.append(torch.log(edge_prob))
-                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, return_log_prob=True)
-                    out_node.spatial_message_types[in_node.id] = message_type
-                    log_probs.append(message_type_log_prob)
                 else:
                     log_probs.append(torch.log(1 - edge_prob))
-                    
+
         return torch.sum(torch.stack(log_probs))
-    
-    
-    
+
+
+
     def construct_spatial_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
         self.clear_spatial_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial or self.optimized_spatial_message_type)]
-        
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
+
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_spatial_edges, self.spatial_logits[round], self.spatial_masks[round])):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
@@ -485,7 +250,6 @@ class Graph(ABC):
                 #     continue
                 if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'spatial')
-                    out_node.spatial_message_types[in_node.id] = self.sample_message_type("spatial", edge_idx, round=round)
                     # print(potential_connection)
                 continue
             if not self.check_cycle(in_node, {out_node}):
@@ -495,73 +259,62 @@ class Graph(ABC):
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
                     log_probs.append(torch.log(edge_prob))
-                    message_type, message_type_log_prob = self.sample_message_type("spatial", edge_idx, round=round, return_log_prob=True)
-                    out_node.spatial_message_types[in_node.id] = message_type
-                    log_probs.append(message_type_log_prob)
                 else:
                     log_probs.append(torch.log(1 - edge_prob))
-                    
+
         return torch.sum(torch.stack(log_probs))
-    
+
     def construct_temporal_connection(self, round:int = 0, temperature: float = 1.0, threshold: float = None,):  # temperature must >= 1.0
         self.clear_temporal_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal or self.optimized_temporal_message_type)]
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal)]
         if round == 0:
-            return torch.sum(torch.stack(log_probs))  
+            return torch.sum(torch.stack(log_probs))
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_logits, self.temporal_masks)):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
-                if self.temporal_full_history_edges or not self.check_cycle(in_node, {out_node}):
+                if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
-                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx)
                 continue
-            
+
             edge_prob = torch.sigmoid(edge_logit / temperature)
             if threshold:
                 edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
                 log_probs.append(torch.log(edge_prob))
-                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, return_log_prob=True)
-                out_node.temporal_message_types[in_node.id] = message_type
-                log_probs.append(message_type_log_prob)
             else:
                 log_probs.append(torch.log(1 - edge_prob))
-                    
+
         return torch.sum(torch.stack(log_probs))
 
 
     def construct_temporal_connection_diff(self, round:int = 0, temperature: float = 1.0, threshold: float = None,):  # temperature must >= 1.0
         self.clear_temporal_connection()
-        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal or self.optimized_temporal_message_type)]
+        log_probs = [torch.tensor(0.0, requires_grad=self.optimized_temporal)]
         if round == 0:
-            return torch.sum(torch.stack(log_probs))  
+            return torch.sum(torch.stack(log_probs))
         for edge_idx, (potential_connection, edge_logit, edge_mask) in enumerate(zip(self.potential_temporal_edges, self.temporal_logits[round-1], self.temporal_masks[round-1])):
             out_node:Node = self.find_node(potential_connection[0])
             in_node:Node = self.find_node(potential_connection[1])
             if edge_mask == 0.0:
                 continue
             elif edge_mask == 1.0 and self.optimized_temporal==False:
-                if self.temporal_full_history_edges or not self.check_cycle(in_node, {out_node}):
+                if not self.check_cycle(in_node, {out_node}):
                     out_node.add_successor(in_node,'temporal')
-                    out_node.temporal_message_types[in_node.id] = self.sample_message_type("temporal", edge_idx, round=round)
                 continue
-            
+
             edge_prob = torch.sigmoid(edge_logit / temperature)
             if threshold:
                 edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
                 log_probs.append(torch.log(edge_prob))
-                message_type, message_type_log_prob = self.sample_message_type("temporal", edge_idx, round=round, return_log_prob=True)
-                out_node.temporal_message_types[in_node.id] = message_type
-                log_probs.append(message_type_log_prob)
             else:
                 log_probs.append(torch.log(1 - edge_prob))
-                    
+
         return torch.sum(torch.stack(log_probs))
 
 
@@ -605,24 +358,12 @@ class Graph(ABC):
             
         return final_answers, log_probs
 
-    async def arun(self, input: Dict[str,str], 
-                  num_rounds:int = 3, 
-                  max_tries: int = 3, 
+    async def arun(self, input: Dict[str,str],
+                  num_rounds:int = 3,
+                  max_tries: int = 3,
                   max_time: int = 6000,
                   skip: bool=False,
-                  case: bool=False,
-                  compress_messages: bool=True) -> List[Any]:
-        if not compress_messages:
-            with self.message_compression_disabled():
-                return await self.arun(
-                    input,
-                    num_rounds=num_rounds,
-                    max_tries=max_tries,
-                    max_time=max_time,
-                    skip=skip,
-                    case=case,
-                    compress_messages=True,
-                )
+                  case: bool=False) -> List[Any]:
         # inputs:{'task':"xxx"}
         log_probs = 0
         log_probs_skip = 0

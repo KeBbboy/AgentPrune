@@ -8,12 +8,6 @@ import argparse
 import random
 
 from AgentDropout.graph.graph import Graph
-from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
-from AgentDropout.utils.role_aware_compressor import add_role_aware_args, role_aware_graph_kwargs
-from AgentDropout.utils.temporal_api_summarizer import (
-    add_temporal_api_summary_args,
-    temporal_api_summary_graph_kwargs,
-)
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
 from experiments.train_mmlu import train
@@ -60,9 +54,6 @@ def parse_args():
     parser.add_argument('--diff',action='store_true')
     parser.add_argument('--dec',action='store_true')
     parser.add_argument('--cot',action='store_true')
-    add_llmlingua2_args(parser)
-    add_role_aware_args(parser)
-    add_temporal_api_summary_args(parser)
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -90,10 +81,7 @@ async def main():
                   rounds=args.num_rounds,
                   diff=args.diff,
                   dec=args.dec,
-                  **kwargs,
-                  **llmlingua2_graph_kwargs(args),
-                  **role_aware_graph_kwargs(args),
-                  **temporal_api_summary_graph_kwargs(args))
+                  **kwargs)
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')

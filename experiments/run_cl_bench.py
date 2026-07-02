@@ -20,12 +20,6 @@ sys.stdout.reconfigure(encoding="utf-8")
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time
-from AgentDropout.utils.llmlingua2_compressor import add_llmlingua2_args, llmlingua2_graph_kwargs
-from AgentDropout.utils.role_aware_compressor import add_role_aware_args, role_aware_graph_kwargs
-from AgentDropout.utils.temporal_api_summarizer import (
-    add_temporal_api_summary_args,
-    temporal_api_summary_graph_kwargs,
-)
 from dataset.cl_bench_dataset import CLBenchDataset
 from experiments.run_mmlu import get_kwargs
 
@@ -66,9 +60,6 @@ def parse_args():
     parser.add_argument("--optimized_temporal", action="store_true")
     parser.add_argument("--diff", action="store_true")
     parser.add_argument("--dec", action="store_true")
-    add_llmlingua2_args(parser)
-    add_role_aware_args(parser)
-    add_temporal_api_summary_args(parser)
     args = parser.parse_args()
 
     if len(args.agent_names) != len(args.agent_nums):
@@ -274,9 +265,6 @@ async def main():
         diff=args.diff,
         dec=args.dec,
         **kwargs,
-        **llmlingua2_graph_kwargs(args),
-        **role_aware_graph_kwargs(args),
-        **temporal_api_summary_graph_kwargs(args),
     )
 
     print("Final spatial logits: ", graph.spatial_logits)
