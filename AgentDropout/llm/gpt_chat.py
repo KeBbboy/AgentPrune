@@ -373,6 +373,9 @@ def _record_usage(prompt: str, response: str, usage: Any = None, model: str = MO
         prompt_details = getattr(usage, "prompt_tokens_details", None)
         if prompt_details:
             cached_tokens = getattr(prompt_details, "cached_tokens", None)
+        # Anthropic-style fallback (e.g. MiniMax-M3 returns cache_read_input_tokens).
+        if cached_tokens is None:
+            cached_tokens = getattr(usage, "cache_read_input_tokens", None)
         completion_details = getattr(usage, "completion_tokens_details", None)
         if completion_details:
             reasoning_tokens = getattr(completion_details, "reasoning_tokens", None)

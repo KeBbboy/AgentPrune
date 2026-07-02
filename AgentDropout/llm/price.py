@@ -46,7 +46,8 @@ def _usage_token_counts(usage):
     total_len = _usage_int(usage, ("total_tokens",))
     if completion_len is None and prompt_len is not None and total_len is not None:
         completion_len = max(total_len - prompt_len, 0)
-    
+
+    # OpenAI-style: prompt_tokens_details.cached_tokens
     prompt_tokens_details = _usage_value(usage, ("prompt_tokens_details",))
     cached_tokens = None
     if prompt_tokens_details is not None:
@@ -56,7 +57,12 @@ def _usage_token_counts(usage):
             cached_tokens = getattr(prompt_tokens_details, "cached_tokens", None)
     if cached_tokens is not None:
         cached_tokens = int(cached_tokens)
-    
+
+    # Anthropic-style fallback: cache_read_input_tokens (MiniMax-M3 returns this).
+    if cached_tokens is None:
+        cached_tokens = _usage_int(usage, ("cache_read_input_tokens",))
+
+    # OpenAI-style: completion_tokens_details.reasoning_tokens
     completion_tokens_details = _usage_value(usage, ("completion_tokens_details",))
     reasoning_tokens = None
     if completion_tokens_details is not None:
@@ -66,7 +72,7 @@ def _usage_token_counts(usage):
             reasoning_tokens = getattr(completion_tokens_details, "reasoning_tokens", None)
     if reasoning_tokens is not None:
         reasoning_tokens = int(reasoning_tokens)
-    
+
     return prompt_len, completion_len, cached_tokens, reasoning_tokens
 
 def cost_count(prompt, response, model_name, usage=None):
