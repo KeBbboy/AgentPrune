@@ -331,8 +331,50 @@ def _to_msg_list(messages):
     return messages
 
 
+def _normalize_openai_messages(messages: List[Any]) -> List[Dict[str, Any]]:
+    """Coerce Message / dict / str into the OpenAI chat-completions schema.
+
+    The MiniMax-M3 endpoint at ``https://api.minimaxi.com/v1`` is OpenAI-
+    compatible and requires ``{"role": str, "content": str | list}`` items.
+    ``achat_mm`` previously forwarded the raw ``Message`` dataclass list and
+    relied on duck-typed attribute access; this normalises once and early so
+    downstream SDKs can't choke on a malformed payload.
+    """
+
+    out: List[Dict[str, Any]] = []
+    for raw in _to_msg_list(messages):
+        if isinstance(raw, str):
+            out.append({"role": "user", "content": raw})
+            continue
+        if isinstance(raw, dict):
+            role = str(raw.get("role", "user"))
+            content = raw.get("content", "")
+        else:
+            role = str(getattr(raw, "role", "user"))
+            content = getattr(raw, "content", "")
+        if content is None:
+            content = ""
+        if not isinstance(content, str):
+            content = _to_text(content)
+        if role not in {"system", "user", "assistant", "tool"}:
+            role = "user"
+        out.append({"role": role, "content": content})
+    if not out:
+        out.append({"role": "user", "content": " "})
+    return out
+
+
 @LLMRegistry.register('GPTChat')
 class GPTChat(LLM):
+    """Anthropic-compatible client, kept for legacy callers only.
+
+    MiniMax-M3 routing goes through :class:`MiniMaxChat` (the ``minimax``
+    registry key) which calls the OpenAI-compatible MiniMax-M3 endpoint.
+    This class still talks to the Anthropic SDK with the constants from the
+    top of this file (``MODEL``/``MM_KEY``/``MM_URL``) so external imports
+    keep working, but new code should not use it.
+    """
+
     def __init__(self, model_name: str):
         self.model_name = model_name
 
@@ -374,20 +416,21 @@ class LlamaChat(LLM):
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(RETRIES), reraise=True)
 async def achat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=None, top_p=None):
     client = AsyncOpenAI(api_key=MM_KEY, base_url=MM_URL)
+    normalized = _normalize_openai_messages(msg)
     try:
         async with _SEMA:
             await _wait_slot()
             async with _timeout(1000):
                 completion = await client.chat.completions.create(
                     model=model,
-                    messages=msg,
+                    messages=normalized,
                     max_tokens=max_tokens or MAX_TOKENS,
                     temperature=temperature if temperature is not None else TEMPERATURE,
                     top_p=top_p if top_p is not None else TOP_P,
                 )
         text = completion.choices[0].message.content
         if isinstance(text, str):
-            _record_usage("".join(m["content"] for m in msg), text, usage=completion.usage)
+            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage)
             return text
     except Exception as e:
         print(f"Error in achat_mm: {e}")
@@ -401,17 +444,18 @@ achat_minimax = achat_mm
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(RETRIES), reraise=True)
 def chat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=None, top_p=None):
     client = OpenAI(api_key=MM_KEY, base_url=MM_URL)
+    normalized = _normalize_openai_messages(msg)
     try:
         completion = client.chat.completions.create(
             model=model,
-            messages=msg,
+            messages=normalized,
             max_tokens=max_tokens or MAX_TOKENS,
             temperature=temperature if temperature is not None else TEMPERATURE,
             top_p=top_p if top_p is not None else TOP_P,
         )
         text = completion.choices[0].message.content
         if isinstance(text, str):
-            _record_usage("".join(m["content"] for m in msg), text, usage=completion.usage)
+            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage)
             return text
     except Exception as e:
         print(f"Error in chat_mm: {e}")
@@ -424,6 +468,20 @@ chat_minimax = chat_mm
 
 @LLMRegistry.register('minimax')
 class MiniMaxChat(LLM):
+    """Client for the MiniMax-M3 chat-completions endpoint.
+
+    Uses the OpenAI-compatible request schema against
+    ``${MINIMAX_BASE_URL}/chat/completions`` (defaults to
+    ``https://api.minimaxi.com/v1``). Default sampling parameters match the
+    MMLU-Pro official recipe (T=0, top_p=0.95) so reproductions of
+    ``run_*.py`` use identical decoding settings.
+    """
+
+    # Override the base-class defaults so ``_defaults()`` returns the env-
+    # driven values (16384 / 0.0 / 0.95) instead of the generic 1000 / 0.2.
+    DEFAULT_MAX_TOKENS = MAX_TOKENS
+    DEFAULT_TEMPERATURE = TEMPERATURE
+
     def __init__(self, model_name: str):
         self.model_name = model_name
 
@@ -431,10 +489,10 @@ class MiniMaxChat(LLM):
         max_tokens, temperature, num_comps = _defaults(self, max_tokens, temperature, num_comps)
         if top_p is None:
             top_p = TOP_P
-        return await achat_mm(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        return await achat_mm(self.model_name, messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
 
     def gen(self, messages: List[Message], max_tokens=None, temperature=None, num_comps=None, top_p=None):
         max_tokens, temperature, num_comps = _defaults(self, max_tokens, temperature, num_comps)
         if top_p is None:
             top_p = TOP_P
-        return chat_mm(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        return chat_mm(self.model_name, messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
