@@ -55,6 +55,8 @@ def cost_count(prompt, response, model_name, usage=None):
     price: float
 
     usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    if usage_prompt_len is None or usage_completion_len is None:
+        print(f"Warning: cost_count received incomplete usage for {model_name}: prompt={usage_prompt_len}, completion={usage_completion_len}")
     prompt_len = usage_prompt_len or 0
     completion_len = usage_completion_len or 0
 
@@ -95,6 +97,8 @@ def cost_count_llama3(prompt, response, model, usage=None):
     price: float
 
     usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    if usage_prompt_len is None or usage_completion_len is None:
+        print(f"Warning: cost_count_llama3 received incomplete usage for {model}: prompt={usage_prompt_len}, completion={usage_completion_len}")
     prompt_len = usage_prompt_len or 0
     completion_len = usage_completion_len or 0
     price = 0
@@ -113,6 +117,8 @@ def cost_count_deepseek(prompt, response, model, usage=None):
     price: float
 
     usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    if usage_prompt_len is None or usage_completion_len is None:
+        print(f"Warning: cost_count_deepseek received incomplete usage for {model}: prompt={usage_prompt_len}, completion={usage_completion_len}")
     prompt_len = usage_prompt_len or 0
     completion_len = usage_completion_len or 0
     price = 0
