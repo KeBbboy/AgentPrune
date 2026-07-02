@@ -19,7 +19,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
+from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens, print_token_stats
 from dataset.cl_bench_dataset import CLBenchDataset
 from experiments.run_mmlu import get_kwargs
 
@@ -60,6 +60,13 @@ def parse_args():
     parser.add_argument("--optimized_temporal", action="store_true")
     parser.add_argument("--diff", action="store_true")
     parser.add_argument("--dec", action="store_true")
+    parser.add_argument("--cot", action="store_true")
+    parser.add_argument("--llm_enable_thinking", type=parse_bool_arg, default=True,
+                        help="Enable model thinking mode: true or false")
+    parser.add_argument("--llm_thinking_budget", type=int, default=8192,
+                        help="Thinking token budget (unified interface): "
+                             "Qwen3-style providers use this as token budget (128-32768); "
+                             "MiniMax-M3 uses >0 for adaptive, 0 for disabled")
     args = parser.parse_args()
 
     if len(args.agent_names) != len(args.agent_nums):
@@ -235,9 +242,7 @@ async def evaluate_cl_bench(graph: Graph, dataset: CLBenchDataset, args) -> Dict
         with open(result_file, "w", encoding="utf-8") as f:
             json.dump({"summary": summary, "results": results}, f, indent=4, ensure_ascii=False)
         print(f"Summary: {summary}")
-        print(f"Cost {Cost.instance().value}")
-        print(f"PromptTokens {PromptTokens.instance().value}")
-        print(f"CompletionTokens {CompletionTokens.instance().value}")
+        print_token_stats()
 
     return {
         "total": total,

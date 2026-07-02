@@ -14,7 +14,7 @@ from dataset.MMLU.download import download
 from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens, print_token_stats
 import torch
 
 
@@ -128,13 +128,7 @@ async def main():
     else:
         score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size,args=args)
     print(f"Score: {score}")
-    print(f"Final Cost {Cost.instance().value}")
-    print(f"Final PromptTokens {PromptTokens.instance().value}")
-    print(f"Final CompletionTokens {CompletionTokens.instance().value}")
-    print(f"Final CachedTokens {CachedTokens.instance().value}")
-    print(f"Final ReasoningTokens {ReasoningTokens.instance().value}")
-    print(f"Final BilledPromptTokens {BilledPromptTokens.instance().value}")
-    print(f"Final BilledCompletionTokens {BilledCompletionTokens.instance().value}")
+    print_token_stats("Final")
 
 
 

@@ -11,7 +11,7 @@ import random
 
 from AgentDropout.graph.graph import Graph
 from experiments.accuracy import Accuracy
-from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, print_token_stats
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
 
 async def train(graph:Graph,
@@ -139,9 +139,7 @@ async def train(graph:Graph,
             #     print("Decision logits:", graph.decision_logits)
             print("Spatial probs:", spatial_probs)
             print("Temporal probs:", temporal_probs)
-            print(f"Cost {Cost.instance().value}")
-            print(f"PromptTokens {PromptTokens.instance().value}")
-            print(f"CompletionTokens {CompletionTokens.instance().value}")
+            print_token_stats()
         graph.update_masks_dec()
 
     loader = infinite_data_loader()
@@ -261,9 +259,7 @@ async def train(graph:Graph,
         #     print("Decision logits:", graph.decision_logits)
         print("Spatial probs:", spatial_probs)
         print("Temporal probs:", temporal_probs)
-        print(f"Cost {Cost.instance().value}")
-        print(f"PromptTokens {PromptTokens.instance().value}")
-        print(f"CompletionTokens {CompletionTokens.instance().value}")
+        print_token_stats()
         
         if (i_iter+1)%imp_per_iters == 0:
             if not graph.diff:

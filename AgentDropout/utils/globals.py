@@ -67,3 +67,23 @@ class Deepseek_Tokenizer(Singleton):
     def __init__(self, model):
         self.tokenizer = AutoTokenizer.from_pretrained('/path/to/deepseek_v3_tokenizer', use_fast=True)
         self.value = ""
+
+
+def print_token_stats(prefix: str = "") -> None:
+    """Print all token usage statistics collected so far.
+
+    Fields printed:
+        Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens,
+        BilledPromptTokens, BilledCompletionTokens.
+
+    Args:
+        prefix: Optional label prepended to each line (e.g. "Train batch", "Final").
+    """
+    p = f"{prefix} " if prefix else ""
+    print(f"{p}Cost {Cost.instance().value}")
+    print(f"{p}PromptTokens {PromptTokens.instance().value}")
+    print(f"{p}CompletionTokens {CompletionTokens.instance().value}")
+    print(f"{p}CachedTokens {CachedTokens.instance().value}")
+    print(f"{p}ReasoningTokens {ReasoningTokens.instance().value}")
+    print(f"{p}BilledPromptTokens {BilledPromptTokens.instance().value}")
+    print(f"{p}BilledCompletionTokens {BilledCompletionTokens.instance().value}")

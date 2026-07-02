@@ -19,7 +19,7 @@ from AgentDropout.graph.graph import Graph
 from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.tools.reader.readers import JSONLReader, JSONReader
 from AgentDropout.utils.globals import Time
-from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens, print_token_stats
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
 from dataset.aqua_dataset import aqua_data_process,aqua_get_predict
 from dataset.gsm8k_dataset import gsm_data_process,svamp_data_process,multiarith_data_process,gsm_get_predict
@@ -246,9 +246,7 @@ async def main():
                 else:
                     print("spatial sparsity:",graph.spatial_masks[0].sum()/graph.spatial_masks[0].numel())
                     print("temporal sparsity:",graph.temporal_masks[0].sum()/graph.temporal_masks[0].numel())
-            print(f"Cost {Cost.instance().value}")
-            print(f"PromptTokens {PromptTokens.instance().value}")
-            print(f"CompletionTokens {CompletionTokens.instance().value}")
+            print_token_stats()
         graph.update_masks_dec()
 
     if not graph.diff:
@@ -384,9 +382,7 @@ async def main():
             if i_batch+1 == args.num_iterations:
                 args.optimized_spatial = False
                 args.optimized_temporal = False
-            print(f"Cost {Cost.instance().value}")
-            print(f"PromptTokens {PromptTokens.instance().value}")
-            print(f"CompletionTokens {CompletionTokens.instance().value}")
+            print_token_stats()
 
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
@@ -516,9 +512,7 @@ async def main():
         # print("Spatial masks:", graph.spatial_masks)
         # print("Temporal logits:", graph.temporal_masks)
         
-        print(f"Cost {Cost.instance().value}")
-        print(f"PromptTokens {PromptTokens.instance().value}")
-        print(f"CompletionTokens {CompletionTokens.instance().value}")
+        print_token_stats()
 
 
 def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Literal['Random'],Literal['Chain'],Literal['Debate'],Literal['Layered'],Literal['Star']]

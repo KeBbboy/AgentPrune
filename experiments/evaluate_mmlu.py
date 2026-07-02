@@ -7,7 +7,7 @@ from typing import Union,Literal,Optional,Iterator,List,Any,Dict
 from tqdm import tqdm
 import copy
 import time
-from AgentDropout.utils.globals import Time
+from AgentDropout.utils.globals import Time, print_token_stats
 from pathlib import Path
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -110,9 +110,7 @@ async def evaluate(
             data.append(updated_item)
         with open(result_file, 'w',encoding='utf-8') as file:
             json.dump(data, file, indent=4)
-        print(f"Cost {Cost.instance().value}")
-        print(f"PromptTokens {PromptTokens.instance().value}")
-        print(f"CompletionTokens {CompletionTokens.instance().value}")
+        print_token_stats()
         print(f"CachedTokens {CachedTokens.instance().value}")
         print(f"ReasoningTokens {ReasoningTokens.instance().value}")
         print(f"BilledPromptTokens {BilledPromptTokens.instance().value}")

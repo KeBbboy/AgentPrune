@@ -18,7 +18,7 @@ import AgentDropout.agents  # noqa: F401
 import AgentDropout.prompt  # noqa: F401
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time
+from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, print_token_stats
 from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
 
 
@@ -289,9 +289,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
         }
         result_file.write_text(json.dumps({"summary": summary, "results": results}, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"Summary: {summary}")
-        print(f"Cost {Cost.instance().value}")
-        print(f"PromptTokens {PromptTokens.instance().value}")
-        print(f"CompletionTokens {CompletionTokens.instance().value}")
+        print_token_stats()
 
     return {
         "benchmark": dataset.name,
@@ -306,6 +304,10 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
 
 async def main():
     args = parse_args()
+    configure_thinking(
+        enable_thinking=args.llm_enable_thinking,
+        thinking_budget=args.llm_thinking_budget,
+    )
     dataset = AgentBenchmarkDataset(
         name="aime",
         split=args.split,

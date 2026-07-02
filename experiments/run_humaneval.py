@@ -20,7 +20,7 @@ from AgentDropout.tools.reader.readers import JSONLReader
 from AgentDropout.tools.coding.python_executor import PyExecutor
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens, print_token_stats
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
 
 def load_result(result_file):
@@ -230,9 +230,7 @@ async def main():
             # if i_batch+1 == args.num_iterations:
             #     args.optimized_spatial = False
             #     args.optimized_temporal = False
-            print(f"Cost {Cost.instance().value}")
-            print(f"PromptTokens {PromptTokens.instance().value}")
-            print(f"CompletionTokens {CompletionTokens.instance().value}")
+            print_token_stats()
         graph.update_masks_dec()
     
     if not graph.diff:
@@ -364,9 +362,7 @@ async def main():
             if i_batch+1 == args.num_iterations:
                 args.optimized_spatial = False
                 args.optimized_temporal = False
-            print(f"Cost {Cost.instance().value}")
-            print(f"PromptTokens {PromptTokens.instance().value}")
-            print(f"CompletionTokens {CompletionTokens.instance().value}")
+            print_token_stats()
 
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
@@ -475,9 +471,7 @@ async def main():
         print("Temporal probs:", temporal_probs)
 
 
-        print(f"Cost {Cost.instance().value}")
-        print(f"PromptTokens {PromptTokens.instance().value}")
-        print(f"CompletionTokens {CompletionTokens.instance().value}")
+        print_token_stats()
 
 
 
