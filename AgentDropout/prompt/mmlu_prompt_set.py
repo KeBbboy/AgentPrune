@@ -98,10 +98,12 @@ class MMLUPromptSet(PromptSet):
     def _strict_answer_format() -> str:
         return """
                 You must solve the multiple-choice question and select exactly one option: A, B, C, or D.
-                The first character of your response must be the final answer letter.
-                The first line of your response must contain only that single uppercase letter.
-                Do not put any words, punctuation, or spaces before the answer letter.
-                If you include any explanation, put it after the first line.
+                Think step by step and write out your full reasoning first.
+                When you are done, end your reply with a single line that begins
+                with "Answer:" followed by exactly one uppercase letter and no
+                extra text, e.g. "Answer: A". The extractor will look for that
+                line, so do not put any other characters on the answer line.
+                Do not include any "Answer:" line that is not the final pick.
                 """
 
     @staticmethod
@@ -123,7 +125,6 @@ class MMLUPromptSet(PromptSet):
             corresponding to the correct answer.
             Your answer can refer to the answers of other agents provided to you.
             Your reply must include your answer and a brief step by step analysis of the question.
-            The first line of your reply must contain only one letter(for example : A, B, C or D)
         """+ MMLUPromptSet._strict_answer_format()
     
     @staticmethod
@@ -146,7 +147,6 @@ class MMLUPromptSet(PromptSet):
             Using the reasoning from other agents as additional advice with critical thinking, can you give an updated answer?
             You are strictly prohibited from imitating the analysis process of other agents
             Your reply must include your answer and a brief step by step analysis of the question.
-            The first line of your reply must contain only one letter(for example : A, B, C or D)
             """
         role_prefix = f"{role_instruction}\n" if role_instruction else ""
         return role_prefix + generic_instruction + MMLUPromptSet._strict_answer_format()

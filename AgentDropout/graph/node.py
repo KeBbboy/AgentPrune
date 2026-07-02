@@ -243,9 +243,26 @@ class Node(ABC):
         tasks = [asyncio.create_task(self._async_execute(input, spatial_info, temporal_info, **kwargs))]
         results = await asyncio.gather(*tasks, return_exceptions=False)
         for result in results:
-            if not isinstance(result, list):
-                result = [result]
-            self.outputs.extend(result)
+            # Guarantee ``outputs`` is a list of strings (the legacy contract
+            # used by ``graph.arun`` and the MMLU evaluator).  ``AnalyzeAgent``
+            # now returns an LLMResponse; flatten it to the answer string so
+            # downstream code keeps seeing ``[<letter>]`` rather than the full
+            # dataclass repr.
+            if isinstance(result, list):
+                flattened: List[Any] = []
+                for item in result:
+                    if hasattr(item, "answer"):
+                        flattened.append(getattr(item, "answer"))
+                    else:
+                        flattened.append(item)
+                self.outputs.extend(flattened)
+            else:
+                if hasattr(result, "answer"):
+                    self.outputs.append(getattr(result, "answer"))
+                elif isinstance(result, str):
+                    self.outputs.append(result)
+                else:
+                    self.outputs.append(str(result))
         return self.outputs
                
     @abstractmethod

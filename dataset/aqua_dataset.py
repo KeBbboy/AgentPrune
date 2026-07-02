@@ -182,7 +182,19 @@ class AQuADataset:
 def aqua_get_predict(pred_str):
     if isinstance(pred_str, list):
         pred_str = pred_str[0] if pred_str else ""
-    if not isinstance(pred_str, str):
+    # Accept LLMResponse / dict shapes (graph.arun() can return either).
+    full_text = getattr(pred_str, "full_text", None)
+    if isinstance(full_text, str):
+        pred_str = full_text
+    elif isinstance(pred_str, dict):
+        for key in ("full_text", "answer", "reasoning"):
+            value = pred_str.get(key)
+            if isinstance(value, str) and value:
+                pred_str = value
+                break
+        else:
+            pred_str = ""
+    elif not isinstance(pred_str, str):
         pred_str = str(pred_str)
 
     xml_match = re.search(r"<answer>\s*([ABCDE])\s*</answer>", pred_str, flags=re.IGNORECASE)

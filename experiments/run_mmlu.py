@@ -59,6 +59,8 @@ def parse_args():
                         help='Enable model thinking mode: true or false')
     parser.add_argument('--llm_thinking_budget', type=int, default=8192,
                         help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
+    parser.add_argument('--limit_questions', type=int, default=153,
+                        help='Number of evaluation questions to cap (default 153, matching the original behaviour).')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -73,14 +75,15 @@ def setup_logging(llm_name: str, domain: str, mode: str) -> str:
     Returns the log file path. Pass-through if directory creation fails.
     """
     import io
-    from datetime import datetime
+    from datetime import datetime, timezone, timedelta
     safe_llm = llm_name.replace("/", "_")
     log_dir = f"{safe_llm}/{domain}/baseline"
     log_path = f"{log_dir}/{mode}.log"
     try:
         os.makedirs(log_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_fh = open(log_path, "a", encoding="utf-8")
+        cn_tz = timezone(timedelta(hours=8))
+        ts = datetime.now(cn_tz).strftime("%Y-%m-%d %H:%M:%S")
+        log_fh = open(log_path, "w", encoding="utf-8")
         log_fh.write(f"\n\n========== {ts} ==========\n")
         log_fh.flush()
         
@@ -119,7 +122,7 @@ async def main(setup_log: bool = True):
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     # print(agent_names)
     kwargs = get_kwargs(mode,len(agent_names))
-    limit_questions = 153
+    limit_questions = args.limit_questions
     
     graph = Graph(domain=args.domain,
                   llm_name=args.llm_name,

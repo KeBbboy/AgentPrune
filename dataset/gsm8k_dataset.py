@@ -4,6 +4,36 @@ import random
 from pathlib import Path
 from typing import Dict, Iterator, List
 
+
+def _coerce_to_str(pred_str):
+    """Coerce LLMResponse / dict / list / other types into a flat string.
+
+    The upstream agent graph returns either a list of LLMResponse objects
+    (one per agent) or a single LLMResponse. We need a string so that
+    gsm_get_predict can pattern-match ``The answer is ...`` etc.
+    """
+    if pred_str is None:
+        return ""
+    # list path: graph.arun() returns a list, take the first agent's output.
+    if isinstance(pred_str, list):
+        if not pred_str:
+            return ""
+        pred_str = pred_str[0]
+    # LLMResponse dataclass: prefer .full_text (keeps `` tags if present).
+    full_text = getattr(pred_str, "full_text", None)
+    if isinstance(full_text, str):
+        return full_text
+    # dict shape (e.g. serialized LLMResponse).
+    if isinstance(pred_str, dict):
+        for key in ("full_text", "answer", "reasoning"):
+            value = pred_str.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+    if isinstance(pred_str, str):
+        return pred_str
+    return str(pred_str)
+
 def gsm_data_process(dataset):
     # extract the question, step and answer
     list_data_dict = []
@@ -24,6 +54,7 @@ def _read_jsonl(file_path: Path | str) -> list:
 
 
 def gsm_get_predict(pred_str):
+    pred_str = _coerce_to_str(pred_str)
     if('The answer is ' in pred_str):
         pred = pred_str.split('The answer is ')[-1].strip()
     elif('the answer is ' in pred_str):

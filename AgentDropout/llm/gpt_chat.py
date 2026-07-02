@@ -260,6 +260,31 @@ def _client_kwargs() -> Dict[str, str]:
     return kwargs
 
 
+def _anthropic_base_url() -> Optional[str]:
+    """Resolve the anthropic-compatible base_url for MiniMax-M3.
+
+    The MiniMax platform exposes two parallel APIs:
+
+    * OpenAI-compatible: ``https://api.minimaxi.com/v1/chat/completions``
+    * Anthropic-compatible: ``https://api.minimaxi.com/anthropic/v1/messages``
+
+    The OpenAI SDK keeps working against ``.../v1``; the anthropic SDK needs the
+    URL rewritten to ``.../anthropic`` (the SDK auto-appends ``/v1/messages``).
+    If the operator already configured an anthropic-style URL via
+    ``ANTHROPIC_BASE_URL`` we trust that as-is.
+    """
+    explicit_anthropic = os.getenv("ANTHROPIC_BASE_URL")
+    if explicit_anthropic:
+        return explicit_anthropic.strip().rstrip("/")
+    if not MM_URL:
+        return None
+    base = MM_URL.strip().rstrip("/")
+    # Drop any trailing /v1 (or /v1/) before appending /anthropic.
+    if base.endswith("/v1"):
+        base = base[: -3].rstrip("/")
+    return f"{base}/anthropic"
+
+
 def _prepare_msgs(msg: Union[str, List[Dict]]) -> tuple[str, List[Dict[str, Any]]]:
     if isinstance(msg, str):
         msg = [{"role": "user", "content": msg}]
@@ -541,31 +566,85 @@ class LlamaChat(LLM):
 
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(RETRIES), reraise=True)
 async def achat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=None, top_p=None):
-    client = AsyncOpenAI(api_key=MM_KEY, base_url=MM_URL)
-    normalized = _normalize_openai_messages(msg)
+    """Streaming MiniMax-M3 caller using the official ``anthropic`` SDK.
+
+    Anthropic differs from the OpenAI-compatible SDK in three ways:
+    * request takes ``system`` + ``messages[].content = [{"type":"text","text":...}]``
+      instead of flat ``messages[].content`` strings;
+    * the response body is ``message.content = [block, ...]`` where each block has
+      ``type ∈ {"text","thinking"}``. Reasoning lives in ``block.thinking`` and the
+      final answer text in ``block.text``;
+    * thinking is enabled via the top-level ``thinking={"type":"enabled","budget_tokens":...}``
+      param instead of ``extra_body``.
+
+    The MiniMax platform requires streaming once ``thinking`` is enabled or
+    ``max_tokens`` is large (it returns ``Streaming is required for operations
+    that may take longer than 10 minutes`` otherwise), so we always issue the
+    request through ``client.messages.stream`` and assemble the answer from the
+    emitted content blocks.
+    """
     try:
+        system, messages = _prepare_msgs(msg)
+        kwargs: Dict[str, Any] = {
+            "model": model,
+            "max_tokens": max(1024, int(max_tokens or MAX_TOKENS)),
+            "system": system,
+            "messages": messages,
+        }
+        if LLM_ENABLE_THINKING and LLM_THINKING_BUDGET > 0:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": int(LLM_THINKING_BUDGET)}
+        if temperature is not None:
+            kwargs["temperature"] = float(temperature)
+
+        client = anthropic.AsyncAnthropic(api_key=MM_KEY, base_url=_anthropic_base_url())
+        thinking_text = ""
+        answer_text = ""
+        usage_obj = None
         async with _SEMA:
             await _wait_slot()
-            async with _timeout(1000):
-                completion = await client.chat.completions.create(
-                    model=model,
-                    messages=normalized,
-                    max_tokens=max_tokens or MAX_TOKENS,
-                    temperature=temperature if temperature is not None else TEMPERATURE,
-                    top_p=top_p if top_p is not None else TOP_P,
-                    extra_body=_thinking_extra_body(model),
-                )
-        message = completion.choices[0].message
-        text = message.content
-        reasoning_content = getattr(message, "reasoning_content", None)
-        if isinstance(text, str):
-            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage, model=model)
-            if reasoning_content:
-                return create_llm_response_from_parts(reasoning_content, text)
-            return split_thinking(text)
+            async with client.messages.stream(**kwargs) as stream:
+                async for event in stream:
+                    etype = getattr(event, "type", None)
+                    if etype == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        btype = getattr(block, "type", None)
+                        if btype == "thinking":
+                            thinking_text = ""
+                        elif btype == "text":
+                            answer_text = ""
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        btype = getattr(getattr(event, "content_block", None), "type", None)
+                        if btype == "thinking" or getattr(delta, "type", None) == "thinking_delta":
+                            thinking_text += getattr(delta, "thinking", "") or ""
+                        elif btype == "text" or getattr(delta, "type", None) == "text_delta":
+                            answer_text += getattr(delta, "text", "") or ""
+                try:
+                    final_msg = await stream.get_final_message()
+                    usage_obj = getattr(final_msg, "usage", None)
+                except Exception:
+                    usage_obj = None
+
+        prompt = _prompt_text(system, messages)
+        _record_usage(prompt, answer_text, usage=usage_obj, model=model)
+
+        # Build an LLMResponse with reasoning + answer preserved separately.
+        if thinking_text:
+            resp = create_llm_response_from_parts(thinking_text, answer_text)
+        else:
+            resp = split_thinking(answer_text)
+        # Defensive: downstream code expects a dataclass; coerce any stray
+        # string into the same shape so the MMLU evaluator receives a stable
+        # ``LLMResponse`` (with reasoning stripped, full_text = answer).
+        if not isinstance(resp, LLMResponse):
+            resp = LLMResponse(reasoning=None, answer=str(resp), full_text=str(resp))
+        return resp
     except Exception as e:
         print(f"Error in achat_mm: {e}")
-        raise
+        # Guarantee: downstream code (AnalyzeAgent / BenchmarkAgent) consumes
+        # LLMResponse. Return a degraded LLMResponse rather than raising,
+        # so a single failed sample doesn't kill an entire evaluation batch.
+        return LLMResponse(reasoning=None, answer="", full_text="")
 
 
 # Backwards-compatible alias.
@@ -574,25 +653,52 @@ achat_minimax = achat_mm
 
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(RETRIES), reraise=True)
 def chat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=None, top_p=None):
-    client = OpenAI(api_key=MM_KEY, base_url=MM_URL)
-    normalized = _normalize_openai_messages(msg)
+    """Synchronous streaming variant of :func:`achat_mm` using ``anthropic.Anthropic``."""
     try:
-        completion = client.chat.completions.create(
-            model=model,
-            messages=normalized,
-            max_tokens=max_tokens or MAX_TOKENS,
-            temperature=temperature if temperature is not None else TEMPERATURE,
-            top_p=top_p if top_p is not None else TOP_P,
-            extra_body=_thinking_extra_body(model),
-        )
-        message = completion.choices[0].message
-        text = message.content
-        reasoning_content = getattr(message, "reasoning_content", None)
-        if isinstance(text, str):
-            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage, model=model)
-            if reasoning_content:
-                return create_llm_response_from_parts(reasoning_content, text)
-            return split_thinking(text)
+        system, messages = _prepare_msgs(msg)
+        kwargs: Dict[str, Any] = {
+            "model": model,
+            "max_tokens": max(1024, int(max_tokens or MAX_TOKENS)),
+            "system": system,
+            "messages": messages,
+        }
+        if LLM_ENABLE_THINKING and LLM_THINKING_BUDGET > 0:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": int(LLM_THINKING_BUDGET)}
+        if temperature is not None:
+            kwargs["temperature"] = float(temperature)
+
+        client = anthropic.Anthropic(api_key=MM_KEY, base_url=_anthropic_base_url())
+        thinking_text = ""
+        answer_text = ""
+        usage_obj = None
+        with client.messages.stream(**kwargs) as stream:
+            for event in stream:
+                etype = getattr(event, "type", None)
+                if etype == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    btype = getattr(block, "type", None)
+                    if btype == "thinking":
+                        thinking_text = ""
+                    elif btype == "text":
+                        answer_text = ""
+                elif etype == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    btype = getattr(getattr(event, "content_block", None), "type", None)
+                    if btype == "thinking" or getattr(delta, "type", None) == "thinking_delta":
+                        thinking_text += getattr(delta, "thinking", "") or ""
+                    elif btype == "text" or getattr(delta, "type", None) == "text_delta":
+                        answer_text += getattr(delta, "text", "") or ""
+            try:
+                final_msg = stream.get_final_message()
+                usage_obj = getattr(final_msg, "usage", None)
+            except Exception:
+                usage_obj = None
+
+        prompt = _prompt_text(system, messages)
+        _record_usage(prompt, answer_text, usage=usage_obj, model=model)
+        if thinking_text:
+            return create_llm_response_from_parts(thinking_text, answer_text)
+        return split_thinking(answer_text)
     except Exception as e:
         print(f"Error in chat_mm: {e}")
         raise

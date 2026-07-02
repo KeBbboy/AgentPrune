@@ -25,6 +25,35 @@ from dataset.gsm8k_dataset import gsm_data_process,gsm_get_predict,svamp_data_pr
 from dataset.aqua_dataset import aqua_data_process,aqua_get_predict
 from AgentDropout.agents.agent_registry import AgentRegistry
 
+def _json_safe(obj):
+    """Make objects JSON-serializable for result dumping.
+
+    graph.arun() returns a list of LLMResponse dataclasses; ``json.dump``
+    can't handle them by default. Convert each item to a plain dict with
+    the same field names used by gsm_get_predict parsing.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, str):
+        return obj
+    if isinstance(obj, (int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    full_text = getattr(obj, "full_text", None)
+    answer = getattr(obj, "answer", None)
+    reasoning = getattr(obj, "reasoning", None)
+    if any(x is not None for x in (full_text, answer, reasoning)):
+        return {
+            "reasoning": reasoning,
+            "answer": answer,
+            "full_text": full_text,
+        }
+    return repr(obj)
+
+
 def load_result(result_file):
     if not result_file.exists():
         with open(result_file, 'w',encoding='utf-8') as file:
@@ -204,7 +233,7 @@ async def main():
                 data.append(updated_item)
                 print(f"##########Final Log:{json.dumps(updated_item)}")
             with open(result_file, 'w',encoding='utf-8') as file:
-                json.dump(data, file, indent=4)
+                json.dump(_json_safe(data), file, indent=4)
             
             total_loss = torch.mean(torch.stack(loss_list))
             optimizer.zero_grad()
@@ -333,7 +362,7 @@ async def main():
                 data.append(updated_item)
                 print(f"##########Final Log:{json.dumps(updated_item)}")
             with open(result_file, 'w',encoding='utf-8') as file:
-                json.dump(data, file, indent=4)
+                json.dump(_json_safe(data), file, indent=4)
             
             total_loss = torch.mean(torch.stack(loss_list))
             if args.optimized_spatial or args.optimized_temporal:
@@ -462,7 +491,32 @@ async def main():
         utilities: List[float] = []
         data = load_result(result_file)
         
-        for task, answer, log_prob, add_loss, true_answer in zip(current_batch, raw_answers, log_probs, add_losses, answers):
+        for sample_idx, (task, answer, log_prob, add_loss, true_answer) in enumerate(zip(current_batch, raw_answers, log_probs, add_losses, answers)):
+            # ----- per-sample verification: how the model output was parsed -----
+            raw_item = answer[0] if isinstance(answer, list) and answer else answer
+            if isinstance(raw_item, dict):
+                raw_full = raw_item.get("full_text", "")
+                raw_answer = raw_item.get("answer", "")
+                raw_reasoning = raw_item.get("reasoning", "")
+            else:
+                raw_full = getattr(raw_item, "full_text", "") or ""
+                raw_answer = getattr(raw_item, "answer", "") or ""
+                raw_reasoning = getattr(raw_item, "reasoning", "") or ""
+
+            parse_ok = isinstance(raw_full, str) and isinstance(raw_answer, str)
+            has_think_tag = isinstance(raw_full, str) and "<think>" in raw_full and "</think>" in raw_full
+            has_answer_is = isinstance(raw_answer, str) and ("The answer is " in raw_answer or "the answer is " in raw_answer)
+
+            print(80 * '#')
+            print(f"[SAMPLE {sample_idx}] parse_ok={parse_ok} has_<think>={has_think_tag} has_answer_is={has_answer_is}")
+            print(f"[SAMPLE {sample_idx}] reasoning_len={len(raw_reasoning) if raw_reasoning else 0} answer_len={len(raw_answer)} full_len={len(raw_full)}")
+            print(f"[SAMPLE {sample_idx}] QUESTION: {task.get('task', task)[:300] if isinstance(task, dict) else str(task)[:300]}")
+            print(f"[SAMPLE {sample_idx}] TRUE_ANSWER: {true_answer}")
+            print(f"[SAMPLE {sample_idx}] ANSWER (post-think): {raw_answer[:400]!r}")
+            if has_think_tag:
+                print(f"[SAMPLE {sample_idx}] THINK (preview): {raw_reasoning[:400]!r}")
+            # ----- end per-sample verification -----
+
             predict_answer = gsm_get_predict(answer[0])
             is_solved = float(predict_answer)==float(true_answer)
             # is_solved = predict_answer==true_answer
@@ -482,12 +536,19 @@ async def main():
                 "Solved": is_solved,
                 "Total solved": total_solved,
                 "Total executed": total_executed,
-                "Accuracy": accuracy
+                "Accuracy": accuracy,
+                "ParseCheck": {
+                    "parse_ok": parse_ok,
+                    "has_think_tag": has_think_tag,
+                    "has_answer_is": has_answer_is,
+                    "answer_len": len(raw_answer),
+                    "full_len": len(raw_full),
+                },
             }
             data.append(updated_item)
-            print(f"##########Final Log:{json.dumps(updated_item)}")
+            print(f"##########Final Log: predict={predict_answer} true={true_answer} solved={is_solved}")
         with open(result_file, 'w',encoding='utf-8') as file:
-            json.dump(data, file, indent=4)
+            json.dump(_json_safe(data), file, indent=4)
         
         # total_loss = torch.mean(torch.stack(loss_list))
         # if args.optimized_spatial or args.optimized_temporal:

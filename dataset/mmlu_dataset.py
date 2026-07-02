@@ -72,83 +72,76 @@ class MMLUDataset(ABC):
         return input_dict
 
     def postprocess_answer(self, answer, llm_name: str | None = None):
+        """Extract the predicted option letter for MMLU.
+
+        Unified implementation aligned with the official lm-evaluation-harness
+        MMLU ``process_results`` behaviour:
+
+        1. If a ``think``...``/think`` block is present (e.g. MiniMax-M3 replies),
+           strip it before extraction so reasoning does not contaminate the
+           final pick.
+        2. From the post-strip text, take the first standalone A-D letter
+           (matches anything not bordered by alphanumerics). This mirrors the
+           official "first isolated A-D" rule, instead of the previous
+           "last A-D" heuristic which biased MiniMax-M3 outputs differently
+           from other models.
+        3. Fallback: first non-whitespace character of the first non-empty line.
+
+        The ``llm_name`` argument is kept for backward compatibility with
+        callers (e.g. ``experiments/evaluate_mmlu.py``) but no longer alters
+        the extraction logic — behaviour only depends on the response text,
+        not on the producing model name.
+
+        This method is only used by the evaluator/scoring pipeline. Agent-to-
+        agent communication goes through ``MMLUPromptSet.postprocess_answer``
+        and the raw ``full_text`` payloads, so changing this implementation
+        has no effect on inter-agent message passing.
+        """
+        del llm_name  # behaviour is model-agnostic; argument retained for API stability.
+
         if isinstance(answer, list):
             answer = answer[0] if answer else ""
+        # ``LLMResponse`` (dataclass with ``reasoning`` / ``answer`` / ``full_text``)
+        # and any dict with ``full_text`` should be coerced to their full_text string.
         if not isinstance(answer, str):
-            raise Exception("Expected string")
+            if hasattr(answer, "full_text") and isinstance(answer.full_text, str):
+                answer = answer.full_text
+            elif isinstance(answer, dict) and isinstance(answer.get("full_text"), str):
+                answer = answer["full_text"]
+            else:
+                answer = str(answer)
         answer = answer.strip()
         if not answer:
-            return answer
-
-        # Decide extraction strategy based on the LLM that produced the
-        # answer. MiniMax-M3 replies wrap reasoning in ``...``
-        # blocks before the final letter; other models (e.g. Qwen3-14B)
-        # reply with the letter directly, so we keep the original tight
-        # logic intact for them.
-        is_minimax = bool(llm_name) and "MiniMax-M3" in llm_name
-
-        if is_minimax:
-            OPEN_T = "think"
-            CLOSE_T = "/" + OPEN_T
-            lower = answer.lower()
-            if OPEN_T in lower:
-                open_idx = lower.index(OPEN_T) + len(OPEN_T)
-                close_idx = lower.find(CLOSE_T, open_idx)
-                if close_idx != -1:
-                    answer = answer[close_idx + len(CLOSE_T):].strip()
-                # else: unclosed thinking block; leave the rest so the
-                # regex fallback below can still pick out the answer.
-        if not answer:
             return ""
 
-        first_line = ""
-        for line in answer.splitlines():
-            if line.strip():
-                first_line = line.strip()
+        # 1) Strip a ``think``...``/think`` reasoning block if present.
+        think_re = re.compile(r"think\b.*?/think", re.IGNORECASE | re.DOTALL)
+        stripped = think_re.sub("", answer, count=1).strip()
+        text = stripped or answer
+
+        # 2) Look for the explicit ``Answer: X`` line introduced by the new
+        # MMLU prompt. We pick the LAST occurrence to match the convention
+        # "the most recent Answer: line is the authoritative final pick".
+        answer_line_match = None
+        for line in reversed(text.splitlines()):
+            m = re.match(r"^\s*(?:final\s+)?answer\s*[:：]\s*\(?\s*([A-D])\s*\)?\s*$",
+                         line.strip(), flags=re.IGNORECASE)
+            if m:
+                answer_line_match = m
                 break
-        if not first_line:
-            return ""
+        if answer_line_match is not None:
+            return answer_line_match.group(1).upper()
 
-        # 1) Leading "A" / "**B**" / "(C)" — applies to all models.
-        match = re.match(
-            r"^\**\s*([A-D])(?:\s|$|[).:：,-])", first_line, flags=re.IGNORECASE
-        )
-        if match:
+        # 3) Fallback: first standalone A-D letter anywhere in the cleaned text.
+        for match in re.finditer(r"(?<![A-Za-z0-9])([A-D])(?![A-Za-z0-9])", text):
             return match.group(1).upper()
 
-        if is_minimax:
-            # 2) Descriptive form, e.g. "The answer is B" / "choose D".
-            match = re.search(
-                r"\b(?:answer|option|choose)\b[^A-D\n]{0,20}([A-D])\b",
-                first_line, flags=re.IGNORECASE,
-            )
-            if not match:
-                match = re.search(
-                    r"\b(?:answer|option|choose)\s*(?:is|:|：)?\s*(?:option\s+)?([A-D])\b",
-                    first_line, flags=re.IGNORECASE,
-                )
-            if match:
-                return match.group(1).upper()
-
-            # 3) Last standalone A-D anywhere in the response — covers
-            # ``\n\nB`` style outputs where the letter is alone on a line.
-            for scope in (first_line, answer):
-                candidates = re.findall(
-                    r"(?<![A-Za-z0-9])([A-D])(?![A-Za-z0-9])", scope
-                )
-                if candidates:
-                    return candidates[-1].upper()
-
-            return first_line[0]
-
-        # Original tight logic for non-MiniMax models.
-        match = re.search(
-            r"\b(?:answer|option|choose)\s*(?:is|:)?\s*(?:option\s+)?([A-D])\b",
-            first_line, flags=re.IGNORECASE,
-        )
-        if match:
-            return match.group(1).upper()
-        return first_line[0]  # original last-ditch fallback
+        # 4) Last-resort fallback: first non-whitespace char of the first non-empty line.
+        for line in text.splitlines():
+            stripped_line = line.strip()
+            if stripped_line:
+                return stripped_line[0].upper()
+        return ""
 
     @staticmethod
     def record_to_target_answer(record: pd.DataFrame) -> str:

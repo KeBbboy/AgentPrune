@@ -94,7 +94,27 @@ async def evaluate(
         
         print(f"Batch time {time.time() - start_ts:.3f}")
         for raw_answer, record, all_answer in zip(raw_answers, record_batch, all_answers):
-            print("Raw answer:", raw_answer)
+            # Debug: dump the FULL first-node output so we can see whether
+            # the truncation happened upstream (LLM response itself) or in
+            # postprocessing.  Keep both forms for easy grepping.
+            full_text = ""
+            if isinstance(raw_answer, list) and raw_answer:
+                first_item = raw_answer[0]
+            else:
+                first_item = raw_answer
+            if isinstance(first_item, str):
+                full_text = first_item
+            elif isinstance(first_item, dict):
+                full_text = first_item.get("full_text", repr(first_item))
+            else:
+                full_text = repr(first_item)
+            truncated = len(full_text.strip()) <= 2
+            tag = " [TRUNCATED]" if truncated else ""
+            print(f"==== Raw answer (repr){tag} ====")
+            print(repr(raw_answer))
+            print(f"==== Raw answer (full text, len={len(full_text)}){tag} ====")
+            print(full_text)
+            print("==== end raw answer ====")
             answer = dataset.postprocess_answer(raw_answer, llm_name=model_name)
             print("Postprocessed answer:", answer)
             correct_answer = dataset.record_to_target_answer(record)
@@ -105,20 +125,20 @@ async def evaluate(
                 "Question": dataset.record_to_input(record)['task'],
                 "Answer": correct_answer,
                 "All_answers": all_answer,
-                "Response": raw_answer,
+                "Response": str(raw_answer),
             }
             data.append(updated_item)
         with open(result_file, 'w',encoding='utf-8') as file:
-            json.dump(data, file, indent=4)
-        print_token_stats()
-        print(f"CachedTokens {CachedTokens.instance().value}")
-        print(f"ReasoningTokens {ReasoningTokens.instance().value}")
-        print(f"BilledPromptTokens {BilledPromptTokens.instance().value}")
-        print(f"BilledCompletionTokens {BilledCompletionTokens.instance().value}")
+            json.dump(data, file, indent=4, default=str)
         # if 'deepseek' in args.llm_name:
         #     print('sleep')
         #     time.sleep(60)
     accuracy.print()
+    print_token_stats()
+    print(f"CachedTokens {CachedTokens.instance().value}")
+    print(f"ReasoningTokens {ReasoningTokens.instance().value}")
+    print(f"BilledPromptTokens {BilledPromptTokens.instance().value}")
+    print(f"BilledCompletionTokens {BilledCompletionTokens.instance().value}")
     print("Done!")
 
     return accuracy.get()
