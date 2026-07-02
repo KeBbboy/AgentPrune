@@ -8,7 +8,7 @@ import torch
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import CompletionTokens, PromptTokens
+from AgentDropout.utils.globals import Cost, CompletionTokens, PromptTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
 from dataset.mmlu_pro_dataset import MMLUProDataset
 from experiments.evaluate_mmlu import evaluate
 from experiments.run_mmlu import get_kwargs
@@ -105,6 +105,10 @@ async def main():
 
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
+    CachedTokens.instance().reset()
+    ReasoningTokens.instance().reset()
+    BilledPromptTokens.instance().reset()
+    BilledCompletionTokens.instance().reset()
     score = await evaluate(
         graph=graph,
         dataset=dataset_val,
@@ -115,6 +119,13 @@ async def main():
         args=args,
     )
     print(f"Score: {score}")
+    print(f"Final Cost {Cost.instance().value}")
+    print(f"Final PromptTokens {PromptTokens.instance().value}")
+    print(f"Final CompletionTokens {CompletionTokens.instance().value}")
+    print(f"Final CachedTokens {CachedTokens.instance().value}")
+    print(f"Final ReasoningTokens {ReasoningTokens.instance().value}")
+    print(f"Final BilledPromptTokens {BilledPromptTokens.instance().value}")
+    print(f"Final BilledCompletionTokens {BilledCompletionTokens.instance().value}")
 
 
 if __name__ == "__main__":

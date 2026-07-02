@@ -27,6 +27,22 @@ class CompletionTokens(Singleton):
     def __init__(self):
         self.value = 0.0
 
+class CachedTokens(Singleton):
+    def __init__(self):
+        self.value = 0.0
+
+class ReasoningTokens(Singleton):
+    def __init__(self):
+        self.value = 0.0
+
+class BilledPromptTokens(Singleton):
+    def __init__(self):
+        self.value = 0.0
+
+class BilledCompletionTokens(Singleton):
+    def __init__(self):
+        self.value = 0.0
+
 class TokenUsageRecords(Singleton):
     def __init__(self):
         self.value = []

@@ -14,7 +14,7 @@ from dataset.MMLU.download import download
 from experiments.train_mmlu import train
 from experiments.evaluate_mmlu import evaluate
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import PromptTokens, CompletionTokens
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
 import torch
 
 
@@ -58,10 +58,9 @@ def parse_args():
     parser.add_argument('--llm_enable_thinking', type=parse_bool_arg, default=True,
                         help='Enable model thinking mode: true or false')
     parser.add_argument('--llm_thinking_budget', type=int, default=8192,
-                        help='Thinking token budget for Qwen3-style providers')
-    parser.add_argument('--minimax_thinking_type', type=str, default='adaptive',
-                        choices=['adaptive', 'disabled'],
-                        help='MiniMax thinking mode type')
+                        help='Thinking token budget (unified interface): '
+                             'Qwen3-style providers use this as token budget (128-32768); '
+                             'MiniMax-M3 uses >0 for adaptive, 0 for disabled')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -75,7 +74,6 @@ async def main():
     configure_thinking(
         enable_thinking=args.llm_enable_thinking,
         thinking_budget=args.llm_thinking_budget,
-        minimax_thinking_type=args.minimax_thinking_type,
     )
     
     mode = args.mode
@@ -119,6 +117,10 @@ async def main():
 
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
+    CachedTokens.instance().reset()
+    ReasoningTokens.instance().reset()
+    BilledPromptTokens.instance().reset()
+    BilledCompletionTokens.instance().reset()
     # graph.optimized_temporal=False
     # graph.optimized_spatial=False
     if args.dec:
@@ -126,6 +128,13 @@ async def main():
     else:
         score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size,args=args)
     print(f"Score: {score}")
+    print(f"Final Cost {Cost.instance().value}")
+    print(f"Final PromptTokens {PromptTokens.instance().value}")
+    print(f"Final CompletionTokens {CompletionTokens.instance().value}")
+    print(f"Final CachedTokens {CachedTokens.instance().value}")
+    print(f"Final ReasoningTokens {ReasoningTokens.instance().value}")
+    print(f"Final BilledPromptTokens {BilledPromptTokens.instance().value}")
+    print(f"Final BilledCompletionTokens {BilledCompletionTokens.instance().value}")
 
 
 

@@ -1,4 +1,4 @@
-from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, Tokenizer, Deepseek_Tokenizer
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens, Tokenizer, Deepseek_Tokenizer
 import tiktoken
 
 # GPT-4:  https://platform.openai.com/docs/models/gpt-4-and-gpt-4-turbo
@@ -46,7 +46,28 @@ def _usage_token_counts(usage):
     total_len = _usage_int(usage, ("total_tokens",))
     if completion_len is None and prompt_len is not None and total_len is not None:
         completion_len = max(total_len - prompt_len, 0)
-    return prompt_len, completion_len
+    
+    prompt_tokens_details = _usage_value(usage, ("prompt_tokens_details",))
+    cached_tokens = None
+    if prompt_tokens_details is not None:
+        if isinstance(prompt_tokens_details, dict):
+            cached_tokens = prompt_tokens_details.get("cached_tokens")
+        else:
+            cached_tokens = getattr(prompt_tokens_details, "cached_tokens", None)
+    if cached_tokens is not None:
+        cached_tokens = int(cached_tokens)
+    
+    completion_tokens_details = _usage_value(usage, ("completion_tokens_details",))
+    reasoning_tokens = None
+    if completion_tokens_details is not None:
+        if isinstance(completion_tokens_details, dict):
+            reasoning_tokens = completion_tokens_details.get("reasoning_tokens")
+        else:
+            reasoning_tokens = getattr(completion_tokens_details, "reasoning_tokens", None)
+    if reasoning_tokens is not None:
+        reasoning_tokens = int(reasoning_tokens)
+    
+    return prompt_len, completion_len, cached_tokens, reasoning_tokens
 
 def cost_count(prompt, response, model_name, usage=None):
     branch: str
@@ -54,31 +75,45 @@ def cost_count(prompt, response, model_name, usage=None):
     completion_len: int
     price: float
 
-    usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    usage_prompt_len, usage_completion_len, cached_tokens, reasoning_tokens = _usage_token_counts(usage)
     if usage_prompt_len is None or usage_completion_len is None:
         print(f"Warning: cost_count received incomplete usage for {model_name}: prompt={usage_prompt_len}, completion={usage_completion_len}")
     prompt_len = usage_prompt_len or 0
     completion_len = usage_completion_len or 0
+    cached_tokens = cached_tokens or 0
+    reasoning_tokens = reasoning_tokens or 0
+
+    billed_prompt = prompt_len - cached_tokens
+    billed_completion = completion_len
 
     if "gpt-4" in model_name:
         branch = "gpt-4"
         model_info = OPENAI_MODEL_INFO[branch].get(model_name)
         price = 0.0 if model_info is None else (
-            prompt_len * model_info["input"] /1000 +
-            completion_len * model_info["output"] /1000
+            billed_prompt * model_info["input"] /1000 +
+            billed_completion * model_info["output"] /1000
         )
     elif "gpt-3.5" in model_name:
         branch = "gpt-3.5"
         model_info = OPENAI_MODEL_INFO[branch].get(model_name)
         price = 0.0 if model_info is None else (
-            prompt_len * model_info["input"] /1000 +
-            completion_len * model_info["output"] /1000
+            billed_prompt * model_info["input"] /1000 +
+            billed_completion * model_info["output"] /1000
         )
+    elif "minimax" in model_name.lower() or "MiniMax" in model_name:
+        branch = "minimax"
+        pricing = MODEL_PRICING["minimax-m3"]
+        non_cached_prompt = billed_prompt
+        price = (non_cached_prompt * pricing["input"] + 
+                 cached_tokens * pricing["cache_read"] + 
+                 billed_completion * pricing["output"]) / 1000000
     elif "dall-e" in model_name:
         branch = "dall-e"
         price = 0.0
         prompt_len = 0
         completion_len = 0
+        billed_prompt = 0
+        billed_completion = 0
     else:
         branch = "other"
         price = 0.0
@@ -86,6 +121,10 @@ def cost_count(prompt, response, model_name, usage=None):
     Cost.instance().value += price
     PromptTokens.instance().value += prompt_len
     CompletionTokens.instance().value += completion_len
+    CachedTokens.instance().value += cached_tokens
+    ReasoningTokens.instance().value += reasoning_tokens
+    BilledPromptTokens.instance().value += billed_prompt
+    BilledCompletionTokens.instance().value += billed_completion
 
     # print(f"Prompt Tokens: {prompt_len}, Completion Tokens: {completion_len}")
     return price, prompt_len, completion_len
@@ -96,16 +135,35 @@ def cost_count_llama3(prompt, response, model, usage=None):
     completion_len: int
     price: float
 
-    usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    usage_prompt_len, usage_completion_len, cached_tokens, reasoning_tokens = _usage_token_counts(usage)
     if usage_prompt_len is None or usage_completion_len is None:
         print(f"Warning: cost_count_llama3 received incomplete usage for {model}: prompt={usage_prompt_len}, completion={usage_completion_len}")
     prompt_len = usage_prompt_len or 0
     completion_len = usage_completion_len or 0
+    cached_tokens = cached_tokens or 0
+    reasoning_tokens = reasoning_tokens or 0
     price = 0
 
-    # Cost.instance().value += price
+    billed_prompt = prompt_len - cached_tokens
+    billed_completion = completion_len
+
+    model_lower = model.lower()
+    if "qwen3-14b" in model_lower:
+        pricing = MODEL_PRICING["qwen3-14b"]
+        price = (billed_prompt * pricing["input"] + 
+                 billed_completion * pricing["output"]) / 1000000
+    elif "qwen3-32b" in model_lower:
+        pricing = MODEL_PRICING["qwen3-32b"]
+        price = (billed_prompt * pricing["input"] + 
+                 billed_completion * pricing["output"]) / 1000000
+
+    Cost.instance().value += price
     PromptTokens.instance().value += prompt_len
     CompletionTokens.instance().value += completion_len
+    CachedTokens.instance().value += cached_tokens
+    ReasoningTokens.instance().value += reasoning_tokens
+    BilledPromptTokens.instance().value += billed_prompt
+    BilledCompletionTokens.instance().value += billed_completion
 
     # print(f"Prompt Tokens: {prompt_len}, Completion Tokens: {completion_len}")
     return price, prompt_len, completion_len
@@ -116,19 +174,28 @@ def cost_count_deepseek(prompt, response, model, usage=None):
     completion_len: int
     price: float
 
-    usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
+    usage_prompt_len, usage_completion_len, cached_tokens, reasoning_tokens = _usage_token_counts(usage)
     if usage_prompt_len is None or usage_completion_len is None:
         print(f"Warning: cost_count_deepseek received incomplete usage for {model}: prompt={usage_prompt_len}, completion={usage_completion_len}")
     prompt_len = usage_prompt_len or 0
     completion_len = usage_completion_len or 0
+    cached_tokens = cached_tokens or 0
+    reasoning_tokens = reasoning_tokens or 0
     price = 0
 
-    # Cost.instance().value += price
-    price = prompt_len * 2 /1000000 + \
-            completion_len * 8 /1000000
+    billed_prompt = prompt_len - cached_tokens
+    billed_completion = completion_len
+
+    pricing = MODEL_PRICING["deepseek"]
+    price = (billed_prompt * pricing["input"] + 
+             billed_completion * pricing["output"]) / 1000000
     Cost.instance().value += price
     PromptTokens.instance().value += prompt_len
     CompletionTokens.instance().value += completion_len
+    CachedTokens.instance().value += cached_tokens
+    ReasoningTokens.instance().value += reasoning_tokens
+    BilledPromptTokens.instance().value += billed_prompt
+    BilledCompletionTokens.instance().value += billed_completion
 
     # print(f"Prompt Tokens: {prompt_len}, Completion Tokens: {completion_len}")
     return price, prompt_len, completion_len
@@ -257,5 +324,32 @@ OPENAI_MODEL_INFO ={
             "512×512": 0.018,
             "256×256": 0.016
         }
+    }
+}
+
+MODEL_PRICING = {
+    "minimax-m3": {
+        "input": 2.10,
+        "output": 8.40,
+        "cache_read": 0.42,
+        "unit": "元/百万tokens"
+    },
+    "qwen3-14b": {
+        "input": 0.50,
+        "output": 2.00,
+        "cache_read": 0,
+        "unit": "元/百万tokens"
+    },
+    "qwen3-32b": {
+        "input": 1.00,
+        "output": 4.00,
+        "cache_read": 0,
+        "unit": "元/百万tokens"
+    },
+    "deepseek": {
+        "input": 2.00,
+        "output": 8.00,
+        "cache_read": 0,
+        "unit": "元/百万tokens"
     }
 }

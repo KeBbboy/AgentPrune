@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.graph import Graph
 from experiments.accuracy import Accuracy
-from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
 
 
 def _freeze_parameters(parameters):
@@ -113,6 +113,10 @@ async def evaluate(
         print(f"Cost {Cost.instance().value}")
         print(f"PromptTokens {PromptTokens.instance().value}")
         print(f"CompletionTokens {CompletionTokens.instance().value}")
+        print(f"CachedTokens {CachedTokens.instance().value}")
+        print(f"ReasoningTokens {ReasoningTokens.instance().value}")
+        print(f"BilledPromptTokens {BilledPromptTokens.instance().value}")
+        print(f"BilledCompletionTokens {BilledCompletionTokens.instance().value}")
         # if 'deepseek' in args.llm_name:
         #     print('sleep')
         #     time.sleep(60)

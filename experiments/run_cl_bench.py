@@ -19,7 +19,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 from AgentDropout.graph.graph import Graph
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time
+from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
 from dataset.cl_bench_dataset import CLBenchDataset
 from experiments.run_mmlu import get_kwargs
 
@@ -282,6 +282,10 @@ async def main():
 
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
+    CachedTokens.instance().reset()
+    ReasoningTokens.instance().reset()
+    BilledPromptTokens.instance().reset()
+    BilledCompletionTokens.instance().reset()
     if args.dry_run:
         print("Dry run complete. No model API calls were made.")
         return

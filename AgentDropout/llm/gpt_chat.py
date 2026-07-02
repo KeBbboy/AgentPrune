@@ -114,19 +114,21 @@ MINIMAX_DEFAULT_TOP_P = TOP_P
 # variables so experiments can control it via argparse.
 LLM_ENABLE_THINKING = True
 LLM_THINKING_BUDGET = 8192
-MINIMAX_THINKING_TYPE = "adaptive"
 
 
 def configure_thinking(
     enable_thinking: bool = True,
     thinking_budget: int = 8192,
-    minimax_thinking_type: str = "adaptive",
 ) -> None:
-    """Configure provider-specific thinking parameters for this process."""
-    global LLM_ENABLE_THINKING, LLM_THINKING_BUDGET, MINIMAX_THINKING_TYPE
+    """Configure provider-specific thinking parameters for this process.
+    
+    Unified interface for thinking budget across all providers:
+    - Qwen3: thinking_budget directly sets the token budget
+    - MiniMax-M3: thinking_budget > 0 means "adaptive", 0 means "disabled"
+    """
+    global LLM_ENABLE_THINKING, LLM_THINKING_BUDGET
     LLM_ENABLE_THINKING = bool(enable_thinking)
     LLM_THINKING_BUDGET = int(thinking_budget)
-    MINIMAX_THINKING_TYPE = minimax_thinking_type
 
 
 def parse_bool_arg(value: Any) -> bool:
@@ -147,6 +149,12 @@ def _thinking_extra_body(model: str) -> Dict[str, Any]:
     Returns an empty dict when thinking is disabled or when the provider
     doesn't expose a switch. Callers should pass it via ``extra_body=`` to
     the OpenAI-compatible client so unknown keys are forwarded verbatim.
+    
+    Unified interface:
+    - LLM_ENABLE_THINKING controls whether to enable thinking for both models
+    - LLM_THINKING_BUDGET controls the budget for both models:
+        * Qwen3: directly sets the token budget (only when 128 <= budget <= 32768)
+        * MiniMax-M3: >0 for adaptive, 0 for disabled
     """
     if not LLM_ENABLE_THINKING:
         return {}
@@ -158,8 +166,10 @@ def _thinking_extra_body(model: str) -> Dict[str, Any]:
             body["thinking_budget"] = LLM_THINKING_BUDGET
         return body
     # MiniMax-M3 path: thinking.type ∈ {adaptive, disabled}.
+    # Use thinking_budget > 0 for adaptive, 0 for disabled.
     if "minimax" in model_lower or "MiniMax" in model:
-        return {"thinking": {"type": MINIMAX_THINKING_TYPE}}
+        thinking_type = "adaptive" if LLM_THINKING_BUDGET > 0 else "disabled"
+        return {"thinking": {"type": thinking_type}}
     return {}
 
 _SEMA = asyncio.Semaphore(MAX_CONCURRENCY)
@@ -323,15 +333,36 @@ def _request_kwargs(
 _minimax_request_kwargs = _request_kwargs
 
 
-def _record_usage(prompt: str, response: str, usage: Any = None) -> None:
-    _, prompt_tokens, completion_tokens = cost_count(prompt, response, MODEL, usage=usage)
+def _record_usage(prompt: str, response: str, usage: Any = None, model: str = MODEL) -> None:
+    model_lower = model.lower()
+    if "qwen" in model_lower:
+        _, prompt_tokens, completion_tokens = cost_count_llama3(prompt, response, model, usage=usage)
+    elif "minimax" in model_lower or "MiniMax" in model:
+        _, prompt_tokens, completion_tokens = cost_count(prompt, response, model, usage=usage)
+    else:
+        _, prompt_tokens, completion_tokens = cost_count(prompt, response, model, usage=usage)
+    
+    cached_tokens = None
+    reasoning_tokens = None
+    if usage is not None:
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        if prompt_details:
+            cached_tokens = getattr(prompt_details, "cached_tokens", None)
+        completion_details = getattr(usage, "completion_tokens_details", None)
+        if completion_details:
+            reasoning_tokens = getattr(completion_details, "reasoning_tokens", None)
+    
     TokenUsageRecords.instance().value.append({
-        "model": MODEL,
+        "model": model,
         "input_tokens": prompt_tokens,
         "output_tokens": completion_tokens,
+        "cached_tokens": cached_tokens,
+        "reasoning_tokens": reasoning_tokens,
     })
     if LOG_USAGE:
-        print(f"{MODEL} input_tokens={prompt_tokens} output_tokens={completion_tokens}")
+        cached_str = f" cached={cached_tokens}" if cached_tokens else ""
+        reasoning_str = f" reasoning={reasoning_tokens}" if reasoning_tokens else ""
+        print(f"{model} input_tokens={prompt_tokens} output_tokens={completion_tokens}{cached_str}{reasoning_str}")
 
 
 # Backwards-compatible alias.
@@ -347,7 +378,7 @@ async def achat(model: str, msg: List[Dict], max_tokens: Optional[int] = None, t
             completion = await client.messages.create(**kwargs)
         text = _extract_text(completion)
         if isinstance(text, str):
-            _record_usage(prompt, text, usage=completion.usage)
+            _record_usage(prompt, text, usage=completion.usage, model=MODEL)
             return text
     except Exception as e:
         raise RuntimeError(f"Failed to complete the async chat request: {e}")
@@ -361,7 +392,7 @@ def chat(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperat
         completion = client.messages.create(**kwargs)
         text = _extract_text(completion)
         if isinstance(text, str):
-            _record_usage(prompt, text, usage=completion.usage)
+            _record_usage(prompt, text, usage=completion.usage, model=MODEL)
             return text
     except Exception as e:
         raise RuntimeError(f"Failed to complete the chat request: {e}")
@@ -528,7 +559,7 @@ async def achat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=Non
         text = message.content
         reasoning_content = getattr(message, "reasoning_content", None)
         if isinstance(text, str):
-            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage)
+            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage, model=model)
             if reasoning_content:
                 return create_llm_response_from_parts(reasoning_content, text)
             return split_thinking(text)
@@ -558,7 +589,7 @@ def chat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=None, top_
         text = message.content
         reasoning_content = getattr(message, "reasoning_content", None)
         if isinstance(text, str):
-            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage)
+            _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage, model=model)
             if reasoning_content:
                 return create_llm_response_from_parts(reasoning_content, text)
             return split_thinking(text)

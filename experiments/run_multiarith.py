@@ -19,11 +19,10 @@ from AgentDropout.graph.graph import Graph
 from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.tools.reader.readers import JSONReader, JSONLReader
 from AgentDropout.utils.globals import Time
-from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
+from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens, CachedTokens, ReasoningTokens, BilledPromptTokens, BilledCompletionTokens
 from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
 from dataset.gsm8k_dataset import svamp_data_process,gsm_get_predict, gsm_data_process,multiarith_data_process
 from dataset.aqua_dataset import aqua_data_process,aqua_get_predict
-from AgentDropout.utils.globals import PromptTokens, CompletionTokens
 from AgentDropout.agents.agent_registry import AgentRegistry
 
 def load_result(result_file):
@@ -72,10 +71,9 @@ def parse_args():
     parser.add_argument('--llm_enable_thinking', type=parse_bool_arg, default=True,
                         help='Enable model thinking mode: true or false')
     parser.add_argument('--llm_thinking_budget', type=int, default=8192,
-                        help='Thinking token budget for Qwen3-style providers')
-    parser.add_argument('--minimax_thinking_type', type=str, default='adaptive',
-                        choices=['adaptive', 'disabled'],
-                        help='MiniMax thinking mode type')
+                        help='Thinking token budget (unified interface): '
+                             'Qwen3-style providers use this as token budget (128-32768); '
+                             'MiniMax-M3 uses >0 for adaptive, 0 for disabled')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -89,7 +87,6 @@ async def main():
     configure_thinking(
         enable_thinking=args.llm_enable_thinking,
         thinking_budget=args.llm_thinking_budget,
-        minimax_thinking_type=args.minimax_thinking_type,
     )
     result_file = None
     dataset = JSONReader.parse_file(args.dataset_json)
@@ -386,6 +383,10 @@ async def main():
 
     PromptTokens.instance().reset()
     CompletionTokens.instance().reset()
+    CachedTokens.instance().reset()
+    ReasoningTokens.instance().reset()
+    BilledPromptTokens.instance().reset()
+    BilledCompletionTokens.instance().reset()
     total_solved, total_executed = (0, 0)
 
     # graph.clear_spatial_connection()
