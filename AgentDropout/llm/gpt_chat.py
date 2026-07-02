@@ -67,7 +67,7 @@ RETRIES = max(1, int(os.getenv("LLM_RETRY_ATTEMPTS", "8")))
 LLM_RETRY_ATTEMPTS = RETRIES
 LOG_USAGE = os.getenv("LOG_MINIMAX_TOKEN_USAGE", "0").lower() in {"1", "true", "yes"}
 LOG_MINIMAX_TOKEN_USAGE = LOG_USAGE
-MAX_TOKENS = max(1, int(os.getenv("MINIMAX_MAX_TOKENS", "16384")))
+MAX_TOKENS = max(1, int(os.getenv("MINIMAX_MAX_TOKENS", "32768")))
 MINIMAX_DEFAULT_MAX_TOKENS = MAX_TOKENS
 # Official MMLU-Pro inference params: temperature=0.0, top_p=0.95.
 TEMPERATURE = float(os.getenv("MINIMAX_TEMPERATURE", "0.0"))
