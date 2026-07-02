@@ -29,10 +29,18 @@ class AdverarialAgent(Node):
             return system_prompt, user_prompt
         spatial_str = ""
         temporal_str = ""
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         for id, info in spatial_info.items():
-            spatial_str += f"Agent {id}, output is:\n\n {info['output']}\n\n"
+            output_content = _get_output_content(info['output'])
+            spatial_str += f"Agent {id}, output is:\n\n {output_content}\n\n"
         for id, info in temporal_info.items():
-            temporal_str += f"Agent {id}, output is:\n\n {info['output']}\n\n"
+            output_content = _get_output_content(info['output'])
+            temporal_str += f"Agent {id}, output is:\n\n {output_content}\n\n"
         user_prompt += f"At the same time, the outputs of other agents are as follows:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
         user_prompt += f"In the last round of dialogue, the outputs of other agents were: \n\n{temporal_str}" if len(temporal_str) else ""
         return system_prompt, user_prompt

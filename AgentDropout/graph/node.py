@@ -152,6 +152,12 @@ class Node(ABC):
         return reasoning
 
     def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
+        if hasattr(output, 'reasoning') and hasattr(output, 'answer') and hasattr(output, 'full_text'):
+            return "structured", {
+                "reasoning": output.reasoning,
+                "answer": output.answer,
+                "full_text": output.full_text,
+            }
         return "full", output
 
     def get_spatial_info(self)->Dict[str,Dict]:

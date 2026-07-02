@@ -5,7 +5,6 @@ from AgentDropout.agents.agent_registry import AgentRegistry
 from AgentDropout.llm.llm_registry import LLMRegistry
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
 from AgentDropout.tools.coding.python_executor import execute_code_get_return
-from dataset.gsm8k_dataset import gsm_get_predict
 
 @AgentRegistry.register('MathSolverAG')
 @AgentRegistry.register('MathSolver')
@@ -24,36 +23,20 @@ class MathSolver(Node):
         spatial_str = ""
         temporal_str = ""
         user_prompt = self.prompt_set.get_answer_prompt(question=raw_inputs["task"],role=self.role)
-        if self.role == "Math Solver":
-            user_prompt += "(Hint: The answer is near to"
-            for id, info in spatial_info.items():
-                # if 'None.' in (info['output'] if isinstance(info['output'], list) else [info['output']]):
-                #     print(info['output'])
-                #     print(66666666)
-                    # continue
-                user_prompt += " "+gsm_get_predict(info["output"])
-            for id, info in temporal_info.items():
-                # if 'None.' in (info['output'] if isinstance(info['output'], list) else [info['output']]):
-                #     print(info['output'])
-                #     print(66666666)
-                    # continue
-                user_prompt += " "+gsm_get_predict(info["output"])
-            user_prompt += ")."
-        else:
-            for id, info in spatial_info.items():
-                # if 'None.' in (info['output'] if isinstance(info['output'], list) else [info['output']]):
-                #     print(info['output'])
-                #     print(66666666)
-                    # continue
-                spatial_str += f"Agent {id} as a {info['role']} his answer to this question is:\n\n{info['output']}\n\n"
-            for id, info in temporal_info.items():
-                # if 'None.' in (info['output'] if isinstance(info['output'], list) else [info['output']]):
-                #     print(info['output'])
-                #     print(66666666)
-                    # continue
-                temporal_str += f"Agent {id} as a {info['role']} his answer to this question was:\n\n{info['output']}\n\n"
-            user_prompt += f"At the same time, there are the following responses to the same question for your reference:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
-            user_prompt += f"In the last round of dialogue, there were the following responses to the same question for your reference: \n\n{temporal_str}" if len(temporal_str) else ""
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
+        for id, info in spatial_info.items():
+            output_content = _get_output_content(info['output'])
+            spatial_str += f"Agent {id} as a {info['role']} his answer to this question is:\n\n{output_content}\n\n"
+        for id, info in temporal_info.items():
+            output_content = _get_output_content(info['output'])
+            temporal_str += f"Agent {id} as a {info['role']} his answer to this question was:\n\n{output_content}\n\n"
+        user_prompt += f"At the same time, there are the following responses to the same question for your reference:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
+        user_prompt += f"In the last round of dialogue, there were the following responses to the same question for your reference: \n\n{temporal_str}" if len(temporal_str) else ""
         return system_prompt, user_prompt
     
     def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):

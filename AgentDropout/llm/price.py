@@ -55,12 +55,8 @@ def cost_count(prompt, response, model_name, usage=None):
     price: float
 
     usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
-    if usage_prompt_len is not None and usage_completion_len is not None:
-        prompt_len = usage_prompt_len
-        completion_len = usage_completion_len
-    else:
-        prompt_len = cal_token(model_name, prompt)
-        completion_len = cal_token(model_name, response)
+    prompt_len = usage_prompt_len or 0
+    completion_len = usage_completion_len or 0
 
     if "gpt-4" in model_name:
         branch = "gpt-4"
@@ -99,18 +95,8 @@ def cost_count_llama3(prompt, response, model, usage=None):
     price: float
 
     usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
-    if usage_prompt_len is not None and usage_completion_len is not None:
-        prompt_len = usage_prompt_len
-        completion_len = usage_completion_len
-    else:
-        try:
-            tokenizer = Tokenizer.instance(model).tokenizer
-            prompt_len = cal_token_llama3(tokenizer, prompt)
-            completion_len = cal_token_llama3(tokenizer, response)
-        except Exception as exc:
-            print(f"Warning: failed to count tokens for {model}: {exc}")
-            prompt_len = 0
-            completion_len = 0
+    prompt_len = usage_prompt_len or 0
+    completion_len = usage_completion_len or 0
     price = 0
 
     # Cost.instance().value += price
@@ -127,13 +113,8 @@ def cost_count_deepseek(prompt, response, model, usage=None):
     price: float
 
     usage_prompt_len, usage_completion_len = _usage_token_counts(usage)
-    if usage_prompt_len is not None and usage_completion_len is not None:
-        prompt_len = usage_prompt_len
-        completion_len = usage_completion_len
-    else:
-        tokenizer = Deepseek_Tokenizer.instance(model).tokenizer
-        prompt_len = cal_token_llama3(tokenizer, prompt)
-        completion_len = cal_token_llama3(tokenizer, response)
+    prompt_len = usage_prompt_len or 0
+    completion_len = usage_completion_len or 0
     price = 0
 
     # Cost.instance().value += price

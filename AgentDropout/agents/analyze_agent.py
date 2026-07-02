@@ -37,20 +37,28 @@ class AnalyzeAgent(Node):
         user_prompt = f"The task is: {raw_inputs['task']}\n" if self.role != 'Fake' else self.prompt_set.get_adversarial_answer_prompt(raw_inputs['task'])
         spatial_str = ""
         temporal_str = ""
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         for id, info in spatial_info.items():
+            output_content = _get_output_content(info['output'])
             if self.role == 'Wiki Searcher' and info['role']=='Knowlegable Expert':
-                queries = find_strings_between_pluses(info['output'])
+                queries = find_strings_between_pluses(output_content)
                 wiki = await search_wiki_main(queries)
                 if len(wiki):
                     self.wiki_summary = ".\n".join(wiki)
                     user_prompt += f"The key entities of the problem are explained in Wikipedia as follows:{self.wiki_summary}"
-            if 'None.' in (info['output'] if isinstance(info['output'], list) else [info['output']]):
+            if 'None.' in (output_content if isinstance(output_content, list) else [output_content]):
                 continue
-            spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {info['output']}\n\n"
+            spatial_str += f"Agent {id}, role is {info['role']}, output is:\n\n {output_content}\n\n"
         for id, info in temporal_info.items():
-            if 'None.' in (info['output'] if isinstance(info['output'], list) else [info['output']]):
+            output_content = _get_output_content(info['output'])
+            if 'None.' in (output_content if isinstance(output_content, list) else [output_content]):
                 continue
-            temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {info['output']}\n\n"
+            temporal_str += f"Agent {id}, role is {info['role']}, output is:\n\n {output_content}\n\n"
             
         user_prompt += f"At the same time, the outputs of other agents are as follows:\n\n{spatial_str} \n\n" if len(spatial_str) else ""
         user_prompt += (

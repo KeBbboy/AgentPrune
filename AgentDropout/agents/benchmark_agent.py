@@ -162,9 +162,15 @@ class BenchmarkAgent(Node):
 
 def _format_agent_info(agent_info: Dict[str, Dict[str, Any]]) -> str:
     parts = []
+    
+    def _get_output_content(output):
+        if isinstance(output, dict) and 'full_text' in output:
+            return output['full_text']
+        return output
+    
     for agent_id, info in agent_info.items():
         role = info.get("role", "")
-        output = info.get("output", "")
+        output = _get_output_content(info.get("output", ""))
         if isinstance(output, list):
             output = "\n".join(str(item) for item in output)
         if not output or output == "None.":
@@ -180,6 +186,10 @@ def _question(raw_inputs: Dict[str, Any]) -> str:
 def _stringify_response(response: Any) -> str:
     if isinstance(response, str):
         return response
+    if isinstance(response, dict) and 'full_text' in response:
+        return response['full_text']
+    if hasattr(response, 'full_text'):
+        return response.full_text
     if isinstance(response, list):
         return "\n".join(str(item) for item in response)
     return str(response)

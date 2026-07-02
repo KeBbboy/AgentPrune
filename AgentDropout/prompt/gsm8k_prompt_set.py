@@ -12,8 +12,8 @@ roles = itertools.cycle(['Math Solver',
 ROLE_DESCRIPTION = {
     "Math Solver": 
         "You are a math expert. "
-        "You will be given a math problem and hints from other agents. "
-        "Give your own solving process step by step based on hints. "
+        "You will be given a math problem and the outputs of other agents including their reasoning processes. "
+        "Give your own solving process step by step based on the reasoning of other agents. "
         "The last line of your output contains only the final result without any units, for example: The answer is 140\n"
         "You will be given some examples you may refer to.",
     # "Math Solver": 
@@ -35,7 +35,7 @@ ROLE_DESCRIPTION = {
         "Integrate step-by-step reasoning and Python code to solve math problems. "
         "Analyze the question and write functions to solve the problem. "
         "The function should not take any arguments and use the final result as the return value. "
-        "The last line of code calls the function you wrote and assigns the return value to the \(answer\) variable. "
+        "The last line of code calls the function you wrote and assigns the return value to the (answer) variable. "
         "Use a Python code block to write your response. For example:\n```python\ndef fun():\n x = 10\n y = 20\n return x + y\nanswer = fun()\n```\n"
         "Do not include anything other than Python code blocks in your response."
         "You will be given some examples you may refer to.",
@@ -60,10 +60,9 @@ Q: Angelo and Melanie want to plan how many hours over the next week they should
 They have 2 chapters of their textbook to study and 4 worksheets to memorize. 
 They figure out that they should dedicate 3 hours to each chapter of their textbook and 1.5 hours for each worksheet. 
 If they plan to study no more than 4 hours each day, how many days should they plan to study total over the next week if they take a 10-minute break every hour, 
-include 3 10-minute snack breaks each day, and 30 minutes for lunch each day? (Hint: The answer is near to 4).
+include 3 10-minute snack breaks each day, and 30 minutes for lunch each day?
 
-A: We know the Answer Hints: 4. With the Answer Hints: 4, we will answer the question. 
-Let's think step by step. 
+A: Let's think step by step. 
 Angelo and Melanie think they should dedicate 3 hours to each of the 2 chapters, 3 hours x 2 chapters = 6 hours total.
 For the worksheets they plan to dedicate 1.5 hours for each worksheet, 1.5 hours x 4 worksheets = 6 hours total.
 Angelo and Melanie need to start with planning 12 hours to study, at 4 hours a day, 12 / 4 = 3 days.
@@ -76,9 +75,8 @@ They want to study no more than 4 hours each day, 15 hours / 4 hours each day = 
 They will need to plan to study 4 days to allow for all the time they need.
 The answer is 4
 
-Q: Bella has two times as many marbles as frisbees. She also has 20 more frisbees than deck cards. If she buys 2/5 times more of each item, what would be the total number of the items she will have if she currently has 60 marbles? (Hint: The answer is near to 160,145).
-A: We know the Answer Hints: 160, 145. With the Answer Hints: 160, 145, we will answer the question.
-Let's think step by step
+Q: Bella has two times as many marbles as frisbees. She also has 20 more frisbees than deck cards. If she buys 2/5 times more of each item, what would be the total number of the items she will have if she currently has 60 marbles?
+A: Let's think step by step
 When Bella buys 2/5 times more marbles, she'll have increased the number of marbles by 2/5*60 = 24
 The total number of marbles she'll have is 60+24 = 84
 If Bella currently has 60 marbles, and she has two times as many marbles as frisbees, she has 60/2 = 30 frisbees.

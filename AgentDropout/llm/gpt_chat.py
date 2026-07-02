@@ -1,13 +1,46 @@
 import asyncio
 import os
+import re
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
 import anthropic
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, OpenAI
 from tenacity import retry, stop_after_attempt, wait_random_exponential
+
+THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+
+@dataclass
+class LLMResponse:
+    reasoning: Optional[str]
+    answer: str
+    full_text: str
+
+    def __str__(self):
+        return self.full_text
+
+
+def split_thinking(text: str) -> LLMResponse:
+    if not text:
+        return LLMResponse(reasoning=None, answer="", full_text="")
+    m = THINK_RE.search(text)
+    if not m:
+        return LLMResponse(reasoning=None, answer=text.strip(), full_text=text)
+    reasoning = m.group(1).strip()
+    answer = (text[: m.start()] + text[m.end():]).strip()
+    return LLMResponse(reasoning=reasoning, answer=answer, full_text=text)
+
+
+def create_llm_response_from_parts(reasoning: Optional[str], answer: str) -> LLMResponse:
+    if reasoning:
+        full_text = f"<think>{reasoning}</think>{answer}"
+    else:
+        full_text = answer
+    return LLMResponse(reasoning=reasoning, answer=answer.strip(), full_text=full_text)
 
 try:
     import async_timeout
@@ -359,11 +392,15 @@ async def achat_qwen(model: str, msg: List[Dict]):
                     messages=msg,
                     extra_body=_thinking_extra_body(model),
                 )
-        text = completion.choices[0].message.content
+        message = completion.choices[0].message
+        text = message.content
+        reasoning_content = getattr(message, "reasoning_content", None)
         if isinstance(text, str):
             prompt = "".join(item["content"] for item in msg)
             cost_count_llama3(prompt, text, model, usage=completion.usage)
-            return text
+            if reasoning_content:
+                return create_llm_response_from_parts(reasoning_content, text)
+            return split_thinking(text)
     except Exception as e:
         print(f"Error in achat_qwen: {e}")
         raise
@@ -487,10 +524,14 @@ async def achat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=Non
                     top_p=top_p if top_p is not None else TOP_P,
                     extra_body=_thinking_extra_body(model),
                 )
-        text = completion.choices[0].message.content
+        message = completion.choices[0].message
+        text = message.content
+        reasoning_content = getattr(message, "reasoning_content", None)
         if isinstance(text, str):
             _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage)
-            return text
+            if reasoning_content:
+                return create_llm_response_from_parts(reasoning_content, text)
+            return split_thinking(text)
     except Exception as e:
         print(f"Error in achat_mm: {e}")
         raise
@@ -513,10 +554,14 @@ def chat_mm(model: str, msg: List[Dict], max_tokens=None, temperature=None, top_
             top_p=top_p if top_p is not None else TOP_P,
             extra_body=_thinking_extra_body(model),
         )
-        text = completion.choices[0].message.content
+        message = completion.choices[0].message
+        text = message.content
+        reasoning_content = getattr(message, "reasoning_content", None)
         if isinstance(text, str):
             _record_usage("".join(m["content"] for m in normalized), text, usage=completion.usage)
-            return text
+            if reasoning_content:
+                return create_llm_response_from_parts(reasoning_content, text)
+            return split_thinking(text)
     except Exception as e:
         print(f"Error in chat_mm: {e}")
         raise

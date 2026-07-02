@@ -36,14 +36,21 @@ class FinalWriteCode(Node):
         self.constraint = self.prompt_set.get_decision_constraint()          
         system_prompt = f"{self.role}.\n {self.constraint}"
         spatial_str = ""
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         for id, info in spatial_info.items():
-            if info['output'].startswith("```python") and info['output'].endswith("```"):  # is python code
+            output_content = _get_output_content(info['output'])
+            if output_content.startswith("```python") and output_content.endswith("```"):  # is python code
                 self.internal_tests = self.extract_example(raw_inputs)
-                output = info['output'].lstrip("```python\n").rstrip("\n```")
+                output = output_content.lstrip("```python\n").rstrip("\n```")
                 is_solved, feedback, state = PyExecutor().execute(output, self.internal_tests, timeout=10)
-                spatial_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{info['output']}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
+                spatial_str += f"Agent {id} as a {info['role']}:\n\nThe code written by the agent is:\n\n{output_content}\n\n Whether it passes internal testing? {is_solved}.\n\nThe feedback is:\n\n {feedback}.\n\n"
             else:
-                spatial_str += f"Agent {id} as a {info['role']} provides the following info: {info['output']}\n\n"
+                spatial_str += f"Agent {id} as a {info['role']} provides the following info: {output_content}\n\n"
         user_prompt = f"The task is:\n\n{raw_inputs['task']}.\n At the same time, the outputs and feedbacks of other agents are as follows:\n\n{spatial_str}\n\n"
         return system_prompt, user_prompt
                 
@@ -79,11 +86,17 @@ class FinalRefer(Node):
         if "Scenario 1" in task and "Scenario 2" in task:
             return None
 
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+
         votes = []
         for info in spatial_info.values():
             output = info.get("output", "") if isinstance(info, dict) else ""
+            output_content = _get_output_content(output)
             try:
-                vote = self.prompt_set.postprocess_answer(output)
+                vote = self.prompt_set.postprocess_answer(output_content)
             except Exception:
                 vote = ""
             # 非法/空 vote 视为弃权, 不计入投票也不阻断后续
@@ -102,9 +115,15 @@ class FinalRefer(Node):
         self.constraint = self.prompt_set.get_decision_constraint()          
         system_prompt = f"{self.role}.\n {self.constraint}"
         
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         spatial_str = ""
         for id, info in spatial_info.items():
-            spatial_str += id + ": " + info['output'] + "\n\n"
+            output_content = _get_output_content(info['output'])
+            spatial_str += id + ": " + output_content + "\n\n"
         decision_few_shot = self.prompt_set.get_decision_few_shot()
         user_prompt = f"{decision_few_shot} The task is:\n\n {raw_inputs['task']}.\n At the same time, the output of other agents is as follows:\n\n{spatial_str}"
         return system_prompt, user_prompt
@@ -151,8 +170,14 @@ class FinalDirect(Node):
         """ Use the processed input to get the result """
         output = ""
         info_list = []
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         for info in spatial_info.values():
-            info_list.append(info['output'])
+            info_list.append(_get_output_content(info['output']))
         if len(info_list):
             output = info_list[-1]
         return output
@@ -162,8 +187,14 @@ class FinalDirect(Node):
         """ Use the processed input to get the result """
         output = ""
         info_list = []
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         for info in spatial_info.values():
-            info_list.append(info['output'])
+            info_list.append(_get_output_content(info['output']))
         if len(info_list):
             output = info_list[-1]
         return output
@@ -187,8 +218,15 @@ class FinalMajorVote(Node):
         output_num = {}
         max_output = ""
         max_output_num = 0
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         for info in spatial_info.values():
-            processed_output = self.prompt_set.postprocess_answer(info['output'])
+            output_content = _get_output_content(info['output'])
+            processed_output = self.prompt_set.postprocess_answer(output_content)
             if not processed_output:
                 continue
             if processed_output in output_num:
@@ -206,8 +244,15 @@ class FinalMajorVote(Node):
         output_num = {}
         max_output = ""
         max_output_num = 0
+        
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+        
         for info in spatial_info.values():
-            processed_output = self.prompt_set.postprocess_answer(info['output'])
+            output_content = _get_output_content(info['output'])
+            processed_output = self.prompt_set.postprocess_answer(output_content)
             if not processed_output:
                 continue
             if processed_output in output_num:

@@ -12,8 +12,8 @@ roles = itertools.cycle(['Math Solver',
 ROLE_DESCRIPTION = {
     "Math Solver": 
         "You are a math expert. "
-        "You will be given a multiple-choice question and hints from other agents. "
-        "Give your own solving process step by step based on hints. "
+        "You will be given a multiple-choice question and the outputs of other agents including their reasoning processes. "
+        "Give your own solving process step by step based on the reasoning of other agents. "
         "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n"
         ,# "You will be given some examples you may refer to.",
     "Mathematical Analyst":
@@ -29,7 +29,7 @@ ROLE_DESCRIPTION = {
         "Integrate step-by-step reasoning and Python code to solve multiple-choice question. "
         "Analyze the question and write functions to solve the problem. "
         "The function should not take any arguments and use the final result as the return value. "
-        "The last line of code calls the function you wrote and assigns the return value to the \(answer\) variable. "
+        "The last line of code calls the function you wrote and assigns the return value to the (answer) variable. "
         "Use a Python code block to write your response. For example:\n```python\ndef fun():\n x = 10\n y = 20\n return x + y\nanswer = fun()\n```\n"
         "Do not include anything other than Python code blocks in your response."
         "You will be given some examples you may refer to.",
@@ -59,14 +59,14 @@ D)12 hr
 E)20 hr
 
 A: Here, the rate equation becomes:\n(# of houses) = (painting rate) x (time)\nWhen Mary paints a house, it takes her 4 hours. 
-Thus, (1 house) = (Mary\u2019s rate) x (4 hr), so her rate is 1\/4.\nWhen Mary & Lisa paint together, it takes 3 hrs. 
-Thus, (1 house) = (combined rate) x (3 hr) and the combined rate = 1\/3.\n
+Thus, (1 house) = (Mary\u2019s rate) x (4 hr), so her rate is 1/4.\nWhen Mary & Lisa paint together, it takes 3 hrs. 
+Thus, (1 house) = (combined rate) x (3 hr) and the combined rate = 1/3.\n
 To find a combined rate, we add individual rates.\n(combined rate) = (Mary\u2019s rate) + (Lisa\u2019s rate)\n
-1\/3 = 1\/4 + (Lisa\u2019s rate)\n(Lisa\u2019s rate) = 1\/3-1\/4=1\/3*4\/4-1\/4*3\/3=4\/12-3\/12=1\/12\nLisa\u2019s rate is 1\/12 of a house every hour, or in other words, 1 house in 12 hrs. 
+1/3 = 1/4 + (Lisa\u2019s rate)\n(Lisa\u2019s rate) = 1/3-1/4=1/3*4/4-1/4*3/3=4/12-3/12=1/12\nLisa\u2019s rate is 1/12 of a house every hour, or in other words, 1 house in 12 hrs. 
 Thus, it would take her 12 hours to paint a house of the same size.\n
 The answer is D
 
-Q: At a casino, gamblers spin a number-wheel containing positive, two-digit numbers. If the gambler bets on a prime number, he\/she will win 2 times their bet, if the wheel shows that number. If the gambler bets on a non-prime number, he\/she only wins half their bet, if the wheel shows that number. If a gambler won $100, which of the choices is possible?\nI. bet $50 on 11\nII. bet $50 on 21\nIII. bet $200 on 89 
+Q: At a casino, gamblers spin a number-wheel containing positive, two-digit numbers. If the gambler bets on a prime number, he/she will win 2 times their bet, if the wheel shows that number. If the gambler bets on a non-prime number, he/she only wins half their bet, if the wheel shows that number. If a gambler won $100, which of the choices is possible?\nI. bet $50 on 11\nII. bet $50 on 21\nIII. bet $200 on 89 
 -options 
 A)I only 
 B)II only 
