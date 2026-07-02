@@ -363,7 +363,8 @@ class Graph(ABC):
                   max_tries: int = 3,
                   max_time: int = 6000,
                   skip: bool=False,
-                  case: bool=False) -> List[Any]:
+                  case: bool=False,
+                  compress_messages: bool=False) -> List[Any]:
         # inputs:{'task':"xxx"}
         log_probs = 0
         log_probs_skip = 0
