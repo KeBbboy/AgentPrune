@@ -440,22 +440,31 @@ async def achat_deepseek(model: str, msg: List[Dict]):
 
 
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(RETRIES), reraise=True)
-async def achat_qwen(model: str, msg: List[Dict]):
+async def achat_qwen(model: str, msg: List[Dict], max_tokens: Optional[int] = None, temperature: Optional[float] = None):
+    # Normalise the message list to the OpenAI chat-completions dict schema so
+    # callers can pass ``List[Message]``, ``List[dict]`` or a raw ``str`` without
+    # the SDK choking on dataclass objects.
+    messages = _normalize_openai_messages(msg)
     client = AsyncOpenAI(api_key=QWEN_KEY, base_url=QWEN_URL)
     try:
         async with _SEMA:
             await _wait_slot()
             async with _timeout(1000):
-                completion = await client.chat.completions.create(
-                    model=model,
-                    messages=msg,
-                    extra_body=_thinking_extra_body(model),
-                )
+                kwargs: Dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "extra_body": _thinking_extra_body(model),
+                }
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = int(max_tokens)
+                if temperature is not None:
+                    kwargs["temperature"] = float(temperature)
+                completion = await client.chat.completions.create(**kwargs)
         message = completion.choices[0].message
         text = message.content
         reasoning_content = getattr(message, "reasoning_content", None)
         if isinstance(text, str):
-            prompt = "".join(item["content"] for item in msg)
+            prompt = "".join(item["content"] for item in messages)
             cost_count_llama3(prompt, text, model, usage=completion.usage)
             if reasoning_content:
                 return create_llm_response_from_parts(reasoning_content, text)
@@ -556,15 +565,23 @@ class DeepseekChat(LLM):
 
 @LLMRegistry.register('llama')
 class LlamaChat(LLM):
+    # Match the MMLU-Pro recipe's per-request budget for Qwen3-14B. The default
+    # 1000 tokens returned by the base ``LLM`` class is far too small for a
+    # thinking-budget call against Qwen3, which routinely emits multi-KB
+    # reasoning plus a final ``Answer: X`` line.
+    DEFAULT_MAX_TOKENS = MAX_TOKENS
+    DEFAULT_TEMPERATURE = TEMPERATURE
+
     def __init__(self, model_name: str):
         self.model_name = model_name
 
     async def agen(self, messages: List[Message], max_tokens=None, temperature=None, num_comps=None):
         max_tokens, temperature, num_comps = _defaults(self, max_tokens, temperature, num_comps)
-        return await achat_qwen(self.model_name, _to_msg_list(messages))
+        return await achat_qwen(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature)
 
     def gen(self, messages: List[Message], max_tokens=None, temperature=None, num_comps=None):
-        pass
+        max_tokens, temperature, num_comps = _defaults(self, max_tokens, temperature, num_comps)
+        return achat_qwen(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature)
 
 
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(RETRIES), reraise=True)

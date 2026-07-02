@@ -108,6 +108,12 @@ async def evaluate(
             }
             data.append(updated_item)
             
+        # Defensive: ensure the parent directory exists in case the cleanup
+        # hook of an earlier run removed it. Keeps the per-batch write idempotent.
+        try:
+            result_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         with open(result_file, 'w',encoding='utf-8') as file:
             json.dump(data, file, indent=4, default=str)
         # if 'deepseek' in args.llm_name:
