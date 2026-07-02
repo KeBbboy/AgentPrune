@@ -23,8 +23,6 @@ feat: 统一 thinking 参数配置入口
 - experiments/run_aime.py、run_swe_bench_lite.py：新增 --llm_enable_thinking
   与 --llm_thinking_budget 命令行参数
 - 其余 run_*.py：精简 --llm_thinking_budget 帮助文本
-
-Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 
@@ -32,7 +30,37 @@ EOF
 git commit -m "feat: unify thinking config"
 ```
 
-### 1.2 推送流程
+### 1.2 禁止添加 Co-Authored-By 等 AI 共同作者 trailer
+
+- AI 助手（Claude / 其它 LLM）参与生成的 commit **不得**在 message 末尾添加
+  `Co-Authored-By: ... <noreply@anthropic.com>` 这类 trailer，否则会在 GitHub
+  贡献者统计里把 AI 列为共同作者。
+- 也不得添加其它形式的 `Signed-off-by:` / `Co-authored-by:` AI 占位 trailer。
+- 仅在用户明确要求并指明 trailer 文本时才可以附加。
+
+**示例**：
+
+```bash
+# ❌ 错误
+git commit -m "$(cat <<'EOF'
+feat: xxx
+
+- 改了 A、B、C
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"
+
+# ✅ 正确
+git commit -m "$(cat <<'EOF'
+feat: xxx
+
+- 改了 A、B、C
+EOF
+)"
+```
+
+### 1.3 推送流程
 
 1. 检查当前分支：`git branch --show-current`
 2. 确认改动已暂存：`git status`
