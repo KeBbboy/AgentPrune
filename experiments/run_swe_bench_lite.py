@@ -64,6 +64,10 @@ def parse_args():
                         help="Only generate predictions, skip official evaluation")
     parser.add_argument('--debug', action='store_true',
                         help="Enable debug mode with verbose output")
+    parser.add_argument('--llm_enable_thinking', type=parse_bool_arg, default=True,
+                        help='Enable model thinking mode: true or false')
+    parser.add_argument('--llm_thinking_budget', type=int, default=8192,
+                        help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
 
     args = parser.parse_args()
 
@@ -246,6 +250,10 @@ async def generate_predictions(args, dataset):
 
 async def main():
     args = parse_args()
+    configure_thinking(
+        enable_thinking=args.llm_enable_thinking,
+        thinking_budget=args.llm_thinking_budget,
+    )
 
     if args.debug:
         logger.setLevel(logging.DEBUG)

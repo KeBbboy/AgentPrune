@@ -71,9 +71,7 @@ def parse_args():
     parser.add_argument('--llm_enable_thinking', type=parse_bool_arg, default=True,
                         help='Enable model thinking mode: true or false')
     parser.add_argument('--llm_thinking_budget', type=int, default=8192,
-                        help='Thinking token budget (unified interface): '
-                             'Qwen3-style providers use this as token budget (128-32768); '
-                             'MiniMax-M3 uses >0 for adaptive, 0 for disabled')
+                        help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)

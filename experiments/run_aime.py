@@ -57,6 +57,10 @@ def parse_args():
     parser.add_argument("--max_search_limit", type=int, default=3)
     parser.add_argument("--max_tool_chars", type=int, default=6000)
     parser.add_argument("--max_tool_turns", type=int, default=3)
+    parser.add_argument("--llm_enable_thinking", type=parse_bool_arg, default=True,
+                        help="Enable model thinking mode: true or false")
+    parser.add_argument("--llm_thinking_budget", type=int, default=8192,
+                        help="Thinking token budget for both Qwen3 and MiniMax-M3 providers")
     args = parser.parse_args()
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
