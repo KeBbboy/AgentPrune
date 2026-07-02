@@ -53,7 +53,8 @@ class MathSolver_aqua(Node):
         system_prompt, user_prompt = self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
         response = await self.llm.agen(message)
+        response_text = str(response)
         if self.role == "Programming Expert":
-            answer = execute_code_get_return(response.lstrip("```python\n").rstrip("\n```"))
-            response += f"\nthe answer is {answer}"
-        return response
+            answer = execute_code_get_return(response_text.lstrip("```python\n").rstrip("\n```"))
+            response_text += f"\nthe answer is {answer}"
+        return response_text

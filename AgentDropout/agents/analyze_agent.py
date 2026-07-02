@@ -82,7 +82,8 @@ class AnalyzeAgent(Node):
         system_prompt, user_prompt = await self._process_inputs(input, spatial_info, temporal_info)
         message = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
         response = await self.llm.agen(message)
+        response_text = str(response)
         if self.wiki_summary != "":
-            response += f"\n\n{self.wiki_summary}"
+            response_text += f"\n\n{self.wiki_summary}"
             self.wiki_summary = ""
-        return response
+        return response_text
