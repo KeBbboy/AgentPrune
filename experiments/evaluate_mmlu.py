@@ -90,31 +90,10 @@ async def evaluate(
             # else:
             answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,case=True)))
         raw_results = await asyncio.gather(*answer_log_probs)
-        raw_answers, log_probs, all_answers = zip(*raw_results)
-        
+        raw_answers, _log_probs, all_answers = zip(*raw_results)
+
         print(f"Batch time {time.time() - start_ts:.3f}")
         for raw_answer, record, all_answer in zip(raw_answers, record_batch, all_answers):
-            # Debug: dump the FULL first-node output so we can see whether
-            # the truncation happened upstream (LLM response itself) or in
-            # postprocessing.  Keep both forms for easy grepping.
-            full_text = ""
-            if isinstance(raw_answer, list) and raw_answer:
-                first_item = raw_answer[0]
-            else:
-                first_item = raw_answer
-            if isinstance(first_item, str):
-                full_text = first_item
-            elif isinstance(first_item, dict):
-                full_text = first_item.get("full_text", repr(first_item))
-            else:
-                full_text = repr(first_item)
-            truncated = len(full_text.strip()) <= 2
-            tag = " [TRUNCATED]" if truncated else ""
-            print(f"==== Raw answer (repr){tag} ====")
-            print(repr(raw_answer))
-            print(f"==== Raw answer (full text, len={len(full_text)}){tag} ====")
-            print(full_text)
-            print("==== end raw answer ====")
             answer = dataset.postprocess_answer(raw_answer, llm_name=model_name)
             print("Postprocessed answer:", answer)
             correct_answer = dataset.record_to_target_answer(record)
@@ -128,6 +107,7 @@ async def evaluate(
                 "Response": str(raw_answer),
             }
             data.append(updated_item)
+            
         with open(result_file, 'w',encoding='utf-8') as file:
             json.dump(data, file, indent=4, default=str)
         # if 'deepseek' in args.llm_name:
