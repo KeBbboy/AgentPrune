@@ -81,6 +81,8 @@ def parse_args():
                         help='Enable model thinking mode: true or false')
     parser.add_argument('--llm_thinking_budget', type=int, default=8192,
                         help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
+    parser.add_argument('--limit_questions', type=int, default=0,
+                        help='Cap the number of dataset samples to evaluate (0 = full set).')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -98,6 +100,8 @@ async def main():
     result_file = None
     dataset = JSONLReader.parse_file(args.dataset_json)
     dataset = aqua_data_process(dataset)
+    if args.limit_questions and args.limit_questions > 0:
+        dataset = dataset[: args.limit_questions]
     train_dataset = JSONLReader.parse_file('dataset/aqua/dev.jsonl')
     train_dataset = aqua_data_process(train_dataset)
 

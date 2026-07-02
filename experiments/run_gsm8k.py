@@ -3,6 +3,7 @@ import os
 import argparse
 import yaml
 import json
+import re
 import time
 import asyncio
 from pathlib import Path
@@ -101,6 +102,8 @@ def parse_args():
                         help='Enable model thinking mode: true or false')
     parser.add_argument('--llm_thinking_budget', type=int, default=8192,
                         help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
+    parser.add_argument('--limit_questions', type=int, default=0,
+                        help='Cap the number of dataset samples to evaluate (0 = full set).')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -118,6 +121,8 @@ async def main():
     result_file = None
     dataset = JSONLReader.parse_file(args.dataset_json)
     dataset = gsm_data_process(dataset)
+    if args.limit_questions and args.limit_questions > 0:
+        dataset = dataset[: args.limit_questions]
     train_dataset_path = Path('dataset/gsm8k/train.jsonl')
     if not train_dataset_path.exists():
         train_dataset_path = Path(args.dataset_json)
@@ -498,6 +503,19 @@ async def main():
                 raw_full = raw_item.get("full_text", "")
                 raw_answer = raw_item.get("answer", "")
                 raw_reasoning = raw_item.get("reasoning", "")
+            elif isinstance(raw_item, str):
+                # node.async_execute now stores LLMResponse.full_text (the raw
+                # ``<think>reasoning</think>answer`` blob) instead of the
+                # dataclass itself, so the diagnostic here has to recover
+                # reasoning/answer slices from the string.
+                raw_full = raw_item
+                think_match = re.search(r"<think>(.*?)</think>", raw_item, flags=re.DOTALL)
+                if think_match:
+                    raw_reasoning = think_match.group(1).strip()
+                    raw_answer = (raw_item[:think_match.start()] + raw_item[think_match.end():]).strip()
+                else:
+                    raw_reasoning = ""
+                    raw_answer = raw_item.strip()
             else:
                 raw_full = getattr(raw_item, "full_text", "") or ""
                 raw_answer = getattr(raw_item, "answer", "") or ""

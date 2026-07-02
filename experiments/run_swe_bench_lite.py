@@ -14,6 +14,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.graph.graph import Graph
+from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from dataset.swe_bench_lite_dataset import SWEBenchLiteDataset
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.const import AgentPrune_ROOT

@@ -50,6 +50,8 @@ def parse_args():
                         help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
     parser.add_argument('--sample_ratio', type=float, default=0.1, help="Ratio of dataset to sample (0.1 = 10%)")
     parser.add_argument('--sample_seed', type=int, default=42, help="Random seed for stratified sampling")
+    parser.add_argument('--limit_questions', type=int, default=0,
+                        help='Cap the number of dataset samples to evaluate (0 = full set).')
     args = parser.parse_args()
 
     (AgentPrune_ROOT / "result").mkdir(exist_ok=True)
@@ -122,7 +124,7 @@ async def main():
         graph=graph,
         dataset=dataset_val,
         num_rounds=args.num_rounds,
-        limit_questions=None,
+        limit_questions=args.limit_questions or None,
         eval_batch_size=args.batch_size,
         dec=args.dec,
         args=args,

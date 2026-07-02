@@ -244,21 +244,34 @@ class Node(ABC):
         results = await asyncio.gather(*tasks, return_exceptions=False)
         for result in results:
             # Guarantee ``outputs`` is a list of strings (the legacy contract
-            # used by ``graph.arun`` and the MMLU evaluator).  ``AnalyzeAgent``
-            # now returns an LLMResponse; flatten it to the answer string so
-            # downstream code keeps seeing ``[<letter>]`` rather than the full
-            # dataclass repr.
+            # used by ``graph.arun`` and downstream evaluators).  When an
+            # ``LLMResponse`` is returned we keep the full ``<think>...reasoning
+            # ...answer...`` text (i.e. ``full_text``) so that:
+            #   * postprocess helpers can still find ``The answer is ...`` /
+            #     ``Answer: X`` / ``<answer>...</answer>`` markers (which only
+            #     live inside the final answer block),
+            #   * ``has_<think>`` / ``reasoning_len`` / ``full_len`` diagnostics
+            #     reflect the real model output rather than collapsing to 0,
+            #   * ``gsm_get_predict``'s regex fallback works on the actual
+            #     response instead of silently extracting ``str(LLMResponse)``.
+            # Plain strings and other objects are kept verbatim.
             if isinstance(result, list):
                 flattened: List[Any] = []
                 for item in result:
-                    if hasattr(item, "answer"):
-                        flattened.append(getattr(item, "answer"))
-                    else:
+                    if hasattr(item, "full_text") and isinstance(
+                        getattr(item, "full_text", None), str
+                    ):
+                        flattened.append(getattr(item, "full_text"))
+                    elif isinstance(item, str):
                         flattened.append(item)
+                    else:
+                        flattened.append(str(item))
                 self.outputs.extend(flattened)
             else:
-                if hasattr(result, "answer"):
-                    self.outputs.append(getattr(result, "answer"))
+                if hasattr(result, "full_text") and isinstance(
+                    getattr(result, "full_text", None), str
+                ):
+                    self.outputs.append(getattr(result, "full_text"))
                 elif isinstance(result, str):
                     self.outputs.append(result)
                 else:

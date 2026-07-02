@@ -17,6 +17,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 import AgentDropout.agents  # noqa: F401
 import AgentDropout.prompt  # noqa: F401
 from AgentDropout.graph.graph import Graph
+from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, print_token_stats
 from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
