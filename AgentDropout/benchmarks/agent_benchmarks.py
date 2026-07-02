@@ -153,6 +153,62 @@ def extract_numeric_answer(answer: Any) -> str:
     return value
 
 
+# AIME / MATH official final-answer markers. Order matters: the last-seen
+# marker in the body wins, matching the convention used by lm-eval-harness
+# MATH and `math_verify` (downstream scoring treats the most recent
+# `\boxed{...}` or `#### N` as the authoritative final answer).
+_OFFICIAL_HASH_ANSWER_RE = re.compile(r"####\s*(-?\d[\d,]*)(?:\.\d+)?")
+_OFFICIAL_FINAL_ANSWER_RE = re.compile(
+    r"(?:final\s+answer|the\s+answer|answer)\s*(?:is|:)\s*\$?\s*(-?\d[\d,]*)(?:\.\d+)?",
+    re.IGNORECASE,
+)
+_OFFICIAL_BOXED_RE = re.compile(r"\\boxed\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}")
+
+
+def _last_int_in(text: str) -> str:
+    cleaned = (text or "").replace(",", "")
+    for candidate in reversed(re.findall(r"-?\d+(?:\.\d+)?", cleaned)):
+        if candidate.endswith(".0"):
+            candidate = candidate[:-2]
+        try:
+            return str(int(candidate))
+        except ValueError:
+            continue
+    return ""
+
+
+def extract_official_numeric_answer(answer: Any) -> str:
+    """Numerically extract the model's answer using the conventions upstream
+    AIME / MATH scorers recognise.
+
+    Priority order (last occurrence wins, to match ``math_verify``):
+
+        1. ``#### N``  — AIME / GSM8K CoT-style terminator.
+        2. ``Final Answer is N`` / ``The answer is N``.
+        3. ``\\boxed{N}``  — canonical LaTeX answer wrapper.
+        4. Last integer on the last non-empty line.
+    """
+
+    if answer is None:
+        return ""
+    raw = str(answer)
+
+    for pattern in (_OFFICIAL_HASH_ANSWER_RE, _OFFICIAL_FINAL_ANSWER_RE):
+        candidates = pattern.findall(raw)
+        if candidates:
+            value = _last_int_in(candidates[-1])
+            if value:
+                return value
+
+    boxed_matches = _OFFICIAL_BOXED_RE.findall(raw)
+    if boxed_matches:
+        value = _last_int_in(boxed_matches[-1])
+        if value:
+            return value
+
+    return extract_numeric_answer(answer)
+
+
 def score_benchmark_prediction(
     dataset_name: str,
     prediction: Any,
@@ -169,7 +225,9 @@ def score_benchmark_prediction(
 
     if dataset_name == "aime":
         result = evaluate_math(pred_text, ground_truth)
-        result["prediction"] = extract_numeric_answer(prediction) or pred_text
+        # Use the robust extractor first; only fall back to the raw prediction
+        # text when no integer could be salvaged from the model's output.
+        result["prediction"] = extract_official_numeric_answer(prediction) or pred_text
         result["score"] = result.get("accuracy", float(result.get("correct", False)))
         return result
 

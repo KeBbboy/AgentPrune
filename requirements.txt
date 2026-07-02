@@ -15,7 +15,13 @@ jsonlines==4.0.0
 llmlingua
 loguru==0.7.2
 markdown==3.5.1
-math-verify
+math-verify==0.9.0
+# Transitive deps pinned to the versions that resolve math-verify==0.9.0.
+# Without these, pip may pull a different latex2sympy2 / antlr4 combo and break
+# \boxed{} parsing used by the AIME / MATH scorer (see
+# AgentDropout/benchmarks/agent_benchmarks.py score_benchmark_prediction).
+antlr4-python3-runtime==4.13.2
+latex2sympy2-extended==1.11.0
 networkx==3.2.1
 openai==1.6.0
 opencv-python==4.8.1.78
