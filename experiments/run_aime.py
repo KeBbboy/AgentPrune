@@ -49,15 +49,20 @@ def parse_args():
     parser.add_argument(
         "--enabled_tools",
         nargs="*",
-        default=None,
-        help="Defaults to AIME tools. Use --enabled_tools with no values for no tools.",
+        default=["code_generator", "web_search", "text_inspector"],
+        help=(
+            "Tools to enable for BenchmarkAgent. Defaults to "
+            "['code_generator', 'web_search', 'text_inspector']. "
+            "Use --enabled_tools with no values for no tools."
+        ),
     )
     parser.add_argument("--direct_tool_call", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--web_tool_provider", type=str, default="tavily")
     parser.add_argument("--top_k_results", type=int, default=3)
     parser.add_argument("--max_search_limit", type=int, default=3)
     parser.add_argument("--max_tool_chars", type=int, default=6000)
-    parser.add_argument("--max_tool_turns", type=int, default=3)
+    parser.add_argument("--max_tool_turns", type=int, default=1,
+                        help="Max number of tool calls per agent per round. Default 1 (one-shot tool use).")
     parser.add_argument("--llm_enable_thinking", type=parse_bool_arg, default=True,
                         help="Enable model thinking mode: true or false")
     parser.add_argument("--llm_thinking_budget", type=int, default=8192,
