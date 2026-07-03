@@ -61,6 +61,8 @@ def parse_args():
                         help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
     parser.add_argument('--limit_questions', type=int, default=153,
                         help='Number of evaluation questions to cap (default 153, matching the original behaviour).')
+    parser.add_argument('--ssp_query', type=str, default="",
+                        help='SSP mode 下用于阶段划分的 query；空时按占位 query 走。')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -87,6 +89,8 @@ async def main(setup_log: bool = False):
     decision_method = args.decision_method
     agent_names = [name for name,num in zip(args.agent_names,args.agent_nums) for _ in range(num)]
     # print(agent_names)
+    # SSP mode 需要在 get_kwargs 之前把 query 暂存起来供其内部读取
+    get_kwargs._ssp_last_query = args.ssp_query
     kwargs = get_kwargs(mode,len(agent_names))
     limit_questions = args.limit_questions
     
@@ -202,6 +206,41 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
     elif mode == 'Star' or mode=='FakeStar':
         fixed_spatial_masks = generate_star_graph(N)
         fixed_temporal_masks = [[1 for i in range(N)] for j in range(N)]
+    elif mode == 'SSP':
+        # 阶段感知软剪枝：调用 Planner + MiniLM Embedder 生成
+        # fixed_spatial_masks。失败时回退到 FullConnected，避免破坏
+        # run_mmlu 的整体执行流。
+        try:
+            from AgentDropout.algorithm.planner import StagePlanner
+            from AgentDropout.algorithm.ssp import SSPConfig, ssp_fixed_spatial_masks
+            from AgentDropout.embeddings import MiniLMEmbedder
+            from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
+
+            # 取每个 agent 的 role 文本作为 profile
+            prompt_set = PromptSetRegistry.get_class("mmlu")
+            # 使用循环器跑出与 graph 一致的 role 列表
+            roles = []
+            role_iter = iter(prompt_set.get_role())
+            for _ in range(N):
+                try:
+                    roles.append(next(role_iter))
+                except StopIteration:
+                    # role 池耗尽，复用最后一个
+                    roles.append(roles[-1] if roles else "")
+
+            # Planner 生成阶段 DAG；query 为空时用占位
+            query_for_planning = getattr(get_kwargs, "_ssp_last_query", "") or ""
+            planner = StagePlanner(llm_name="MiniMax-M3")
+            stage_dag = planner.plan(query_for_planning)
+
+            embedder = MiniLMEmbedder()
+            config = SSPConfig(tau=0.3, temperature=1.0)
+            fixed_spatial_masks = ssp_fixed_spatial_masks(roles, stage_dag, embedder, config)
+            fixed_temporal_masks = [[1 for i in range(N)] for j in range(N)]
+        except Exception as exc:
+            print(f"[SSP] 初始化失败，回退到 FullConnected：{exc}")
+            fixed_spatial_masks = [[1 if i != j else 0 for i in range(N)] for j in range(N)]
+            fixed_temporal_masks = [[1 for _ in range(N)] for _ in range(N)]
     
     if 'Fake' in mode and 'AG' not in mode:
         node_kwargs = [{'role':'Fake'} if i % 2 == N % 2 else {'role':'Normal'} for i in range(N)]
