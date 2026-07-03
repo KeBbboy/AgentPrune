@@ -4,6 +4,9 @@ from abc import ABC, abstractmethod
 import warnings
 import asyncio
 import re
+from AgentDropout.graph.message_compression import (
+    aggregate_node_aware, compress_messages_role_aware,
+)
 
 
 class Node(ABC):
@@ -104,7 +107,11 @@ class Node(ABC):
         self.spatial_predecessors: List[Node] = []
         self.spatial_successors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
-        self.temporal_successors: List[Node] = []        
+        self.temporal_successors: List[Node] = []
+
+    def bind_to_graph(self, graph) -> None:
+        """由 Graph 在 __init__ 末尾调用, 让 Node 能反向访问 Graph 上的 ours cfg。"""
+        self.graph = graph
     
     def update_memory(self):
         self.last_memory['inputs'] = self.inputs
@@ -178,7 +185,8 @@ class Node(ABC):
                     "output": selected_output,
                     "message_type": message_type,
                 }
-
+        # 消息压缩框架: 同步应用 role-aware 压缩 / node-aware 聚合
+        spatial_info = self._apply_message_compression_hooks(spatial_info)
         return spatial_info
 
     def get_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
@@ -198,7 +206,7 @@ class Node(ABC):
                     "output": selected_output,
                     "message_type": message_type,
                 }
-
+        temporal_info = self._apply_message_compression_hooks(temporal_info)
         return temporal_info
 
     async def aget_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
@@ -218,8 +226,25 @@ class Node(ABC):
                     "output": selected_output,
                     "message_type": message_type,
                 }
-
+        temporal_info = self._apply_message_compression_hooks(temporal_info)
         return temporal_info
+
+    def _apply_message_compression_hooks(self, info: Dict[str, Any]) -> Dict[str, Any]:
+        """Node 层钩子: 分别调用模块 1(role_aware_compression) 和模块 2(node_aware_aggregation)。
+
+        模块 3(temporal_api_summary) 在 Graph.arun 中调用, 不在 Node 层处理.
+        两模块均可由 cfg 独立开关; 都关闭时返回原 info.
+        """
+        cfg = getattr(getattr(self, "graph", None), "ours_message_config", None)
+        if cfg is None:
+            return info
+        # 模块 2: node_aware_aggregation
+        if cfg.node_aware_aggregation:
+            info = aggregate_node_aware(info, cfg, getattr(self, "role", ""))
+        # 模块 1: role_aware_compression
+        if cfg.role_aware_compression:
+            info = compress_messages_role_aware(info, cfg, getattr(self, "role", ""))
+        return info
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []

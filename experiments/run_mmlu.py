@@ -8,6 +8,12 @@ import argparse
 import random
 
 from AgentDropout.graph.graph import Graph
+from AgentDropout.graph.message_compression import (
+    add_message_compression_arguments,
+    build_message_compression_config_from_args,
+    set_message_compression_config,
+    get_message_compression_config,
+)
 from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from dataset.mmlu_dataset import MMLUDataset
 from dataset.MMLU.download import download
@@ -61,12 +67,15 @@ def parse_args():
                         help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
     parser.add_argument('--limit_questions', type=int, default=153,
                         help='Number of evaluation questions to cap (default 153, matching the original behaviour).')
+    # 消息压缩框架: 3 个开关 (每个开关对应一个独立模块)
+    add_message_compression_arguments(parser)
     args = parser.parse_args()
+    set_message_compression_config(build_message_compression_config_from_args(args))
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
-        
+
     return args
 
 def setup_logging(llm_name: str, domain: str, mode: str) -> str:
@@ -99,6 +108,7 @@ async def main(setup_log: bool = False):
                   rounds=args.num_rounds,
                   diff=args.diff,
                   dec=args.dec,
+                  ours_message_config=get_message_compression_config(),
                   **kwargs)
     download()
     dataset_train = MMLUDataset('dev')

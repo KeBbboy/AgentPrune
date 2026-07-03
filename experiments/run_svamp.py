@@ -16,6 +16,12 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.graph import Graph
+from AgentDropout.graph.message_compression import (
+    add_message_compression_arguments,
+    build_message_compression_config_from_args,
+    set_message_compression_config,
+    get_message_compression_config,
+)
 from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.tools.reader.readers import JSONReader, JSONLReader
 from AgentDropout.utils.globals import Time
@@ -75,7 +81,10 @@ def parse_args():
                         help='Thinking token budget for both Qwen3 and MiniMax-M3 providers')
     parser.add_argument('--limit_questions', type=int, default=0,
                         help='Cap the number of dataset samples to evaluate (0 = full set).')
+    # 消息压缩框架: 3 个开关 (每个开关对应一个独立模块)
+    add_message_compression_arguments(parser)
     args = parser.parse_args()
+    set_message_compression_config(build_message_compression_config_from_args(args))
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
@@ -119,6 +128,7 @@ async def main():
                     rounds=args.num_rounds,
                     diff=args.diff,
                     dec=args.dec,
+                    ours_message_config=get_message_compression_config(),
                     **kwargs)
     
     if args.dec:

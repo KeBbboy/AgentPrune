@@ -7,6 +7,11 @@ import asyncio
 
 from AgentDropout.graph.node import Node
 from AgentDropout.agents.agent_registry import AgentRegistry
+from AgentDropout.graph.message_compression import (
+    MessageCompressionConfig,
+    get_message_compression_config,
+    apply_temporal_api_summary,
+)
 import random
 
 class Graph(ABC):
@@ -46,8 +51,9 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                ours_message_config: MessageCompressionConfig = None,
                 ):
-        
+
         if fixed_spatial_masks is None:
             fixed_spatial_masks = [[1 if i!=j else 0 for j in range(len(agent_names))] for i in range(len(agent_names))]
         if fixed_temporal_masks is None:
@@ -77,8 +83,17 @@ class Graph(ABC):
         self.dec_1=False
         self.skip_nodes = []
 
+        # 消息压缩框架配置: 允许外部显式传入, 否则使用全局单例
+        self.ours_message_config: MessageCompressionConfig = (
+            ours_message_config if ours_message_config is not None
+            else get_message_compression_config()
+        )
+
         self.init_nodes() # add nodes to the self.nodes
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
+        # 把 graph 反向挂回每个 Node, 让 Node 能读到配置
+        for _n in self.nodes.values():
+            _n.bind_to_graph(self)
 
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
@@ -486,6 +501,8 @@ class Graph(ABC):
             for node in self.nodes:
                 round_answers[self.nodes[node].role+str(node)] = self.nodes[node].outputs
             all_answers.append(round_answers)
+            # 消息压缩框架(模块 3 temporal_api_summary): 每轮末尾为 last_memory 生成 LLM 摘要
+            await apply_temporal_api_summary(self, self.ours_message_config, round)
             self.update_memory()
         
         # if self.dec_1==False:

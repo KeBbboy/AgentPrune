@@ -15,6 +15,12 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.graph.autogen_graph import GraphAutoGen
+from AgentDropout.graph.message_compression import (
+    add_message_compression_arguments,
+    build_message_compression_config_from_args,
+    set_message_compression_config,
+    get_message_compression_config,
+)
 from AgentDropout.tools.reader.readers import JSONLReader
 from AgentDropout.utils.globals import Time
 from AgentDropout.utils.globals import Cost, PromptTokens, CompletionTokens
@@ -59,7 +65,10 @@ def parse_args():
                         help='The decison method of the agentprune')
     parser.add_argument('--optimized_spatial',action='store_true')
     parser.add_argument('--optimized_temporal',action='store_true')
+    # 消息压缩框架: 3 个开关 (每个开关对应一个独立模块)
+    add_message_compression_arguments(parser)
     args = parser.parse_args()
+    set_message_compression_config(build_message_compression_config_from_args(args))
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
     if len(args.agent_names) != len(args.agent_nums):
@@ -86,6 +95,7 @@ async def main():
                   decision_method=decision_method,
                   optimized_spatial=args.optimized_spatial,
                   optimized_temporal=args.optimized_temporal,
+                  ours_message_config=get_message_compression_config(),
                   **kwargs)
     optimizer = torch.optim.Adam([graph.spatial_logits,graph.temporal_logits], lr=args.lr)    
     
