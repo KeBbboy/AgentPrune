@@ -298,25 +298,24 @@ def test_complexity_estimation_simple():
 def test_complexity_estimation_medium_by_length():
     from AgentDropout.algorithm.planner import _estimate_complexity
     long_query = "x" * 200
-    assert _estimate_complexity(long_query) == ComplexityLevel.MEDIUM
+    assert _estimate_complexity(long_query) == ComplexityLevel.HARD
 
 
-def test_complexity_estimation_complex_by_keyword():
+def test_complexity_estimation_hard_by_keyword():
     from AgentDropout.algorithm.planner import _estimate_complexity
     # 含 "and then" 触发升级
-    assert _estimate_complexity("do A and then do B") in (
-        ComplexityLevel.MEDIUM,
-        ComplexityLevel.COMPLEX,
-    )
-    # 同时长度 + 关键词 → complex
+    assert _estimate_complexity("do A and then do B") == ComplexityLevel.HARD
+    # 同时长度 + 关键词 → hard
     long_complex = "step 1: 设计 UI；step 2: 实现后端；step 3: 部署到生产环境；" + "x" * 200
-    assert _estimate_complexity(long_complex) == ComplexityLevel.COMPLEX
+    assert _estimate_complexity(long_complex) == ComplexityLevel.HARD
+    # 短 query 含中文关键词也触发 hard
+    assert _estimate_complexity("设计前端，然后实现后端") == ComplexityLevel.HARD
 
 
 def test_planner_parse_clean_json():
     from AgentDropout.algorithm.planner import StagePlanner
     raw = json_dumps_3_stages()
-    dag = StagePlanner._parse_dag(raw, ComplexityLevel.MEDIUM)
+    dag = StagePlanner._parse_dag(raw, ComplexityLevel.HARD)
     assert dag.num_stages == 3
     assert {s.id for s in dag.stages} == {"S1", "S2", "S3"}
     assert ("S1", "S2") in dag.edges
@@ -326,14 +325,14 @@ def test_planner_parse_clean_json():
 def test_planner_parse_markdown_fenced():
     from AgentDropout.algorithm.planner import StagePlanner
     raw = "```json\n" + json_dumps_3_stages() + "\n```"
-    dag = StagePlanner._parse_dag(raw, ComplexityLevel.MEDIUM)
+    dag = StagePlanner._parse_dag(raw, ComplexityLevel.HARD)
     assert dag.num_stages == 3
 
 
 def test_planner_parse_with_leading_text():
     from AgentDropout.algorithm.planner import StagePlanner
     raw = "下面是 JSON：\n" + json_dumps_3_stages() + "\n完。"
-    dag = StagePlanner._parse_dag(raw, ComplexityLevel.MEDIUM)
+    dag = StagePlanner._parse_dag(raw, ComplexityLevel.HARD)
     assert dag.num_stages == 3
 
 
@@ -344,14 +343,14 @@ def test_planner_parse_rejects_out_of_range():
     # 实际构造一个只有 1 个阶段的合法 JSON
     raw_one = '{"stages":[{"id":"S1","name":"x","description":"y"}],"edges":[]}'
     with pytest.raises(ValueError):
-        StagePlanner._parse_dag(raw_one, ComplexityLevel.MEDIUM)
+        StagePlanner._parse_dag(raw_one, ComplexityLevel.HARD)
 
 
 def test_planner_parse_rejects_empty_description():
     from AgentDropout.algorithm.planner import StagePlanner
     raw = '{"stages":[{"id":"S1","name":"x","description":""},{"id":"S2","name":"x","description":"y"},{"id":"S3","name":"x","description":"z"}],"edges":[]}'
     with pytest.raises(ValueError):
-        StagePlanner._parse_dag(raw, ComplexityLevel.MEDIUM)
+        StagePlanner._parse_dag(raw, ComplexityLevel.HARD)
 
 
 def test_fallback_dag_is_well_formed():

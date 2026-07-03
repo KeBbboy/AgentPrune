@@ -40,21 +40,17 @@ def _estimate_complexity(query: str) -> ComplexityLevel:
 
     规则：
         * 默认 simple；
-        * 长度 > 阈值 → 升到 medium；
-        * 含多任务关键词 → 再升一档（medium → complex）。
+        * 长度 > 阈值 **或** 含多任务关键词 → HARD。
     """
     q = (query or "").strip().lower()
     if not q:
         return ComplexityLevel.SIMPLE
 
-    level = ComplexityLevel.SIMPLE
-    if len(q) > _SIMPLE_QUERY_LEN_THRESHOLD:
-        level = ComplexityLevel.MEDIUM
-    if any(hint in q for hint in _MULTI_TASK_HINTS):
-        order = [ComplexityLevel.SIMPLE, ComplexityLevel.MEDIUM, ComplexityLevel.COMPLEX]
-        idx = min(order.index(level) + 1, len(order) - 1)
-        level = order[idx]
-    return level
+    if len(q) > _SIMPLE_QUERY_LEN_THRESHOLD or any(
+        hint in q for hint in _MULTI_TASK_HINTS
+    ):
+        return ComplexityLevel.HARD
+    return ComplexityLevel.SIMPLE
 
 
 # ---------------------------------------------------------------------------

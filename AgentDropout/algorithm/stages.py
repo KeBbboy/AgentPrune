@@ -6,11 +6,14 @@ from typing import List, Tuple
 
 
 class ComplexityLevel(Enum):
-    """query 复杂度档位，决定阶段数 K 的范围。"""
+    """query 复杂度档位，决定阶段数 K 的范围。
 
-    SIMPLE = ("simple", 2, 3)
-    MEDIUM = ("medium", 3, 5)
-    COMPLEX = ("complex", 5, 7)
+    两档设计：简单与困难都使用 K ∈ [3, 5]。Planner 在 prompt 里会
+    给出该范围，由 LLM 自行决定落在哪个具体值。
+    """
+
+    SIMPLE = ("simple", 3, 5)
+    HARD = ("hard", 3, 5)
 
     def __init__(self, label: str, k_min: int, k_max: int) -> None:
         self.label = label
