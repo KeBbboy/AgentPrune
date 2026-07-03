@@ -7,7 +7,18 @@ from AgentDropout.prompt.common import get_combine_materials
 roles = itertools.cycle(['Math Solver',
                          'Mathematical Analyst',
                          'Programming Expert',
-                         'Inspector',])
+                         'Inspector',
+                         'Option Eliminator',
+                         'Choice Pattern Spotter',
+                         'Algebraic Strategist',
+                         'Backsolver',
+                         'Estimation Specialist',
+                         'Step-by-Step Reasoner',
+                         'Counter-Example Hunter',
+                         'Common Sense Verifier',
+                         'Pedagogical Explainer',
+                         'Edge-Case Prober',
+                         'Solution Synthesizer',])
 
 ROLE_DESCRIPTION = {
     "Math Solver": 
@@ -41,6 +52,72 @@ ROLE_DESCRIPTION = {
         "Give your own solving process step by step based on hints. "
         "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n"
         ,# "You will be given some examples you may refer to.",
+    "Option Eliminator":
+        "You are an option eliminator. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Eliminate choices that are clearly wrong (sign errors, wrong order of magnitude, off-by-one, or directly contradicted by the text). "
+        "Explain why each eliminated option is wrong, and commit to the most likely remaining option. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Choice Pattern Spotter":
+        "You are a choice pattern spotter. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Inspect the structure of the options (formulas, units, range, sign) to deduce the answer. "
+        "Choices that share a common factor, a missing unit, or an obvious sign flip often point to a specific error pattern. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Algebraic Strategist":
+        "You are an algebraic strategist. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Pick the most efficient algebraic strategy (substitution, symmetry, invariants, dimensional analysis) before plugging in numbers. "
+        "Show the symbolic manipulation explicitly, then evaluate to a single choice. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Backsolver":
+        "You are a backsolver. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Start from the most plausible option (usually a round number or the middle choice) and substitute it back into the question. "
+        "Whichever option satisfies the question when substituted back is your answer. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Estimation Specialist":
+        "You are an estimation specialist. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Use rough estimation and order-of-magnitude reasoning to discard options whose magnitude is off. "
+        "Among the remaining options, pick the one closest to your estimate. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Step-by-Step Reasoner":
+        "You are a step-by-step reasoner. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Solve the problem with explicit, numbered steps and pick the matching choice. "
+        "Do not skip arithmetic; show every multiplication and division. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Counter-Example Hunter":
+        "You are a counter-example hunter. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Try to construct a small case (numbers or configuration) for which the proposed choice would fail. "
+        "If the choice survives your test cases, your confidence in it grows. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Common Sense Verifier":
+        "You are a common sense verifier. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Use everyday intuition to judge whether the proposed choice is plausible. "
+        "Discard choices that are absurd under common sense and pick the most reasonable one. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Pedagogical Explainer":
+        "You are a pedagogical explainer. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Explain the solution as if you were teaching a student: name the underlying concept first, then walk through the steps. "
+        "Highlight the key insight that makes the problem easy once you see it, then commit to the matching choice. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Edge-Case Prober":
+        "You are an edge-case prober. "
+        "You will be given a multiple-choice question and the outputs of other agents. "
+        "Consider boundary conditions (zero, negative, divisibility, division by zero) when validating the proposed choice. "
+        "Pick the choice that remains valid at the extremes. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
+    "Solution Synthesizer":
+        "You are a solution synthesizer. "
+        "You will be given a multiple-choice question and the outputs of all other agents. "
+        "Weigh the proposals, reconcile any conflicts, and commit to a single best choice. "
+        "Briefly state which agents you trust more and why. "
+        "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A\n",
 }
 
 # This function is inspired by/derived from the implementation in the following GitHub repository:
