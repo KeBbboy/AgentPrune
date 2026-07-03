@@ -242,9 +242,33 @@ answer = remaining_golf_balls()
 }
 
 FEW_SHOT_DATA = {
-"Math Solver":"""""",
+"Math Solver": "",
 
-"Mathematical Analyst":"""""",
+"Mathematical Analyst": "",
+
+"Inspector": "",
+
+"Option Eliminator": "",
+
+"Choice Pattern Spotter": "",
+
+"Algebraic Strategist": "",
+
+"Backsolver": "",
+
+"Estimation Specialist": "",
+
+"Step-by-Step Reasoner": "",
+
+"Counter-Example Hunter": "",
+
+"Common Sense Verifier": "",
+
+"Pedagogical Explainer": "",
+
+"Edge-Case Prober": "",
+
+"Solution Synthesizer": "",
 
 "Programming Expert":
 """
@@ -285,10 +309,9 @@ def remaining_golf_balls():
     remaining_golf_balls = golf_balls_left
     return final_result
 
-answer = remaining_golf_balls() 
+answer = remaining_golf_balls()
 \n```
 """,
-"Inspector":"""""",
 }
 
 @PromptSetRegistry.register('aqua')
@@ -323,7 +346,7 @@ class AQUAPromptSet(PromptSet):
     @staticmethod
     def get_answer_prompt(question,role="Mathematical Analyst"):
         # Format the question for the AI assistant to answer
-        return f"{FEW_SHOT_DATA[role]}\n\nQ:{question}"
+        return f"{FEW_SHOT_DATA.get(role, '')}\n\nQ:{question}"
 
     @staticmethod
     def get_decision_constraint():
