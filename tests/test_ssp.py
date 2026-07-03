@@ -2,10 +2,9 @@
 
 覆盖：
     * soft_assignment 形状 & softmax 性质；
-    * ssp_pseudo_edges 在 τ=0/τ=1 极端情况下行为；
-    * 邻接矩阵对称性；
     * ssp_fixed_spatial_masks 与 apply_ssp 接口一致性；
-    * apply_ssp 在 fake graph 上不抛异常并改写拓扑。
+    * apply_ssp 在 fake graph 上不抛异常并改写拓扑；
+    * Planner 的纯函数部分（不调 LLM）。
 
 说明：
     * 测试不依赖真实 LLM（Planner 用 monkeypatch）；
@@ -23,7 +22,6 @@ import pytest
 from AgentDropout.algorithm.ssp import (
     SSPConfig,
     soft_assignment,
-    ssp_pseudo_edges,
     ssp_fixed_spatial_masks,
     apply_ssp,
 )
@@ -75,85 +73,6 @@ def test_soft_assignment_invalid_temperature():
         soft_assignment(a, a, temperature=-1.0)
 
 
-# ---------------------------------------------------------------------------
-# ssp_pseudo_edges
-# ---------------------------------------------------------------------------
-
-
-def _toy_alpha():
-    """5 个 agent → 3 个阶段（已硬聚类到 0/1/2）。"""
-    return np.array(
-        [
-            [0.90, 0.05, 0.05],   # 0 -> stage 0
-            [0.80, 0.10, 0.10],   # 1 -> stage 0
-            [0.10, 0.85, 0.05],   # 2 -> stage 1
-            [0.05, 0.85, 0.10],   # 3 -> stage 1
-            [0.05, 0.10, 0.85],   # 4 -> stage 2
-        ],
-        dtype=np.float32,
-    )
-
-
-def test_ssp_tau_one_equals_hard_partition():
-    """τ=1.0 时跨阶段边全删，只剩组内边（每组是 clique）。"""
-    adj = ssp_pseudo_edges(_toy_alpha(), SSPConfig(tau=1.0))
-    # 组内边数 = C(2,2) + C(2,2) + C(1,1) = 1+1+0 = 2 对 = 4 条有向边
-    assert int(adj.sum()) == 4
-    # 同阶段 agent 必有边
-    assert adj[0, 1] == 1 and adj[1, 0] == 1
-    assert adj[2, 3] == 1 and adj[3, 2] == 1
-    # 跨阶段无边
-    assert adj[0, 2] == 0 and adj[0, 4] == 0
-
-
-def test_ssp_tau_zero_equals_full_graph():
-    """τ=0.0 时跨阶段边全留 = 完全图。"""
-    adj = ssp_pseudo_edges(_toy_alpha(), SSPConfig(tau=0.0))
-    n = adj.shape[0]
-    # N(N-1) 有向边
-    assert int(adj.sum()) == n * (n - 1)
-    # 对角线仍为 0（self_loop=False）
-    assert np.all(np.diag(adj) == 0)
-
-
-def test_ssp_middle_tau_drops_weak_cross_edges():
-    """中等 τ 时跨阶段边按 α·α 阈值筛选，弱相关边应被剪掉。"""
-    adj = ssp_pseudo_edges(_toy_alpha(), SSPConfig(tau=0.5))
-    # 同阶段仍全连
-    assert adj[0, 1] == 1 and adj[2, 3] == 1
-    # 跨阶段最大 α·α = 0.9*0.1+0.05*0.85+0.05*0.05 = 0.135 < 0.5 → 全删
-    assert int(adj[0, 2]) == 0 and int(adj[0, 4]) == 0
-
-
-def test_ssp_symmetry_for_all_tau():
-    """邻接矩阵必须对称（i→j 与 j→i 等价）。"""
-    for tau in [0.0, 0.2, 0.5, 0.8, 1.0]:
-        adj = ssp_pseudo_edges(_toy_alpha(), SSPConfig(tau=tau))
-        assert np.array_equal(adj, adj.T), f"非对称矩阵：tau={tau}"
-
-
-def test_ssp_empty_input():
-    """空输入应返回 (0, 0) 矩阵。"""
-    adj = ssp_pseudo_edges(np.zeros((0, 3), dtype=np.float32), SSPConfig())
-    assert adj.shape == (0, 0)
-
-
-def test_ssp_self_loop_disabled_by_default():
-    """self_loop=False 时对角线为 0。"""
-    adj = ssp_pseudo_edges(_toy_alpha(), SSPConfig(tau=0.0, self_loop=False))
-    assert np.all(np.diag(adj) == 0)
-
-
-def test_ssp_self_loop_enabled():
-    """self_loop=True 时对角线为 1。"""
-    adj = ssp_pseudo_edges(_toy_alpha(), SSPConfig(tau=0.0, self_loop=True))
-    assert np.all(np.diag(adj) == 1)
-
-
-def test_ssp_alpha_must_be_2d():
-    """非 2D 输入应抛 ValueError。"""
-    with pytest.raises(ValueError):
-        ssp_pseudo_edges(np.array([0.5, 0.5]), SSPConfig())
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +187,8 @@ def test_apply_ssp_modifies_topology(stage_dag_3, embedder):
     assert _count_edges(graph) > 0
 
 
-def test_apply_ssp_density_decreases_with_high_tau(stage_dag_3, embedder):
-    """τ 越高，保留边数越少（密度单调下降）。"""
+def test_apply_ssp_topk_smaller_keeps_fewer_edges(stage_dag_3, embedder):
+    """topk 越小，保留边数越少（密度单调下降）。"""
     graph_lo = _FakeGraph(
         [("a0", f"profile {i}") for i in range(5)]
     )
@@ -277,10 +196,10 @@ def test_apply_ssp_density_decreases_with_high_tau(stage_dag_3, embedder):
         [("a0", f"profile {i}") for i in range(5)]
     )
 
-    r_lo = apply_ssp(graph_lo, stage_dag_3, embedder, SSPConfig(tau=0.1))
-    r_hi = apply_ssp(graph_hi, stage_dag_3, embedder, SSPConfig(tau=0.9))
-    assert r_lo["num_edges"] >= r_hi["num_edges"], (
-        f"τ=0.1 应保留更多边：{r_lo['num_edges']} vs {r_hi['num_edges']}"
+    r_lo = apply_ssp(graph_lo, stage_dag_3, embedder, SSPConfig(mode="topk", topk=1))
+    r_hi = apply_ssp(graph_hi, stage_dag_3, embedder, SSPConfig(mode="topk", topk=4))
+    assert r_lo["num_edges"] <= r_hi["num_edges"], (
+        f"topk=1 应保留更少边：{r_lo['num_edges']} vs {r_hi['num_edges']}"
     )
 
 

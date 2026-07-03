@@ -1,34 +1,23 @@
 """SSP（Stage Soft Pruning）核心算法。
 
-剪枝规则（与项目方法文档 v4 对齐）：
-    * Planner 把 query 拆成 K 个阶段；
-    * 每个 agent 由 Embedder 编码为向量，与 K 个阶段描述算 cosine
-      相似度矩阵 S ∈ ℝ^{N×K}；
-    * 经过 softmax 得到软指派矩阵 α ∈ ℝ^{N×K}；
-    * 对每对 agent (i, j)：
-        - 若 c_i == c_j（同阶段），**保留边**（硬边）；
-        - 否则 w_ij = α_i · α_j，若 w_ij ≥ τ 则保留，否则删边。
+提供两种软剪枝策略（不再保留硬剪枝 v1）：
 
-提供两个对外入口：
-    * :func:`ssp_pseudo_edges` —— 纯函数，输入 N×K 软指派矩阵，返回
-      一个 ``(N, N)`` 的 0/1 邻接矩阵，便于独立单测；
-    * :func:`apply_ssp` —— 把 SSP 直接作用到一个 :class:`Graph` 实例：
-      通过 ``add_successor``/``clear_spatial_connection`` 修改拓扑。
+1. **Top-k 模式（默认）**：每个 agent 保留 top-k 强边（k=3）。
+   解决"少数派被剪断"和"孤立 stage 0 边"问题。
+2. **Soft 模式**：返回 α·α 浮点边权矩阵（>1e-3 视为有边）。
 
-注意：
-    * :func:`apply_ssp` 会改 ``spatial_predecessors/successors``，但
-      ``Graph.construct_spatial_connection`` 会在每一轮 inference 重新
-      根据 ``fixed_spatial_masks`` 重建边，因此 :func:`apply_ssp` 主要
-      用于：(a) 静态可视化，(b) 测试阶段验证剪枝规则。
-    * 真正集成到 :class:`Graph` 应通过在
-      :func:`experiments.run_mmlu.get_kwargs` 中新增 ``'SSP'`` mode，
-      用 :func:`ssp_fixed_spatial_masks` 生成 ``fixed_spatial_masks``。
+公开 API：
+    * :func:`soft_assignment` —— 软指派矩阵 α
+    * :func:`ssp_soft_weights` —— 浮点边权矩阵（soft 模式）
+    * :func:`ssp_topk_masks` —— top-k 邻接矩阵（topk 模式，默认）
+    * :func:`ssp_fixed_spatial_masks` —— Graph 兼容的 0/1 mask
+    * :func:`apply_ssp` —— 直接作用到 Graph 实例
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence
 
 import numpy as np
 
@@ -43,22 +32,26 @@ from AgentDropout.embeddings.base import Embedder
 
 @dataclass
 class SSPConfig:
-    """SSP 算法的超参数。
+    """SSP v2 算法的超参数。
 
     Attributes:
-        tau: 跨阶段边保留阈值，w_ij = α_i·α_j ≥ τ 时保留。τ=1.0
-            等价于硬切（跨阶段边全删）；τ=0 等价于完全图。
         temperature: softmax 温度，T 越小越接近硬指派，T 越大越平滑。
-        self_loop: 是否允许 agent 与自身的边（默认 False）。
+        self_loop: 是否允许 agent 与自身的边。
+        mode: 邻接矩阵生成策略，可选 'soft' / 'topk'。
+        topk: 仅 mode='topk' 时使用，每个节点保留的 top-k 边数。
+        min_edges: 防御性下限，每个节点至少保留 min_edges 条边
+            （避免 N 很小 + k 很大时退化）。
     """
 
-    tau: float = 0.3
     temperature: float = 1.0
     self_loop: bool = False
+    mode: str = "topk"  # 'soft' | 'topk'
+    topk: int = 3
+    min_edges: int = 1
 
 
 # ---------------------------------------------------------------------------
-# 纯函数：算邻接矩阵
+# 纯函数
 # ---------------------------------------------------------------------------
 
 
@@ -79,59 +72,83 @@ def soft_assignment(
     """
     if temperature <= 0:
         raise ValueError(f"temperature 必须 > 0，实际 {temperature}")
-    # cosine 相似度矩阵（行已归一化）
     sims = profile_emb @ stage_emb.T  # (N, K)
-    # softmax with temperature
     scaled = sims / temperature
-    scaled = scaled - scaled.max(axis=1, keepdims=True)  # 数值稳定
+    scaled = scaled - scaled.max(axis=1, keepdims=True)
     exp = np.exp(scaled)
     return exp / exp.sum(axis=1, keepdims=True)
 
 
-def ssp_pseudo_edges(
+def _ensure_symmetric(mat: np.ndarray) -> np.ndarray:
+    """对非对角线取 max 强制对称。"""
+    return np.maximum(mat, mat.T)
+
+
+def ssp_soft_weights(
     alpha: np.ndarray,
     config: SSPConfig,
 ) -> np.ndarray:
-    """由软指派矩阵计算 0/1 邻接矩阵。
+    """浮点边权矩阵（mode='soft'）。
 
-    Args:
-        alpha: (N, K) 软指派矩阵，每行 ∈ Δ^{K-1}。
-        config: SSP 配置。
-
-    Returns:
-        np.ndarray: (N, N) 0/1 对称矩阵，1 表示保留边，0 表示剪掉。
+    W_ij = α_i · α_j（连续值，范围 [0, 1]）。
     """
     if alpha.ndim != 2:
         raise ValueError(f"alpha 必须是 2D，实际形状 {alpha.shape}")
+    weights = alpha @ alpha.T
+    weights = _ensure_symmetric(weights)
+    if not config.self_loop:
+        np.fill_diagonal(weights, 0.0)
+    return weights
 
+
+def ssp_topk_masks(
+    alpha: np.ndarray,
+    config: SSPConfig,
+) -> np.ndarray:
+    """Top-k 邻接矩阵（mode='topk'，默认）。
+
+    每个 agent 保留 top-k 强边（按 w_ij = α_i·α_j 排序）。
+    解决"硬剪枝切断少数派"和"孤立 stage 0 边"两个问题。
+
+    行为细节：
+        * k = min(config.topk, N-1)
+        * 至少保留 config.min_edges 条边
+        * 自身边遵循 self_loop
+    """
+    if alpha.ndim != 2:
+        raise ValueError(f"alpha 必须是 2D，实际形状 {alpha.shape}")
     N, K = alpha.shape
     if N == 0:
         return np.zeros((0, 0), dtype=np.int8)
+    if N == 1:
+        return np.zeros((1, 1), dtype=np.int8)
 
-    # 跨阶段边权重矩阵：W = α α^T
-    cross_weight = alpha @ alpha.T  # (N, N)
+    cross_weight = alpha @ alpha.T
+    if not config.self_loop:
+        np.fill_diagonal(cross_weight, -np.inf)
 
-    # 硬指派（用于"同阶段保留"判定）：用最大分量索引
-    hard = np.argmax(alpha, axis=1)  # (N,)
+    k = min(config.topk, N - 1)
+    k = max(k, config.min_edges)
 
-    # 初始化为 0
+    if k >= N:
+        adj = np.ones((N, N), dtype=np.int8)
+        if not config.self_loop:
+            np.fill_diagonal(adj, 0)
+        return _ensure_symmetric(adj)
+
+    # argpartition O(N log k)
+    topk_idx = np.argpartition(-cross_weight, kth=k - 1, axis=1)[:, :k]
+
     adj = np.zeros((N, N), dtype=np.int8)
-    for i in range(N):
-        for j in range(N):
-            if i == j and not config.self_loop:
-                continue
-            if i == j and config.self_loop:
-                adj[i, j] = 1
-                continue
-            if hard[i] == hard[j]:
-                adj[i, j] = 1
-            elif float(cross_weight[i, j]) >= config.tau:
-                adj[i, j] = 1
-            # else: 保持 0
+    rows = np.repeat(np.arange(N), k)
+    cols = topk_idx.flatten()
+    adj[rows, cols] = 1
+    return _ensure_symmetric(adj)
 
-    # 保持对称（i→j 与 j→i 应等价）
-    adj = np.maximum(adj, adj.T)
-    return adj
+
+# ---------------------------------------------------------------------------
+# Graph 集成入口
+# ---------------------------------------------------------------------------
 
 
 def ssp_fixed_spatial_masks(
@@ -140,19 +157,9 @@ def ssp_fixed_spatial_masks(
     embedder: Embedder,
     config: SSPConfig,
 ) -> List[List[int]]:
-    """算 ``fixed_spatial_masks`` 风格的 N×N 0/1 矩阵。
+    """算 Graph 兼容的 N×N 0/1 邻接矩阵。
 
-    这是与 :class:`Graph` 兼容的接口，返回 ``List[List[int]]``，
-    对角线为 0。
-
-    Args:
-        profile_texts: 每个 agent 的 profile 文本，长度 = N。
-        stage_dag: Planner 输出。
-        embedder: :class:`Embedder` 实例。
-        config: SSP 配置。
-
-    Returns:
-        List[List[int]]: N×N 矩阵。
+    根据 ``config.mode`` 选 'soft' / 'topk'。
     """
     if not profile_texts:
         raise ValueError("profile_texts 不能为空")
@@ -165,17 +172,17 @@ def ssp_fixed_spatial_masks(
         raise RuntimeError("Embedder 返回空向量")
 
     alpha = soft_assignment(profile_emb, stage_emb, config.temperature)
-    adj = ssp_pseudo_edges(alpha, config)
 
-    # 对角线强制为 0（与 Graph 默认 fixed_spatial_masks 一致）
+    if config.mode == "soft":
+        weights = ssp_soft_weights(alpha, config)
+        adj = (weights >= 1e-3).astype(np.int8)
+    elif config.mode == "topk":
+        adj = ssp_topk_masks(alpha, config)
+    else:
+        raise ValueError(f"未知 mode={config.mode!r}，应为 soft/topk")
+
     np.fill_diagonal(adj, 0)
-
     return adj.astype(int).tolist()
-
-
-# ---------------------------------------------------------------------------
-# 在 Graph 上直接应用
-# ---------------------------------------------------------------------------
 
 
 def apply_ssp(
@@ -184,22 +191,10 @@ def apply_ssp(
     embedder: Embedder,
     config: Optional[SSPConfig] = None,
 ) -> dict:
-    """把 SSP 直接作用到一个已构造的 :class:`Graph`。
-
-    会：
-        1. 收集每个 agent 的 ``role`` 作为 profile 文本；
-        2. 跑 :func:`ssp_fixed_spatial_masks` 得到邻接矩阵；
-        3. 调 ``graph.clear_spatial_connection`` 清掉旧边；
-        4. 按邻接矩阵调 ``add_successor`` 重建边。
-
-    Args:
-        graph: :class:`AgentDropout.graph.graph.Graph` 实例。
-        stage_dag: Planner 输出。
-        embedder: :class:`Embedder` 实例。
-        config: SSP 配置；默认 ``SSPConfig()``。
+    """把 SSP 直接作用到一个已构造的 Graph。
 
     Returns:
-        dict: ``{"num_edges": int, "density": float, "stage_assignment": List[int]}``
+        dict: 包含 num_edges/density/stage_assignment/sparsity。
     """
     if config is None:
         config = SSPConfig()
@@ -209,7 +204,6 @@ def apply_ssp(
 
     adj = ssp_fixed_spatial_masks(profile_texts, stage_dag, embedder, config)
 
-    # 清空并重建
     graph.clear_spatial_connection()
     n = len(node_ids)
     num_edges = 0
@@ -223,7 +217,6 @@ def apply_ssp(
                 )
                 num_edges += 1
 
-    # 报告：硬指派分布（用最大分量）
     profile_emb = embedder.encode(profile_texts)
     stage_emb = embedder.encode(stage_dag.descriptions())
     alpha = soft_assignment(profile_emb, stage_emb, config.temperature)
@@ -235,4 +228,6 @@ def apply_ssp(
         "num_edges": num_edges,
         "density": density,
         "stage_assignment": hard,
+        "config_mode": config.mode,
+        "sparsity": 1.0 - density,
     }

@@ -8,7 +8,13 @@
 
 from AgentDropout.algorithm.stages import Stage, StageDAG, ComplexityLevel
 from AgentDropout.algorithm.planner import StagePlanner
-from AgentDropout.algorithm.ssp import SSPConfig, apply_ssp, ssp_pseudo_edges
+from AgentDropout.algorithm.ssp import (
+    SSPConfig,
+    apply_ssp,
+    ssp_soft_weights,
+    ssp_topk_masks,
+    ssp_fixed_spatial_masks,
+)
 
 __all__ = [
     "Stage",
@@ -17,5 +23,7 @@ __all__ = [
     "StagePlanner",
     "SSPConfig",
     "apply_ssp",
-    "ssp_pseudo_edges",
+    "ssp_soft_weights",
+    "ssp_topk_masks",
+    "ssp_fixed_spatial_masks",
 ]
