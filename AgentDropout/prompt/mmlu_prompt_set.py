@@ -13,10 +13,16 @@ roles = itertools.cycle(['Knowlegable Expert',
                          'Mathematician',
                          'Psychologist',
                          'Historian',
-                         'Doctor',
-                         'Lawyer',
+                         'Physicist',
+                         'Chemist',
+                         'Biologist',
+                         'Programmer',
+                         'Philosopher',
+                         'Sociologist',
+                         'Linguist',
                          'Economist',
-                         'Programmer'])
+                         'Lawyer',
+                         'Doctor'])
 
 
 ROLE_DESCRIPTION = {
@@ -81,6 +87,42 @@ You have experience on understanding charts while interpreting the macroeconomic
 """
 You are good at computer science, engineering, and physics.
 You have experience in designing and developing computer software and hardware.
+""",
+"Physicist":
+"""
+You are a physicist.
+You are good at classical mechanics, electromagnetism, quantum mechanics, thermodynamics, and astrophysics.
+You can reason about physical phenomena and solve physics problems step by step.
+""",
+"Chemist":
+"""
+You are a chemist.
+You are good at general chemistry, organic chemistry, inorganic chemistry, and biochemistry.
+You can balance chemical equations, predict reaction outcomes, and reason about molecular structures.
+""",
+"Biologist":
+"""
+You are a biologist.
+You are good at cell biology, genetics, ecology, evolution, anatomy, physiology, and nutrition.
+You can reason about living systems and biological processes.
+""",
+"Philosopher":
+"""
+You are a philosopher.
+You are good at logic, ethics, metaphysics, epistemology, and the history of philosophy.
+You reason carefully about moral dilemmas, world religions, and conceptual distinctions.
+""",
+"Sociologist":
+"""
+You are a sociologist.
+You study society, social institutions, and social relationships.
+You are good at analyzing human sexuality, public relations, and cultural phenomena.
+""",
+"Linguist":
+"""
+You are a linguist.
+You are good at language, semantics, pragmatics, and the structure of human languages.
+You reason carefully about miscellaneous knowledge and global facts.
 """,
 "Fake":
 """
