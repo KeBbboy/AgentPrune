@@ -24,7 +24,8 @@ def parse_args():
 
     parser.add_argument('--mode', type=str, default='FullConnected',
                         choices=['DirectAnswer', 'FullConnected', 'Random', 'Chain', 'Debate', 'Layered','Star', 'Mesh',
-                                 'FakeFullConnected','FakeRandom','FakeChain','FakeStar','FakeMesh','FakeAGRandom','FakeAGFull'],
+                                 'FakeFullConnected','FakeRandom','FakeChain','FakeStar','FakeMesh','FakeAGRandom','FakeAGFull',
+                                 'SSP'],
                         help="Mode of operation. Default is 'FullConnected'.")
     parser.add_argument('--lr', type=float, default=0.1,
                         help="learning rate")
@@ -63,6 +64,12 @@ def parse_args():
                         help='Number of evaluation questions to cap (default 153, matching the original behaviour).')
     parser.add_argument('--ssp_query', type=str, default="",
                         help='SSP mode 下用于阶段划分的 query；空时按占位 query 走。')
+    parser.add_argument('--ssp_mode', type=str, default="topk",
+                        choices=['soft', 'topk'],
+                        help='SSP 剪枝策略：soft=α·α 浮点边权；'
+                             'topk=每节点保留 top-k 强边（默认）。')
+    parser.add_argument('--ssp_topk', type=int, default=3,
+                        help='仅 --ssp_mode=topk 生效：每个 agent 保留的 top-k 邻居。')
     args = parser.parse_args()
     result_path = AgentPrune_ROOT / "result"
     os.makedirs(result_path, exist_ok=True)
@@ -91,6 +98,8 @@ async def main(setup_log: bool = False):
     # print(agent_names)
     # SSP mode 需要在 get_kwargs 之前把 query 暂存起来供其内部读取
     get_kwargs._ssp_last_query = args.ssp_query
+    get_kwargs._ssp_mode = args.ssp_mode
+    get_kwargs._ssp_topk = args.ssp_topk
     kwargs = get_kwargs(mode,len(agent_names))
     limit_questions = args.limit_questions
     
@@ -107,7 +116,7 @@ async def main(setup_log: bool = False):
     download()
     dataset_train = MMLUDataset('dev')
     dataset_val = MMLUDataset('val')
-    
+
     if args.optimized_spatial or args.optimized_temporal:
         await train(graph=graph,dataset=dataset_train,num_iters=args.num_iterations,num_rounds=args.num_rounds,
                     lr=args.lr,batch_size=args.batch_size,imp_per_iters=args.imp_per_iterations,pruning_rate=args.pruning_rate,args=args,kwargs=kwargs)
@@ -134,6 +143,7 @@ async def main(setup_log: bool = False):
     BilledCompletionTokens.instance().reset()
     # graph.optimized_temporal=False
     # graph.optimized_spatial=False
+
     if args.dec:
         score = await evaluate(graph=graph,dataset=dataset_val,num_rounds=args.num_rounds,limit_questions=limit_questions,eval_batch_size=args.batch_size,dec=True,args=args)
     else:
@@ -234,7 +244,14 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
             stage_dag = planner.plan(query_for_planning)
 
             embedder = MiniLMEmbedder()
-            config = SSPConfig(tau=0.3, temperature=1.0)
+            ssp_mode = getattr(get_kwargs, "_ssp_mode", "topk")
+            ssp_topk = getattr(get_kwargs, "_ssp_topk", 3)
+            config = SSPConfig(
+                temperature=1.0,
+                mode=ssp_mode,
+                topk=ssp_topk,
+            )
+            print(f"[SSP] mode={ssp_mode}, topk={ssp_topk}")
             fixed_spatial_masks = ssp_fixed_spatial_masks(roles, stage_dag, embedder, config)
             fixed_temporal_masks = [[1 for i in range(N)] for j in range(N)]
         except Exception as exc:
@@ -251,7 +268,11 @@ def get_kwargs(mode:Union[Literal['DirectAnswer'],Literal['FullConnected'],Liter
             "fixed_spatial_masks": fixed_spatial_masks,
             "initial_temporal_probability": initial_temporal_probability,
             "fixed_temporal_masks": fixed_temporal_masks,
-            "node_kwargs":node_kwargs}    
+            "node_kwargs":node_kwargs}
+
+
+# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     asyncio.run(main(setup_log=False))
