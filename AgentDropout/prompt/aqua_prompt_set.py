@@ -301,7 +301,21 @@ class AQUAPromptSet(PromptSet):
     @staticmethod
     def get_constraint(role):
         return ROLE_DESCRIPTION[role]
-    
+
+    @staticmethod
+    def get_analyze_constraint(role):
+        role_instruction = ROLE_DESCRIPTION.get(role, "")
+        generic_instruction = (
+            "I will ask you a multiple-choice question and give you the analysis from other agents. "
+            "Using the reasoning from other agents as additional advice with critical thinking, "
+            "can you give an updated answer? "
+            "You are strictly prohibited from imitating the analysis process of other agents. "
+            "Your reply must include your answer and a brief step by step analysis of the question. "
+            "The last line of your output contains only the final choice with only a capital letter, for example: The answer is A"
+        )
+        role_prefix = f"{role_instruction}\n" if role_instruction else ""
+        return role_prefix + generic_instruction
+
     @staticmethod
     def get_format():
         return "natural language"
