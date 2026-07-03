@@ -158,6 +158,35 @@ class Node(ABC):
         _, reasoning = self._split_answer_and_reasoning(predecessor_output)
         return reasoning
 
+    def _rehydrate_full_to_structured(self, output: Any) -> Dict[str, Any] | None:
+        """把 ``async_execute`` 压扁得到的 ``full_text`` 字符串还原为 ``structured`` 字典.
+
+        用途:消息压缩框架的模块 1/2 只在 ``message_type == "structured"`` 时生效.
+        ``Node.async_execute`` 为了让下游 ``evaluate``/正则仍能命中 ``The answer is ...``
+        / ``<answer>...</answer>``, 会把 ``LLMResponse`` 拍扁成字符串塞进 ``self.outputs``.
+        因此下一节点从 ``predecessor.outputs[-1]`` 拿到的是 ``str``, 不是 ``LLMResponse``.
+
+        本函数把这个 ``str`` 重新拆出 ``reasoning`` / ``answer`` / ``full_text``,
+        使 ``_resolve_message_payload`` 能返回 ``message_type="structured"``,
+        让 ``role_aware_compression`` / ``node_aware_aggregation`` 真正生效.
+
+        还原策略:
+          - ``full`` payload 且 ``output`` 是 ``str``:用 ``_split_answer_and_reasoning`` 拆
+          - ``full`` payload 且 ``output`` 不是 ``str`` (例如 dict):返回 ``None``, 维持原状
+          - 拆解失败 (空字符串):返回 ``None``
+        """
+        if not isinstance(output, str):
+            return None
+        full_text = output
+        if not full_text:
+            return None
+        answer, reasoning = self._split_answer_and_reasoning(full_text)
+        return {
+            "reasoning": reasoning,
+            "answer": answer,
+            "full_text": full_text,
+        }
+
     def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
         if hasattr(output, 'reasoning') and hasattr(output, 'answer') and hasattr(output, 'full_text'):
             return "structured", {
@@ -165,6 +194,12 @@ class Node(ABC):
                 "answer": output.answer,
                 "full_text": output.full_text,
             }
+        # ``async_execute`` 会把 LLMResponse 压扁成 full_text 字符串;
+        # 在送往消息压缩框架模块 1/2 之前, 把它还原成 structured 字典, 让模块真正生效.
+        if isinstance(output, str):
+            structured = self._rehydrate_full_to_structured(output)
+            if structured is not None:
+                return "structured", structured
         return "full", output
 
     def get_spatial_info(self)->Dict[str,Dict]:
@@ -244,6 +279,24 @@ class Node(ABC):
         # 模块 1: role_aware_compression
         if cfg.role_aware_compression:
             info = compress_messages_role_aware(info, cfg, getattr(self, "role", ""))
+        # 归一化: 为 structured payload 补一个 "output" 键, 让下游 agent
+        # (AnalyzeAgent/MathSolver/FinalRefer 等) 仍然能用 info["output"]
+        # 拿到字符串. 模块 1/2 的 _join_structured 返回的 dict 没有 "output"
+        # 键, 但下游 _get_output_content 会 fallback 到 dict["full_text"].
+        # 这里额外补一个 "output" 字段, 同时保证 dict 与 str 两种形态可用.
+        for _k, _p in list(info.items()):
+            if not isinstance(_p, dict):
+                continue
+            if "output" not in _p:
+                if isinstance(_p.get("full_text"), str):
+                    _p["output"] = _p["full_text"]
+                else:
+                    _parts = []
+                    if isinstance(_p.get("reasoning"), str):
+                        _parts.append(_p["reasoning"])
+                    if isinstance(_p.get("answer"), str):
+                        _parts.append(_p["answer"])
+                    _p["output"] = "\n".join(_parts)
         return info
     
     def execute(self, input:Any, **kwargs):
