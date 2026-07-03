@@ -98,7 +98,6 @@ class BenchmarkAgent(Node):
                 return output
             messages.append({"role": "assistant", "content": output})
             observations = self.tool_runner.execute_tool_call(tool_call, raw_inputs)
-            observations = self.tool_runner.maybe_distill(_question(raw_inputs), observations)
             self._record_tool_usage(raw_inputs, tool_call, observations)
             messages.append({"role": "user", "content": self._format_tool_result(tool_call, observations)})
 
@@ -122,7 +121,6 @@ class BenchmarkAgent(Node):
                 return output
             messages.append({"role": "assistant", "content": output})
             observations = self.tool_runner.execute_tool_call(tool_call, raw_inputs)
-            observations = self.tool_runner.maybe_distill(_question(raw_inputs), observations)
             self._record_tool_usage(raw_inputs, tool_call, observations)
             messages.append({"role": "user", "content": self._format_tool_result(tool_call, observations)})
 

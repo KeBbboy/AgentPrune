@@ -300,21 +300,6 @@ class BenchmarkToolRunner:
         )
         return response if isinstance(response, str) else "\n".join(response)
 
-    def maybe_distill(self, question: str, observations: List[ToolObservation]) -> List[ToolObservation]:
-        if self.direct_tool_call or not observations:
-            return observations
-        distilled = []
-        for observation in observations:
-            try:
-                summary = self._llm_complete(
-                    "You summarize tool output for a benchmark-solving agent. Keep only facts useful for the question.",
-                    f"Question:\n{question}\n\nTool: {observation.name}\nRaw output:\n{self._truncate(observation.content)}",
-                )
-                distilled.append(ToolObservation(observation.name, summary))
-            except Exception:
-                distilled.append(observation)
-        return distilled
-
     def _truncate(self, text: str) -> str:
         text = "" if text is None else str(text)
         if len(text) <= self.max_tool_chars:
