@@ -308,10 +308,9 @@ def remaining_golf_balls():
     remaining_golf_balls = golf_balls_left
     return final_result
 
-answer = remaining_golf_balls() 
+answer = remaining_golf_balls()
 \n```
 """,
-"Inspector":"""""",
 }
 
 @PromptSetRegistry.register('aqua')
