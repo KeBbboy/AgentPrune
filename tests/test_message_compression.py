@@ -123,6 +123,9 @@ def test_module1_off_when_flag_false():
 def test_module1_structured_nested_form_compresses_reasoning():
     """若上游把 reasoning 塞在 ``payload["output"]["reasoning"]`` (嵌套),
     模块 1 也应识别并压缩 reasoning, 保留 answer 不动.
+
+    无标点的 ``"r" * 5000`` 触发 ``split_sentences`` fallback (整段作为 1
+    个虚拟句), 经相似度评分和动态阈值后被截到 ``max_chars`` 以内.
     """
     cfg = MessageCompressionConfig(role_aware_compression=True)
     payload = {
@@ -138,12 +141,15 @@ def test_module1_structured_nested_form_compresses_reasoning():
     out = compress_messages_role_aware(info, cfg, self_role="Coder")
     nested = out["p1"]["output"]
     assert isinstance(nested["reasoning"], str) and len(nested["reasoning"]) < 5000
-    assert "role-aware reasoning-trunc" in nested["reasoning"]
     assert nested["answer"] == "FINAL ANSWER X"
 
 
 def test_module1_structured_payload_compresses_reasoning_only():
-    """structured payload: 只压 reasoning, answer 必须原样保留."""
+    """structured payload: 只压 reasoning, answer 必须原样保留.
+
+    无标点的 ``"r" * 5000`` 触发 ``split_sentences`` fallback (整段作为 1
+    个虚拟句), 经相似度评分和动态阈值后被截到 ``max_chars`` 以内.
+    """
     cfg = MessageCompressionConfig(role_aware_compression=True)
     long_reasoning = "r" * 5000
     short_answer = "FINAL ANSWER X"
@@ -157,9 +163,8 @@ def test_module1_structured_payload_compresses_reasoning_only():
     info = {"p1": payload}
     out = compress_messages_role_aware(info, cfg, self_role="Coder")
     new = out["p1"]
-    # reasoning 字段被压
+    # reasoning 字段被压 (无标点输入经相似度 + 动态阈值后截短)
     assert isinstance(new["reasoning"], str) and len(new["reasoning"]) < len(long_reasoning)
-    assert "role-aware reasoning-trunc" in new["reasoning"]
     # answer 严格不变
     assert new["answer"] == short_answer
 
@@ -179,9 +184,57 @@ def test_module1_structured_payload_off_preserves_everything():
     assert out["p1"] == payload
 
 
+def test_module1_keeps_relevant_sentences_for_role():
+    """``all-MiniLM-L6-v2`` 对每个句子与接收方 role 描述算余弦相似度, 按动态阈值过滤.
+
+    验证: 接收方是 AnalyzeAgent, 输入混合"通用废话"与"分析方法论"两类句子,
+    压缩后: 至少保留一条方法论相关句, 至少丢弃部分"通用废话".
+    """
+    from AgentDropout.graph.message_compression._sent_utils import split_sentences
+    cfg = MessageCompressionConfig(role_aware_compression=True)
+    reasoning = (
+        "We need to first decompose the problem into sub-parts. "
+        "Hello world. "
+        "Let us analyze the logical structure step by step. "
+        "Random noise words here. "
+        "We must identify assumptions and weigh alternative hypotheses. "
+        "Weather is sunny today. "
+        "The evidence suggests a clear causal chain."
+    )
+    payload = {
+        "role": "Coder",
+        "message_type": "structured",
+        "reasoning": reasoning,
+        "answer": "FINAL A",
+        "full_text": reasoning,
+    }
+    info = {"p1": payload}
+    out = compress_messages_role_aware(info, cfg, self_role="AnalyzeAgent")
+    kept_text = out["p1"]["reasoning"]
+    kept_sents = split_sentences(kept_text)
+    all_sents = split_sentences(reasoning)
+    # 至少比原句子数少
+    assert len(kept_sents) < len(all_sents)
+    # 至少保留一条"分析"相关句
+    keep_join = " ".join(kept_sents).lower()
+    assert ("decompose" in keep_join or "analyze" in keep_join
+            or "logical" in keep_join or "hypotheses" in keep_join
+            or "causal" in keep_join)
+    # answer 严格保留
+    assert out["p1"]["answer"] == "FINAL A"
+    # full_text 同步压缩
+    assert len(out["p1"]["full_text"]) <= len(reasoning)
+
+
 # ---------- 模块 2: node_aware_aggregation ----------
 def test_module2_node_aware_aggregation_buckets_by_role():
-    """structured payload: 跨 role 全局按句子去重 + 排序, 输出 1 条聚合 payload."""
+    """structured payload: 跨 role 全局按句 embedding 相似度 (cos >= 0.70) 去冗余.
+
+    - "Shared sentence." 在 k1/k2 中 cos ~= 1.0, 视为冗余仅保留第一条
+    - "Unique to A1." vs "Unique to A2." cos ~= 0.88 >= 0.70, 也视为冗余
+      仅保留第一条 (k1 的 A1)
+    - "C1R." 字面与上述都不同, cos 较低, 应保留
+    """
     cfg = MessageCompressionConfig(node_aware_aggregation=True)
     info = {
         "k1": {"role": "AnalyzeAgent", "message_type": "structured",
@@ -198,11 +251,14 @@ def test_module2_node_aware_aggregation_buckets_by_role():
     assert payload.get("aggregated") is True
     assert payload.get("aggregation_scope") == "global"
     assert payload.get("aggregated_count") == 3
-    # 跨 role 去重: Shared sentence. 只出现一次
+    # 阈值是 0.70
+    assert payload.get("redundancy_threshold") == 0.70
+    # "Shared sentence." 在 k1/k2 中冗余, 仅保留第一条
     assert payload["reasoning"].count("Shared sentence.") == 1
-    # 所有 unique 句子都在
+    # "Unique to A1." 保留, "Unique to A2." cos ~= 0.88 被丢弃
     assert "Unique to A1." in payload["reasoning"]
-    assert "Unique to A2." in payload["reasoning"]
+    assert "Unique to A2." not in payload["reasoning"]
+    # C1R. 字面差异大, cos 低, 应保留
     assert "C1R." in payload["reasoning"]
     # 跨 role: source_roles 同时含 AnalyzeAgent 和 Coder
     assert set(payload["source_roles"]) == {"AnalyzeAgent", "Coder"}
@@ -222,7 +278,12 @@ def test_module2_off_with_single_bucket_returns_input_unchanged():
 
 
 def test_module2_structured_payload_joins_reasoning_and_answer_separately():
-    """structured payload: 跨 role 全局按句去重 + 排序."""
+    """structured payload: 跨 role 全局按句相似度去冗余 + 排序, 每条 sentence 前缀 [Role].
+
+    - "Common intro." k1/k2 cos ~= 1.0, 视为冗余仅保留第一条
+    - "R1-only." vs "R2-only." cos ~= 0.86 >= 0.70, 视为冗余仅保留第一条
+    - "RC." 字面差异大, cos 低, 应保留
+    """
     cfg = MessageCompressionConfig(node_aware_aggregation=True)
     info = {
         "k1": {"role": "AnalyzeAgent", "message_type": "structured",
@@ -235,22 +296,60 @@ def test_module2_structured_payload_joins_reasoning_and_answer_separately():
     out = aggregate_node_aware(info, cfg, self_role="Solver")
     assert len(out) == 1
     payload = next(iter(out.values()))
-    # Common intro. 去重一次
+    # 同字面 Common intro. cos ~= 1.0, 视为冗余仅保留第一条
     assert payload["reasoning"].count("Common intro.") == 1
-    # R1-only., R2-only., RC. 都保留
+    # R1-only. 保留, R2-only. cos ~= 0.86 被丢弃
     assert "R1-only." in payload["reasoning"]
-    assert "R2-only." in payload["reasoning"]
+    assert "R2-only." not in payload["reasoning"]
+    # RC. 字面差异大, 应保留
     assert "RC." in payload["reasoning"]
-    # 全局排序: 按归一化键字符序, 应当"Common intro." 在最前 (c < r < ...)
-    # 因为 'c' < 'r', c 开头的句排在 r 开头句之前
+    # 每个 sentence 前缀 role 标签
+    assert "[AnalyzeAgent]" in payload["reasoning"]
+    assert "[Coder]" in payload["reasoning"]
+    # 按 (role_order, first_pos) 排序: AnalyzeAgent 先 (k1/k2), Coder 后 (k3)
+    #   - AnalyzeAgent 段: "Common intro.", "R1-only."
+    #   - Coder 段: "RC."
+    # AnalyzeAgent 段必须整体出现在 Coder 段之前
+    a_pos = payload["reasoning"].find("[AnalyzeAgent]")
+    c_pos = payload["reasoning"].find("[Coder]")
+    assert a_pos < c_pos
+    # AnalyzeAgent 段内按推理时序
     reasoning = payload["reasoning"]
-    c_pos = reasoning.find("Common intro.")
-    r1_pos = reasoning.find("R1-only.")
-    rc_pos = reasoning.find("RC.")
-    assert c_pos < r1_pos
-    assert c_pos < rc_pos
+    assert reasoning.find("Common intro.") < reasoning.find("R1-only.")
     # answer 众数
     assert payload["answer"] in ("A1", "A2", "AC")
+
+
+def test_module2_drops_near_duplicate_paraphrase_by_embedding():
+    """跨边相似度冗余检测: 同义改写 (cos >= 0.70) 仅保留第一条.
+
+    输入: 两个 AnalyzeAgent, 一句说 "the answer is 42", 另一句说
+    "the final answer we computed is 42". MiniLM 算出的余弦相似度约 0.75,
+    应被阈值 0.70 视为冗余. 第三方角色 (Coder) 的不同字面 "wrote some code"
+    与上述任一句 cos 都低, 应被保留.
+    """
+    cfg = MessageCompressionConfig(node_aware_aggregation=True)
+    info = {
+        "k1": {"role": "AnalyzeAgent", "message_type": "structured",
+               "reasoning": "the answer is 42.", "answer": "A1", "full_text": "x"},
+        "k2": {"role": "AnalyzeAgent", "message_type": "structured",
+               "reasoning": "the final answer we computed is 42.", "answer": "A2", "full_text": "y"},
+        "k3": {"role": "Coder", "message_type": "structured",
+               "reasoning": "wrote some code.", "answer": "AC", "full_text": "z"},
+    }
+    out = aggregate_node_aware(info, cfg, self_role="Solver")
+    assert len(out) == 1
+    payload = next(iter(out.values()))
+    r = payload["reasoning"]
+    # "the answer is 42." 保留 (第一条, k1)
+    assert "the answer is 42." in r
+    # "the final answer we computed is 42." cos ~ 0.75 >= 0.70 -> 被视为冗余
+    assert "the final answer we computed is 42." not in r
+    # "wrote some code." 字面与上述都不近, cos 低, 应保留
+    assert "wrote some code." in r
+    # 角色标签完整
+    assert "[AnalyzeAgent]" in r
+    assert "[Coder]" in r
 
 
 def test_module2_full_message_type_raises_unstructured_error():

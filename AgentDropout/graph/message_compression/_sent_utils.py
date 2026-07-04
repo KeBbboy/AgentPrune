@@ -52,15 +52,16 @@ def head_tail_by_sentences(text: str, max_chars: int, tag: str) -> str:
       - 头/尾各保留字符预算 ``max_chars / 2``, 在预算内尽量保留整句,
         直到累计字符超过预算的一半就停.
       - 中间用 ``... [tag @ total_chars] ...`` 替换, 字符总长 ≤ max_chars.
+      - 单句输入 (例如整段无标点): 直接 ``text[:max_chars]`` 纯字符截断,
+        保证长度严格 ≤ max_chars (避免"头尾 + 占位"反而比原长还长).
     """
     if not isinstance(text, str) or len(text) <= max_chars:
         return text
 
     sentences = split_sentences(text)
     if len(sentences) <= 1:
-        # 没有切出句子 (例如整段无标点), 退回字符级头/尾截断
-        half = max_chars // 2
-        return f"{text[:half]}\n... [{tag} @ {len(text)}] ...\n{text[-half:]}"
+        # 没有切出句子 (整段无标点): 直接字符级截断, 严格保证 ≤ max_chars.
+        return text[:max_chars]
 
     half_budget = max_chars // 2
     head: List[str] = []
