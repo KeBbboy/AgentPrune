@@ -50,7 +50,7 @@ def load_config(config_path):
     
 def parse_args():
     parser = argparse.ArgumentParser(description="Experiments on gsm8k")
-    parser.add_argument("--dataset_json", type=str, default="dataset/svamp/test.json")
+    parser.add_argument("--dataset_json", type=str, default="dataset/svamp/SVAMP.json")
     parser.add_argument("--result_file", type=str, default=None)
     parser.add_argument("--llm_name", type=str, default="gpt-3.5-turbo")
     parser.add_argument('--mode', type=str, default='FullConnected',
