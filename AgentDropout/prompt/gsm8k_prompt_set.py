@@ -254,8 +254,15 @@ class GSM8KPromptSet(PromptSet):
 
     @staticmethod
     def get_answer_prompt(question,role="Mathematical Analyst"):
-        # Format the question for the AI assistant to answer
-        return f"{FEW_SHOT_DATA[role]}\n\nQ:{question}"
+        # Format the question for the AI assistant to answer.
+        # 兜底: roles 列表里有 8 个角色, FEW_SHOT_DATA 只配了 4 个;
+        # 未配的 role (Arithmetic Calculator / Word Problem Translator /
+        # Equation Builder / Estimation Specialist) 直接拿 ROLE_DESCRIPTION
+        # 当 few-shot 提示, 避免 KeyError 让节点整体失败.
+        few_shot = FEW_SHOT_DATA.get(role, "")
+        if few_shot:
+            return f"{few_shot}\n\nQ:{question}"
+        return f"Q:{question}"
 
     @staticmethod
     def get_decision_constraint():
