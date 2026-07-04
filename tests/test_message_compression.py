@@ -181,62 +181,76 @@ def test_module1_structured_payload_off_preserves_everything():
 
 # ---------- 模块 2: node_aware_aggregation ----------
 def test_module2_node_aware_aggregation_buckets_by_role():
-    """structured payload: 同 role 桶内 reasoning/answer 拼接, 不同 role 桶保留."""
+    """structured payload: 跨 role 全局按句子去重 + 排序, 输出 1 条聚合 payload."""
     cfg = MessageCompressionConfig(node_aware_aggregation=True)
     info = {
         "k1": {"role": "AnalyzeAgent", "message_type": "structured",
-               "reasoning": "A1R", "answer": "A1A", "full_text": "x"},
+               "reasoning": "Shared sentence. Unique to A1.", "answer": "A1A", "full_text": "x"},
         "k2": {"role": "AnalyzeAgent", "message_type": "structured",
-               "reasoning": "A2R", "answer": "A2A", "full_text": "y"},
+               "reasoning": "Shared sentence. Unique to A2.", "answer": "A2A", "full_text": "y"},
         "k3": {"role": "Coder",        "message_type": "structured",
-               "reasoning": "C1R", "answer": "C1A", "full_text": "z"},
+               "reasoning": "C1R.", "answer": "C1A", "full_text": "z"},
     }
     out = aggregate_node_aware(info, cfg, self_role="Solver")
-    assert len(out) == 2  # 2 buckets: AnalyzeAgent, Coder
-    roles = {v["role"] for v in out.values()}
-    assert roles == {"AnalyzeAgent", "Coder"}
-    # 每个 bucket 都带 aggregated 标记
-    assert all(v.get("aggregated") is True for v in out.values())
-    # analyze bucket 的 reasoning 同时包含 A1R 和 A2R
-    bv = {v["role"]: v for v in out.values()}
-    assert "A1R" in bv["AnalyzeAgent"]["reasoning"]
-    assert "A2R" in bv["AnalyzeAgent"]["reasoning"]
-    assert "A1A" in bv["AnalyzeAgent"]["answer"]
-    assert "A2A" in bv["AnalyzeAgent"]["answer"]
+    assert len(out) == 1  # 全局聚合, 输出 1 条
+    payload = next(iter(out.values()))
+    # 标记
+    assert payload.get("aggregated") is True
+    assert payload.get("aggregation_scope") == "global"
+    assert payload.get("aggregated_count") == 3
+    # 跨 role 去重: Shared sentence. 只出现一次
+    assert payload["reasoning"].count("Shared sentence.") == 1
+    # 所有 unique 句子都在
+    assert "Unique to A1." in payload["reasoning"]
+    assert "Unique to A2." in payload["reasoning"]
+    assert "C1R." in payload["reasoning"]
+    # 跨 role: source_roles 同时含 AnalyzeAgent 和 Coder
+    assert set(payload["source_roles"]) == {"AnalyzeAgent", "Coder"}
+    # answer 取众数: 三选一
+    assert payload["answer"] in ("A1A", "A2A", "C1A")
 
 
 def test_module2_off_with_single_bucket_returns_input_unchanged():
-    cfg = MessageCompressionConfig(node_aware_aggregation=True)
+    """开关关闭 / 空 input: 原样返回 (单桶限制已移除)."""
+    cfg = MessageCompressionConfig()  # node_aware_aggregation=False
     info = {
         "k1": {"role": "AnalyzeAgent", "output": "A1", "message_type": "full"},
         "k2": {"role": "AnalyzeAgent", "output": "A2", "message_type": "full"},
     }
     out = aggregate_node_aware(info, cfg, self_role="Solver")
-    assert out == info  # 只有 1 个 role 桶, 原样返回
+    assert out == info  # 关闭开关, 原样返回
 
 
 def test_module2_structured_payload_joins_reasoning_and_answer_separately():
-    """structured payload: 同 role 桶内, reasoning 与 answer 分别拼接."""
+    """structured payload: 跨 role 全局按句去重 + 排序."""
     cfg = MessageCompressionConfig(node_aware_aggregation=True)
     info = {
         "k1": {"role": "AnalyzeAgent", "message_type": "structured",
-               "reasoning": "R1", "answer": "A1", "full_text": "x"},
+               "reasoning": "Common intro. R1-only.", "answer": "A1", "full_text": "x"},
         "k2": {"role": "AnalyzeAgent", "message_type": "structured",
-               "reasoning": "R2", "answer": "A2", "full_text": "y"},
+               "reasoning": "Common intro. R2-only.", "answer": "A2", "full_text": "y"},
         "k3": {"role": "Coder",        "message_type": "structured",
-               "reasoning": "RC", "answer": "AC", "full_text": "z"},
+               "reasoning": "RC.", "answer": "AC", "full_text": "z"},
     }
     out = aggregate_node_aware(info, cfg, self_role="Solver")
-    assert len(out) == 2
-    by_role = {v["role"]: v for v in out.values()}
-    assert by_role["AnalyzeAgent"]["message_type"] == "structured"
-    assert "R1" in by_role["AnalyzeAgent"]["reasoning"]
-    assert "R2" in by_role["AnalyzeAgent"]["reasoning"]
-    assert "A1" in by_role["AnalyzeAgent"]["answer"]
-    assert "A2" in by_role["AnalyzeAgent"]["answer"]
-    # Coder 桶应当保留自己的 reasoning + answer
-    assert "RC" in by_role["Coder"]["reasoning"]
-    assert "AC" in by_role["Coder"]["answer"]
+    assert len(out) == 1
+    payload = next(iter(out.values()))
+    # Common intro. 去重一次
+    assert payload["reasoning"].count("Common intro.") == 1
+    # R1-only., R2-only., RC. 都保留
+    assert "R1-only." in payload["reasoning"]
+    assert "R2-only." in payload["reasoning"]
+    assert "RC." in payload["reasoning"]
+    # 全局排序: 按归一化键字符序, 应当"Common intro." 在最前 (c < r < ...)
+    # 因为 'c' < 'r', c 开头的句排在 r 开头句之前
+    reasoning = payload["reasoning"]
+    c_pos = reasoning.find("Common intro.")
+    r1_pos = reasoning.find("R1-only.")
+    rc_pos = reasoning.find("RC.")
+    assert c_pos < r1_pos
+    assert c_pos < rc_pos
+    # answer 众数
+    assert payload["answer"] in ("A1", "A2", "AC")
 
 
 def test_module2_full_message_type_raises_unstructured_error():

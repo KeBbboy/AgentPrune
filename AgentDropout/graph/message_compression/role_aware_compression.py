@@ -12,12 +12,15 @@
 压缩策略 (role -> max_chars):
   - ANALYTIC_ROLES  (AnalyzeAgent / CriticAgent / MathSolver / Coder): 4096
   - 其他: 1024
-  - 超出阈值时, 仅在 reasoning / output 字符串内做"头/尾"截断, 中间替换为占位
+  - 超出阈值时, 按**句子**切分: 头尾各保留字符预算 ``max_chars/2`` 内的完整句子,
+    中间用占位符替换 (切在句边界, 保证语义完整).
+  - 同时同步压缩 ``full_text`` 字段, 让下游 ``info["output"]["full_text"]`` 也是压缩版.
 """
 from __future__ import annotations
 
 from typing import Any, Dict
 
+from AgentDropout.graph.message_compression._sent_utils import head_tail_by_sentences
 from AgentDropout.graph.message_compression.config import (
     MessageCompressionConfig,
 )
@@ -29,46 +32,65 @@ ANALYTIC_MAX_CHARS = 4096
 NON_ANALYTIC_MAX_CHARS = 1024
 
 
-def _truncate(text: str, max_chars: int, tag: str) -> str:
-    """超过阈值时, 头/尾各取 max_chars/2, 中间替换为占位文本."""
-    if not isinstance(text, str) or len(text) <= max_chars:
-        return text
-    half = max_chars // 2
-    head = text[:half]
-    tail = text[-half:]
-    return f"{head}\n... [{tag} @ {len(text)}] ...\n{tail}"
-
-
 def _compress_structured(payload: Dict[str, Any], max_chars: int) -> Dict[str, Any]:
-    """``message_type == "structured"``: 只压 reasoning, answer 必须原样保留.
+    """``message_type == "structured"``: 按句子切分压缩 reasoning, answer 原样保留.
 
     上游 ``Node.get_spatial_info`` 把 ``_resolve_message_payload`` 拆出来的
     ``{"reasoning","answer","full_text"}`` 放在 ``payload["output"]`` 字段里.
     因此 structured 路径同时支持:
       - ``payload["reasoning"]`` 平铺形式 (若上游选择平铺)
       - ``payload["output"]["reasoning"]`` 嵌套形式 (若上游选择嵌套)
+
+    同时同步压缩 ``full_text`` 字段, 让下游走 ``info["output"]["full_text"]`` 时
+    也能拿到压缩版, 真正省 token.
     """
     new_payload = dict(payload)
 
-    # 优先取平铺, 否则从嵌套 output dict 拿
+    # 找 reasoning 字段: 平铺优先, 否则从嵌套 output dict 拿
     reasoning = new_payload.get("reasoning")
     reasoning_source = "top"
     if not isinstance(reasoning, str):
         nested = new_payload.get("output")
-        if isinstance(nested, dict):
-            inner = nested.get("reasoning")
-            if isinstance(inner, str):
-                reasoning = inner
-                reasoning_source = "nested"
+        if isinstance(nested, dict) and isinstance(nested.get("reasoning"), str):
+            reasoning = nested["reasoning"]
+            reasoning_source = "nested"
 
+    truncated_reasoning = None
     if isinstance(reasoning, str) and len(reasoning) > max_chars:
-        new_reasoning = _truncate(reasoning, max_chars, "role-aware reasoning-trunc")
+        truncated_reasoning = head_tail_by_sentences(
+            reasoning, max_chars, "role-aware reasoning-trunc"
+        )
         if reasoning_source == "top":
-            new_payload["reasoning"] = new_reasoning
+            new_payload["reasoning"] = truncated_reasoning
         else:
             new_payload["output"] = dict(new_payload["output"])
-            new_payload["output"]["reasoning"] = new_reasoning
-    # answer 字段在此模块里严格不动; 若还需要整体 full_text, 让上游重新拼
+            new_payload["output"]["reasoning"] = truncated_reasoning
+
+    # 同步压缩 full_text (平铺/嵌套都支持)
+    if truncated_reasoning is not None:
+        full_text = None
+        if isinstance(new_payload.get("full_text"), str):
+            full_text = new_payload["full_text"]
+        elif isinstance(new_payload.get("output"), dict) and isinstance(
+            new_payload["output"].get("full_text"), str
+        ):
+            full_text = new_payload["output"]["full_text"]
+        if isinstance(full_text, str) and len(full_text) > max_chars:
+            # full_text 通常包含 reasoning + answer. 先用 truncated_reasoning 替换段,
+            # 再按句子切兜底.
+            new_full_text = (
+                full_text.replace(reasoning, truncated_reasoning)
+                if isinstance(reasoning, str)
+                else full_text
+            )
+            if len(new_full_text) > max_chars:
+                new_full_text = head_tail_by_sentences(
+                    new_full_text, max_chars, "role-aware fulltext-trunc"
+                )
+            new_payload["full_text"] = new_full_text
+            if reasoning_source == "nested" and isinstance(new_payload.get("output"), dict):
+                new_payload["output"]["full_text"] = new_full_text
+
     return new_payload
 
 
@@ -91,7 +113,7 @@ def compress_messages_role_aware(
     """模块 1 入口: 供 Node.get_*_info 调用.
 
     - cfg.role_aware_compression=False 或 info 为空, 原样返回.
-    - payload["message_type"] == "structured" 时, 只压 reasoning.
+    - payload["message_type"] == "structured" 时, 按句子切分压缩 reasoning.
     - 其他情况: 运行时默认 noop (与关掉该模块等价), 仅打 ``warnings.warn``
       提示; 当 ``cfg.strict_unstructured=True`` 时抛 :class:`UnstructuredPayloadError`.
     """
@@ -113,10 +135,6 @@ def compress_messages_role_aware(
                     f"output type={out_val_repr}). 请先确保前驱 Node 已走 LLMResponse "
                     "路径使 payload.message_type == 'structured'."
                 )
-            # 运行时 noop: 上一轮 commit 76f27ea 误以为生产链路稳定提供
-            # structured payload, 实际 Node.async_execute 在 commit 之前就已经把
-            # LLMResponse 压扁为 full_text 字符串, message_type 永远是 "full",
-            # 严格报错会让所有 node 100% 抛错, Graph 没法产生任何候选答案.
             import warnings as _w
             _w.warn(
                 f"role_aware_compression 跳过非 structured payload "

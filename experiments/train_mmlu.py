@@ -89,9 +89,9 @@ async def train(graph:Graph,
                 add_loss = 0
                 input_dict = dataset.record_to_input(record)
                 if args.dec:
-                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,skip=True,compress_messages=False)))
+                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,skip=True)))
                 else:
-                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,compress_messages=False)))
+                    answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
                 correct_answer = dataset.record_to_target_answer(record)
                 correct_answers.append(correct_answer)
                 add_losses.append(add_loss)
@@ -209,9 +209,9 @@ async def train(graph:Graph,
             # add_loss = 0
             input_dict = dataset.record_to_input(record)
             if args.dec:
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,compress_messages=False)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
             else:
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds,compress_messages=False)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,num_rounds)))
             correct_answer = dataset.record_to_target_answer(record)
             correct_answers.append(correct_answer)
             add_losses.append(add_loss)

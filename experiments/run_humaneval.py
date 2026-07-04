@@ -170,7 +170,7 @@ async def main():
                 test = record["test"]
                 tests.append(test)
                 input_dict = {"task": task}
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds,skip=True,compress_messages=False)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds,skip=True)))
                 add_losses.append(add_loss)
                 
             raw_results = await asyncio.gather(*answer_log_probs)
@@ -297,7 +297,7 @@ async def main():
                 test = record["test"]
                 tests.append(test)
                 input_dict = {"task": task}
-                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds,compress_messages=False)))
+                answer_log_probs.append(asyncio.create_task(realized_graph.arun(input_dict,args.num_rounds)))
                 add_losses.append(add_loss)
                 
             raw_results = await asyncio.gather(*answer_log_probs)
