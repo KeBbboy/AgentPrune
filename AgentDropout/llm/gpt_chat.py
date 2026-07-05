@@ -495,6 +495,8 @@ async def achat_qwen(model: str, msg: List[Dict], max_tokens: Optional[int] = No
     except Exception as e:
         print(f"Error in achat_qwen: {e}")
         raise
+    finally:
+        await client.close()
 
 
 # Backwards-compatible alias (the function dispatches via Qwen / OpenAI-compatible APIs).
