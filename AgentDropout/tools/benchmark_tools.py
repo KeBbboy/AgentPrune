@@ -89,7 +89,15 @@ class _BenchmarkToolMixin:
                 {"role": "user", "content": user_prompt},
             ]
         )
-        return response if isinstance(response, str) else "\n".join(response)
+        if isinstance(response, str):
+            return response
+        if hasattr(response, "full_text"):
+            return str(response.full_text)
+        if isinstance(response, dict) and "full_text" in response:
+            return str(response["full_text"])
+        if isinstance(response, list):
+            return "\n".join(str(item) for item in response)
+        return str(response)
 
     def _truncate(self, text: str) -> str:
         text = "" if text is None else str(text)

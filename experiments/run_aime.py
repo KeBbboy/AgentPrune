@@ -171,14 +171,13 @@ def build_node_kwargs(
 
     specialists = []
     if "code_generator" in enabled_tools:
-        specialists.append(("Code Execution Specialist", ["code_generator"]))
-    specialists.extend([("Independent Solver", []), ("Synthesis Verifier", [])])
+        specialists.append("Code Execution Specialist")
+    specialists.extend(["Independent Solver", "Synthesis Verifier"])
 
     node_kwargs = []
     for idx, _ in enumerate(agent_names):
-        role, role_tools = specialists[idx % len(specialists)]
+        role = specialists[idx % len(specialists)]
         tool_config = dict(base_tool_config)
-        tool_config["enabled_tools"] = [tool for tool in role_tools if tool in enabled_tools]
         node_kwargs.append({"role": role, "tool_config": tool_config})
     return node_kwargs
 
@@ -221,6 +220,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
 
     if args.dry_run:
         tool_usage = {tool: 0 for tool in configured_tools}
+        tool_tokens = {tool: 0 for tool in configured_tools}
         summary = {
             "benchmark": dataset.name,
             "split": dataset.split,
@@ -229,6 +229,8 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             "expected_samples": dataset.expected_samples(),
             "default_tools": dataset.default_tools,
             "tool_usage": tool_usage,
+            "tool_tokens": tool_tokens,
+            "tool_usage_by_agent": {},
             "tool_usage_by_dataset": {dataset.name: tool_usage},
             "result_file": str(result_file),
             "dry_run": True,
@@ -240,6 +242,8 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
     correct = 0
     total = 0
     tool_totals: Dict[str, int] = {tool: 0 for tool in configured_tools}
+    tool_token_totals: Dict[str, int] = {tool: 0 for tool in configured_tools}
+    agent_tool_totals: Dict[str, Dict[str, Any]] = {}
     num_batches = int(math.ceil(len(records) / args.batch_size)) if records else 0
 
     for record_batch in tqdm(iter_batches(records, args.batch_size), total=num_batches):
@@ -259,9 +263,36 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             answer_text = raw_answer[0] if isinstance(raw_answer, list) and raw_answer else raw_answer
             score = dataset.score(answer_text, record)
             tool_counts = dict(input_dict.get("metadata", {}).get("tool_counts", {}))
+            tool_tokens = dict(input_dict.get("metadata", {}).get("tool_tokens", {}))
+            tool_counts_by_agent = dict(input_dict.get("metadata", {}).get("tool_counts_by_agent", {}))
             tool_history = list(input_dict.get("metadata", {}).get("tool_history", []))
             for tool_name, count in tool_counts.items():
                 tool_totals[tool_name] = int(tool_totals.get(tool_name, 0)) + int(count)
+            for tool_name, token_count in tool_tokens.items():
+                tool_token_totals[tool_name] = int(tool_token_totals.get(tool_name, 0)) + int(token_count)
+            for agent_id, agent_counts in tool_counts_by_agent.items():
+                agent_entry = agent_tool_totals.setdefault(
+                    agent_id,
+                    {
+                        "id": agent_id,
+                        "role": agent_counts.get("role", ""),
+                        "agent_name": agent_counts.get("agent_name", ""),
+                        "tools": {},
+                        "tool_tokens": {},
+                        "total": 0,
+                        "total_tool_tokens": 0,
+                    },
+                )
+                agent_entry["role"] = agent_counts.get("role", agent_entry.get("role", ""))
+                agent_entry["agent_name"] = agent_counts.get("agent_name", agent_entry.get("agent_name", ""))
+                for tool_name, count in dict(agent_counts.get("tools", {})).items():
+                    count = int(count)
+                    agent_entry["tools"][tool_name] = int(agent_entry["tools"].get(tool_name, 0)) + count
+                    agent_entry["total"] = int(agent_entry.get("total", 0)) + count
+                for tool_name, token_count in dict(agent_counts.get("tool_tokens", {})).items():
+                    token_count = int(token_count)
+                    agent_entry["tool_tokens"][tool_name] = int(agent_entry["tool_tokens"].get(tool_name, 0)) + token_count
+                    agent_entry["total_tool_tokens"] = int(agent_entry.get("total_tool_tokens", 0)) + token_count
             total += 1
             correct += int(score.get("correct", False))
             results.append(
@@ -275,6 +306,8 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
                     "score": score,
                     "all_answers": all_answers,
                     "tool_counts": tool_counts,
+                    "tool_tokens": tool_tokens,
+                    "tool_counts_by_agent": tool_counts_by_agent,
                     "tool_history": tool_history,
                 }
             )
@@ -294,6 +327,8 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             "total": total,
             "default_tools": dataset.default_tools,
             "tool_usage": tool_totals,
+            "tool_tokens": tool_token_totals,
+            "tool_usage_by_agent": agent_tool_totals,
             "tool_usage_by_dataset": {dataset.name: tool_totals},
             "result_file": str(result_file),
         }
@@ -308,6 +343,8 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
         "correct": correct,
         "total": total,
         "tool_usage": tool_totals,
+        "tool_tokens": tool_token_totals,
+        "tool_usage_by_agent": agent_tool_totals,
         "result_file": str(result_file),
     }
 

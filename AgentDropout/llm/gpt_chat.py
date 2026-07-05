@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -191,6 +192,28 @@ def _timeout(seconds: float):
     if hasattr(asyncio, "timeout"):
         return asyncio.timeout(seconds)
     return _noop_timeout()
+
+
+def _run_async_from_sync(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: Dict[str, Any] = {}
+
+    def runner():
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=runner)
+    thread.start()
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
 
 
 async def _wait_slot() -> None:
@@ -581,7 +604,9 @@ class LlamaChat(LLM):
 
     def gen(self, messages: List[Message], max_tokens=None, temperature=None, num_comps=None):
         max_tokens, temperature, num_comps = _defaults(self, max_tokens, temperature, num_comps)
-        return achat_qwen(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature)
+        return _run_async_from_sync(
+            achat_qwen(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature)
+        )
 
 
 @retry(wait=wait_random_exponential(min=5, max=90), stop=stop_after_attempt(RETRIES), reraise=True)

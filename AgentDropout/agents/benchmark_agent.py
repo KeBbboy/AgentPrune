@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 from AgentDropout.agents.agent_registry import AgentRegistry
 from AgentDropout.graph.node import Node
 from AgentDropout.llm.llm_registry import LLMRegistry
+from AgentDropout.llm.price import cal_token
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
 from AgentDropout.tools.benchmark_tools import BenchmarkToolRunner, parse_tool_call, tool_config_from_kwargs
 
@@ -147,12 +148,40 @@ class BenchmarkAgent(Node):
         counts = metadata.setdefault("tool_counts", {})
         history = metadata.setdefault("tool_history", [])
         tool_name = str(tool_call.get("name", "tool"))
+        result_text = self.tool_runner.format_observations(observations)
+        result_tokens = int(cal_token(self.llm_name, result_text)) if result_text else 0
         counts[tool_name] = int(counts.get(tool_name, 0)) + 1
+        token_counts = metadata.setdefault("tool_tokens", {})
+        token_counts[tool_name] = int(token_counts.get(tool_name, 0)) + result_tokens
+        agent_counts = metadata.setdefault("tool_counts_by_agent", {})
+        agent_entry = agent_counts.setdefault(
+            self.id,
+            {
+                "id": self.id,
+                "role": self.role,
+                "agent_name": self.agent_name,
+                "tools": {},
+                "tool_tokens": {},
+                "total": 0,
+                "total_tool_tokens": 0,
+            },
+        )
+        agent_entry["role"] = self.role
+        agent_entry["agent_name"] = self.agent_name
+        agent_entry["tools"][tool_name] = int(agent_entry["tools"].get(tool_name, 0)) + 1
+        agent_entry["total"] = int(agent_entry.get("total", 0)) + 1
+        agent_entry.setdefault("tool_tokens", {})
+        agent_entry["tool_tokens"][tool_name] = int(agent_entry["tool_tokens"].get(tool_name, 0)) + result_tokens
+        agent_entry["total_tool_tokens"] = int(agent_entry.get("total_tool_tokens", 0)) + result_tokens
         history.append(
             {
+                "agent_id": self.id,
+                "agent_role": self.role,
+                "agent_name": self.agent_name,
                 "name": tool_name,
+                "result_tokens": result_tokens,
                 "arguments": tool_call.get("arguments", {}),
-                "result": self.tool_runner.format_observations(observations),
+                "result": result_text,
             }
         )
 
