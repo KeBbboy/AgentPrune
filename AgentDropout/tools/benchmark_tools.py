@@ -14,6 +14,7 @@ import requests
 from dotenv import load_dotenv
 
 from AgentDropout.llm.llm_registry import LLMRegistry
+from AgentDropout.tools.core import BaseTool, ToolRegistry, ToolResult
 from AgentDropout.tools.search.search import GoogleSearchEngine, SearchAPIEngine
 from AgentDropout.tools.search.wiki import search_wiki_main
 
@@ -36,6 +37,14 @@ class ToolObservation:
     name: str
     content: str
 
+    @classmethod
+    def from_result(cls, name: str, result: ToolResult) -> "ToolObservation":
+        if result.success:
+            content = result.output
+        else:
+            content = result.error or result.output or "Tool execution failed."
+        return cls(name=name, content=content)
+
 
 def normalize_enabled_tools(tools: Optional[Iterable[str]]) -> List[str]:
     if tools is None:
@@ -48,182 +57,199 @@ def normalize_enabled_tools(tools: Optional[Iterable[str]]) -> List[str]:
     return normalized
 
 
-class BenchmarkToolRunner:
-    """Small tool layer matching the msc-thesis benchmark tool names.
+def _truncate_text(text: str, max_chars: int) -> str:
+    text = "" if text is None else str(text)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n...[truncated]"
 
-    Tools are made available to the BenchmarkAgent, but they are only executed
-    after the model emits a tool-call payload. `direct_tool_call=False`
-    optionally asks the LLM to summarize raw tool output before it is returned
-    to the answering loop, approximating msc-thesis sub-agent mode.
-    """
 
+class _BenchmarkToolMixin:
     def __init__(
         self,
         llm_name: str,
-        enabled_tools: Optional[Iterable[str]] = None,
         direct_tool_call: bool = False,
-        web_tool_provider: str = "tavily",
-        top_k_results: int = 3,
-        max_search_limit: int = 3,
         max_tool_chars: int = 6000,
-        max_tool_turns: int = 3,
     ) -> None:
         self.llm_name = llm_name
-        self.enabled_tools = normalize_enabled_tools(enabled_tools)
         self.direct_tool_call = direct_tool_call
-        self.web_tool_provider = web_tool_provider
-        self.top_k_results = max(1, int(top_k_results))
-        self.max_search_limit = max(1, int(max_search_limit))
-        self.max_tool_chars = max(1000, int(max_tool_chars))
-        self.max_tool_turns = max(0, int(max_tool_turns))
+        self.max_tool_chars = max_tool_chars
         self._llm = None
-        self._search_engine = None
 
-    def run(self, raw_inputs: Dict[str, Any]) -> List[ToolObservation]:
-        """Legacy eager execution path kept for compatibility."""
-        observations: List[ToolObservation] = []
-        if "text_inspector" in self.enabled_tools:
-            observations.extend(self._run_text_inspector(raw_inputs))
-        if "web_search" in self.enabled_tools:
-            observations.extend(self._run_web_search(raw_inputs))
-        if "code_generator" in self.enabled_tools:
-            observations.extend(self._run_code_generator(raw_inputs))
-        return observations
+    @property
+    def direct_mode(self) -> bool:
+        return bool(self.direct_tool_call)
 
-    def format_observations(self, observations: List[ToolObservation]) -> str:
-        if not observations:
-            return ""
-        sections = []
-        for observation in observations:
-            content = self._truncate(observation.content)
-            if content:
-                sections.append(f"[{observation.name}]\n{content}")
-        if not sections:
-            return ""
-        return "\n\n".join(sections)
+    def _llm_complete(self, system_prompt: str, user_prompt: str) -> str:
+        if self._llm is None:
+            self._llm = LLMRegistry.get(self.llm_name)
+        response = self._llm.gen(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+        )
+        return response if isinstance(response, str) else "\n".join(response)
 
-    def format_tool_instructions(self) -> str:
-        if not self.enabled_tools:
-            return ""
-        descriptions = {
-            "web_search": (
-                "Search the web for current or external facts. "
-                'Arguments: {"query": "concise search query"}.'
-            ),
-            "code_generator": (
-                "Run a short Python calculation or verification. "
-                'Arguments: {"code": "python code"} or {"prompt": "calculation request"}.'
-            ),
-            "text_inspector": (
-                "Inspect an attached local file. "
-                'Arguments: {"path": "optional file path"}; omit path to inspect provided attachments.'
-            ),
+    def _truncate(self, text: str) -> str:
+        text = "" if text is None else str(text)
+        if len(text) <= self.max_tool_chars:
+            return text
+        return text[: self.max_tool_chars] + "\n...[truncated]"
+
+
+class TextInspectorTool(_BenchmarkToolMixin, BaseTool):
+    def __init__(
+        self,
+        llm_name: str,
+        direct_tool_call: bool = False,
+        max_tool_chars: int = 6000,
+    ) -> None:
+        super().__init__(llm_name, direct_tool_call, max_tool_chars)
+
+    @property
+    def name(self) -> str:
+        return "text_inspector"
+
+    @property
+    def description(self) -> str:
+        return "Read and optionally analyze attached local text/table/document files"
+
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": (
+                    "Inspect a local attachment such as a document, table, PDF, CSV, or text file. "
+                    "Use this when the question refers to attached or local files."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Optional file path to inspect. Omit this to inspect provided attachments.",
+                        }
+                    },
+                    "required": [],
+                },
+            },
         }
-        lines = ["Available tools:"]
-        for tool_name in self.enabled_tools:
-            description = descriptions.get(tool_name, "No description available.")
-            lines.append(f"- {tool_name}: {description}")
-        return "\n".join(lines)
 
-    def execute_tool_call(self, tool_call: Dict[str, Any], raw_inputs: Dict[str, Any]) -> List[ToolObservation]:
-        normalized = normalize_tool_call(tool_call)
-        if normalized is None:
-            return [ToolObservation("tool", f"Invalid tool call payload: {tool_call}")]
-
-        name = normalized["name"]
-        arguments = normalized["arguments"]
-        if name not in self.enabled_tools:
-            enabled = ", ".join(self.enabled_tools) if self.enabled_tools else "none"
-            return [ToolObservation(name, f"Tool '{name}' is not enabled. Enabled tools: {enabled}.")]
-
-        if name == "web_search":
-            current_count = int(raw_inputs.get("metadata", {}).get("tool_counts", {}).get("web_search", 0))
-            if current_count >= self.max_search_limit:
-                return [
-                    ToolObservation("web_search", f"web_search call limit reached ({self.max_search_limit}).")
-                ]
-            query = _first_argument(arguments, "query", "q", "search_query", "sub_goal", "input", "question")
-            return self._run_web_search(raw_inputs, query=query)
-
-        if name == "code_generator":
-            code = _first_argument(arguments, "code", "python_code", "program")
-            prompt = _first_argument(arguments, "prompt", "query", "sub_goal", "task", "question", "input")
-            return self._run_code_generator(raw_inputs, prompt_override=prompt, code=code)
-
-        if name == "text_inspector":
-            requested_path = _first_argument(arguments, "path", "file_path", "file", "filename", "attachment")
-            return self._run_text_inspector(raw_inputs, requested_path=requested_path)
-
-        return [ToolObservation(name, f"Unsupported tool '{name}'.")]
-
-    def _run_text_inspector(self, raw_inputs: Dict[str, Any], requested_path: Any = None) -> List[ToolObservation]:
-        observations = []
+    def execute(
+        self,
+        raw_inputs: Optional[Dict[str, Any]] = None,
+        path: Any = None,
+        file_path: Any = None,
+        file: Any = None,
+        filename: Any = None,
+        attachment: Any = None,
+        **_: Any,
+    ) -> ToolResult:
+        raw_inputs = raw_inputs or {}
+        requested_path = path or file_path or file or filename or attachment
         attachments = raw_inputs.get("attachments") or raw_inputs.get("metadata", {}).get("attachments") or []
         if requested_path:
-            if isinstance(requested_path, (list, tuple)):
-                attachments = list(requested_path)
-            else:
-                attachments = [requested_path]
+            attachments = list(requested_path) if isinstance(requested_path, (list, tuple)) else [requested_path]
         try:
             from AgentDropout.tools.reader.readers import GeneralReader
         except ModuleNotFoundError as exc:
             if attachments:
-                return [ToolObservation("text_inspector", f"text_inspector unavailable: missing dependency {exc.name}")]
-            return []
+                return ToolResult(success=False, output="", metadata={}, error=f"text_inspector unavailable: missing dependency {exc.name}")
+            return ToolResult(success=True, output="", metadata={"attachments": 0})
+
         reader = GeneralReader()
-        for path in attachments:
+        sections = []
+        for candidate in attachments:
             try:
-                if not path or not Path(path).exists():
+                if not candidate or not Path(candidate).exists():
                     continue
-                content = reader.read(str(raw_inputs.get("question") or raw_inputs.get("task") or ""), str(path))
-                observations.append(ToolObservation("text_inspector", content))
+                content = reader.read(str(raw_inputs.get("question") or raw_inputs.get("task") or ""), str(candidate))
+                if content:
+                    sections.append(content)
             except Exception as exc:
-                observations.append(ToolObservation("text_inspector", f"Failed to inspect {path}: {exc}"))
-        return observations
+                sections.append(f"Failed to inspect {candidate}: {exc}")
+        output = "\n\n".join(sections)
+        return ToolResult(success=True, output=self._truncate(output), metadata={"attachments": len(attachments)})
 
-    def _run_web_search(self, raw_inputs: Dict[str, Any], query: Optional[str] = None) -> List[ToolObservation]:
-        question = str(raw_inputs.get("question") or raw_inputs.get("task") or "").strip()
-        if not question and not query:
-            return []
-        query = str(query or "").strip() or self._build_search_query(question)
-        if not query:
-            return []
-        try:
-            content = self._search(query)
-        except Exception as exc:
-            content = f"Search failed for query '{query}': {exc}"
-        return [ToolObservation("web_search", content)] if content else []
 
-    def _run_code_generator(
+class WebSearchTool(_BenchmarkToolMixin, BaseTool):
+    def __init__(
         self,
-        raw_inputs: Dict[str, Any],
-        prompt_override: Optional[str] = None,
-        code: Optional[str] = None,
-    ) -> List[ToolObservation]:
-        question = str(raw_inputs.get("question") or raw_inputs.get("task") or "").strip()
-        if not question and not prompt_override and not code:
-            return []
+        llm_name: str,
+        provider: str = "tavily",
+        top_k_results: int = 3,
+        direct_tool_call: bool = False,
+        max_tool_chars: int = 6000,
+    ) -> None:
+        super().__init__(llm_name, direct_tool_call, max_tool_chars)
+        self.provider = provider
+        self.top_k_results = max(1, int(top_k_results))
+        self._search_engine = None
+        self._analysis_cache: Dict[str, str] = {}
+
+    @property
+    def name(self) -> str:
+        return "web_search"
+
+    @property
+    def description(self) -> str:
+        return f"Search the web for external facts using {self.provider}"
+
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": (
+                    "Search the web for information to help answer questions. Use this when you need facts, "
+                    "verification, current information, or source-grounded context."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Specific web search query with the key entities and facts to verify.",
+                        }
+                    },
+                    "required": ["query"],
+                },
+            },
+        }
+
+    def execute(
+        self,
+        query: Optional[str] = None,
+        q: Optional[str] = None,
+        search_query: Optional[str] = None,
+        sub_goal: Optional[str] = None,
+        input: Optional[str] = None,
+        question: Optional[str] = None,
+        raw_inputs: Optional[Dict[str, Any]] = None,
+        **_: Any,
+    ) -> ToolResult:
+        raw_inputs = raw_inputs or {}
+        task = str(raw_inputs.get("question") or raw_inputs.get("task") or "").strip()
+        resolved_query = str(query or q or search_query or sub_goal or input or question or "").strip()
+        if not resolved_query:
+            resolved_query = self._build_search_query(task)
+        if not resolved_query:
+            return ToolResult(success=True, output="", metadata={"query": resolved_query})
         try:
-            if code is None:
-                prompt = (
-                    "Write a short Python calculation, transformation, or verification to help solve the problem. "
-                    "If code is not useful, return only the word SKIP. "
-                    "Do not use internet or files unless the prompt explicitly contains a local file path. "
-                    "Print the useful result.\n\n"
-                    f"Problem:\n{prompt_override or question}"
-                )
-                code = self._llm_complete(
-                    "You generate minimal Python snippets for benchmark problem solving. "
-                    "Return only Python code or SKIP.",
-                    prompt,
-                )
-            code = _strip_code_fences(code).strip()
-            if not code or code.upper().startswith("SKIP"):
-                return []
-            output = _execute_python(code)
-            return [ToolObservation("code_generator", f"Code:\n{code}\n\nOutput:\n{output}")]
+            raw_output = self._search(resolved_query)
+            if self.direct_mode:
+                output = raw_output
+            else:
+                output = self._analyze_with_llm(resolved_query, raw_output)
+            return ToolResult(
+                success=True,
+                output=self._truncate(output),
+                metadata={"query": resolved_query, "mode": "direct" if self.direct_mode else "sub-agent"},
+            )
         except Exception as exc:
-            return [ToolObservation("code_generator", f"Code helper failed: {exc}")]
+            return ToolResult(success=False, output="", metadata={"query": resolved_query}, error=f"Search failed for query '{resolved_query}': {exc}")
 
     def _build_search_query(self, question: str) -> str:
         if len(question) <= 240:
@@ -239,7 +265,7 @@ class BenchmarkToolRunner:
             return question[:240]
 
     def _search(self, query: str) -> str:
-        provider = self.web_tool_provider.lower()
+        provider = self.provider.lower()
         if provider == "wiki":
             queries = [query]
             result = _run_async_from_sync(lambda: search_wiki_main(queries))
@@ -289,22 +315,247 @@ class BenchmarkToolRunner:
                 sections.append(f"{title}\n{url}\n{content}")
         return "\n\n".join(sections)
 
-    def _llm_complete(self, system_prompt: str, user_prompt: str) -> str:
-        if self._llm is None:
-            self._llm = LLMRegistry.get(self.llm_name)
-        response = self._llm.gen(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
+    def _analyze_with_llm(self, query: str, raw_output: str) -> str:
+        if query in self._analysis_cache:
+            return self._analysis_cache[query]
+        prompt = (
+            "Analyze the web search results and extract only information useful for answering the query. "
+            "Be concise, factual, and preserve important names, dates, numbers, and source hints.\n\n"
+            f"Query:\n{query}\n\nSearch results:\n{self._truncate(raw_output)}"
         )
-        return response if isinstance(response, str) else "\n".join(response)
+        analyzed = self._llm_complete("You are a web-search result analysis sub-agent.", prompt)
+        self._analysis_cache[query] = analyzed
+        return analyzed
 
-    def _truncate(self, text: str) -> str:
-        text = "" if text is None else str(text)
-        if len(text) <= self.max_tool_chars:
-            return text
-        return text[: self.max_tool_chars] + "\n...[truncated]"
+
+class CodeGeneratorTool(_BenchmarkToolMixin, BaseTool):
+    def __init__(
+        self,
+        llm_name: str,
+        direct_tool_call: bool = False,
+        max_tool_chars: int = 6000,
+        timeout_seconds: int = 10,
+    ) -> None:
+        super().__init__(llm_name, direct_tool_call, max_tool_chars)
+        self.timeout_seconds = max(1, int(timeout_seconds))
+
+    @property
+    def name(self) -> str:
+        return "code_generator"
+
+    @property
+    def description(self) -> str:
+        return "Generate and execute Python code for calculations and verification"
+
+    def get_schema(self) -> Dict[str, Any]:
+        if self.direct_mode:
+            properties = {
+                "code": {
+                    "type": "string",
+                    "description": "Standalone Python code to execute. It must print useful output and contain no markdown fences.",
+                }
+            }
+            required = ["code"]
+            description = "Execute Python code to perform calculations, data processing, or verification."
+        else:
+            properties = {
+                "task": {
+                    "type": "string",
+                    "description": "Clear description of the calculation, transformation, or verification the code should perform.",
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Optional pre-written standalone Python code to execute.",
+                },
+            }
+            required = ["task"]
+            description = "Generate and execute Python code to perform calculations, data processing, or verification."
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            },
+        }
+
+    def execute(
+        self,
+        code: Optional[str] = None,
+        python_code: Optional[str] = None,
+        program: Optional[str] = None,
+        prompt: Optional[str] = None,
+        query: Optional[str] = None,
+        sub_goal: Optional[str] = None,
+        task: Optional[str] = None,
+        question: Optional[str] = None,
+        input: Optional[str] = None,
+        raw_inputs: Optional[Dict[str, Any]] = None,
+        **_: Any,
+    ) -> ToolResult:
+        raw_inputs = raw_inputs or {}
+        resolved_code = code or python_code or program
+        resolved_task = prompt or query or sub_goal or task or question or input
+        benchmark_question = str(raw_inputs.get("question") or raw_inputs.get("task") or "").strip()
+        try:
+            if not resolved_code:
+                if self.direct_mode and resolved_task:
+                    resolved_code = str(resolved_task)
+                else:
+                    generation_task = str(resolved_task or benchmark_question).strip()
+                    if not generation_task:
+                        return ToolResult(success=True, output="", metadata={})
+                    resolved_code = self._generate_code(generation_task)
+            resolved_code = _strip_code_fences(str(resolved_code)).strip()
+            if not resolved_code or resolved_code.upper().startswith("SKIP"):
+                return ToolResult(success=True, output="", metadata={"skipped": True})
+            output = _execute_python(resolved_code, timeout_seconds=self.timeout_seconds)
+            return ToolResult(
+                success=True,
+                output=self._truncate(f"Code:\n{resolved_code}\n\nOutput:\n{output}"),
+                metadata={"mode": "direct" if self.direct_mode else "sub-agent"},
+            )
+        except Exception as exc:
+            return ToolResult(success=False, output="", metadata={}, error=f"Code helper failed: {exc}")
+
+    def _generate_code(self, task: str) -> str:
+        prompt = (
+            "Write a short Python calculation, transformation, or verification to help solve the problem. "
+            "If code is not useful, return only the word SKIP. "
+            "Do not use internet or files unless the prompt explicitly contains a local file path. "
+            "Print the useful result.\n\n"
+            f"Problem:\n{task}"
+        )
+        return self._llm_complete(
+            "You generate minimal Python snippets for benchmark problem solving. Return only Python code or SKIP.",
+            prompt,
+        )
+
+
+class BenchmarkToolRunner:
+    """Registry-backed benchmark tool runner using msc-thesis style tools.
+
+    Tools are registered as BaseTool instances, exposed through function
+    schemas, and executed only after the model emits a tool-call payload.
+    """
+
+    def __init__(
+        self,
+        llm_name: str,
+        enabled_tools: Optional[Iterable[str]] = None,
+        direct_tool_call: bool = False,
+        web_tool_provider: str = "tavily",
+        top_k_results: int = 3,
+        max_search_limit: int = 3,
+        max_tool_chars: int = 6000,
+        max_tool_turns: int = 3,
+    ) -> None:
+        self.llm_name = llm_name
+        self.enabled_tools = normalize_enabled_tools(enabled_tools)
+        self.direct_tool_call = direct_tool_call
+        self.web_tool_provider = web_tool_provider
+        self.top_k_results = max(1, int(top_k_results))
+        self.max_search_limit = max(1, int(max_search_limit))
+        self.max_tool_chars = max(1000, int(max_tool_chars))
+        self.max_tool_turns = max(0, int(max_tool_turns))
+        self.registry = self._build_registry()
+
+    def _build_registry(self) -> ToolRegistry:
+        registry = ToolRegistry()
+        for tool_name in self.enabled_tools:
+            if tool_name == "web_search":
+                registry.register(
+                    WebSearchTool(
+                        llm_name=self.llm_name,
+                        provider=self.web_tool_provider,
+                        top_k_results=self.top_k_results,
+                        direct_tool_call=self.direct_tool_call,
+                        max_tool_chars=self.max_tool_chars,
+                    )
+                )
+            elif tool_name == "code_generator":
+                registry.register(
+                    CodeGeneratorTool(
+                        llm_name=self.llm_name,
+                        direct_tool_call=self.direct_tool_call,
+                        max_tool_chars=self.max_tool_chars,
+                    )
+                )
+            elif tool_name == "text_inspector":
+                registry.register(
+                    TextInspectorTool(
+                        llm_name=self.llm_name,
+                        direct_tool_call=self.direct_tool_call,
+                        max_tool_chars=self.max_tool_chars,
+                    )
+                )
+        return registry
+
+    @property
+    def tool_names(self) -> List[str]:
+        return self.registry.list_tools()
+
+    @property
+    def has_tools(self) -> bool:
+        return bool(self.tool_names)
+
+    def run(self, raw_inputs: Dict[str, Any]) -> List[ToolObservation]:
+        """Execute all registered tools once for callers that request eager observations."""
+        observations: List[ToolObservation] = []
+        for tool_name in self.registry.list_tools():
+            tool = self.registry.get(tool_name)
+            if tool is None:
+                continue
+            result = tool.execute(raw_inputs=raw_inputs)
+            observations.append(ToolObservation.from_result(tool_name, result))
+        return observations
+
+    def format_observations(self, observations: List[ToolObservation]) -> str:
+        if not observations:
+            return ""
+        sections = []
+        for observation in observations:
+            content = _truncate_text(observation.content, self.max_tool_chars)
+            if content:
+                sections.append(f"[{observation.name}]\n{content}")
+        if not sections:
+            return ""
+        return "\n\n".join(sections)
+
+    def format_tool_instructions(self) -> str:
+        if not self.registry.list_tools():
+            return ""
+        schemas = json.dumps(self.registry.get_all_schemas(), indent=2, ensure_ascii=False)
+        return (
+            "Available tools are defined by the following function schemas:\n"
+            f"<tools>\n{schemas}\n</tools>"
+        )
+
+    def execute_tool_call(self, tool_call: Dict[str, Any], raw_inputs: Dict[str, Any]) -> List[ToolObservation]:
+        normalized = normalize_tool_call(tool_call)
+        if normalized is None:
+            return [ToolObservation("tool", f"Invalid tool call payload: {tool_call}")]
+
+        name = normalized["name"]
+        arguments = normalized["arguments"]
+        tool = self.registry.get(name)
+        if tool is None:
+            enabled = ", ".join(self.registry.list_tools()) if self.registry.list_tools() else "none"
+            return [ToolObservation(name, f"Tool '{name}' is not enabled. Enabled tools: {enabled}.")]
+
+        if name == "web_search":
+            current_count = int(raw_inputs.get("metadata", {}).get("tool_counts", {}).get("web_search", 0))
+            if current_count >= self.max_search_limit:
+                return [
+                    ToolObservation("web_search", f"web_search call limit reached ({self.max_search_limit}).")
+                ]
+
+        result = tool.execute(raw_inputs=raw_inputs, **arguments)
+        return [ToolObservation.from_result(name, result)]
 
 
 def tool_config_from_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -417,14 +668,6 @@ def _parse_pythonic_call(line: str) -> Optional[Dict[str, Any]]:
     if positional:
         arguments.setdefault("input", positional[0] if len(positional) == 1 else positional)
     return {"name": tree.body.func.id, "arguments": arguments}
-
-
-def _first_argument(arguments: Dict[str, Any], *keys: str) -> Optional[Any]:
-    for key in keys:
-        value = arguments.get(key)
-        if value not in (None, ""):
-            return value
-    return None
 
 
 def _strip_code_fences(text: str) -> str:

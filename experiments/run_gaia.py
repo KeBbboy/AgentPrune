@@ -322,3 +322,7 @@ async def main():
     graph = build_graph(args, dataset)
     summary = await evaluate(graph, dataset, args)
     print(f"GAIA Score: {summary}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

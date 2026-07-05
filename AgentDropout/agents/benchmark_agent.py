@@ -46,7 +46,7 @@ class BenchmarkAgent(Node):
         if temporal_info:
             user_parts.append("Previous-round memory:\n" + _format_agent_info(temporal_info))
 
-        if self.tool_runner.enabled_tools:
+        if self.tool_runner.has_tools:
             user_parts.append(
                 "Decide whether a tool is needed. If you use a tool, return only one tool call. "
                 "If you already know the answer, give the final answer in the required format."
@@ -79,22 +79,21 @@ class BenchmarkAgent(Node):
             f"{tool_info}\n\n"
             "Tool calling protocol:\n"
             "When a tool is needed, respond with exactly one tool call and no final answer:\n"
-            '<tool_call>{"name":"web_search","arguments":{"query":"..."}}</tool_call>\n'
-            "For code execution, prefer passing explicit Python in the code argument when possible:\n"
-            '<tool_call>{"name":"code_generator","arguments":{"code":"print(2 + 2)"}}</tool_call>\n'
+            '<tool_call>{"name":"tool_name","arguments":{"argument_name":"argument_value"}}</tool_call>\n'
+            "Choose a tool name and arguments that match one of the schemas exactly. "
             "After a tool observation is returned, continue solving. "
             "When ready, stop calling tools and end with the required final answer line."
         )
 
     def _run_tool_loop(self, raw_inputs: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
-        max_turns = self.tool_runner.max_tool_turns if self.tool_runner.enabled_tools else 0
+        max_turns = self.tool_runner.max_tool_turns if self.tool_runner.has_tools else 0
         if max_turns <= 0:
             return _stringify_response(self.llm.gen(messages))
 
         for _ in range(max_turns):
             output = _stringify_response(self.llm.gen(messages))
             tool_call = parse_tool_call(output)
-            if tool_call is None or not self.tool_runner.enabled_tools:
+            if tool_call is None or not self.tool_runner.has_tools:
                 return output
             messages.append({"role": "assistant", "content": output})
             observations = self.tool_runner.execute_tool_call(tool_call, raw_inputs)
@@ -110,14 +109,14 @@ class BenchmarkAgent(Node):
         return _stringify_response(self.llm.gen(messages))
 
     async def _run_tool_loop_async(self, raw_inputs: Dict[str, Any], messages: List[Dict[str, str]]) -> str:
-        max_turns = self.tool_runner.max_tool_turns if self.tool_runner.enabled_tools else 0
+        max_turns = self.tool_runner.max_tool_turns if self.tool_runner.has_tools else 0
         if max_turns <= 0:
             return _stringify_response(await self.llm.agen(messages))
 
         for _ in range(max_turns):
             output = _stringify_response(await self.llm.agen(messages))
             tool_call = parse_tool_call(output)
-            if tool_call is None or not self.tool_runner.enabled_tools:
+            if tool_call is None or not self.tool_runner.has_tools:
                 return output
             messages.append({"role": "assistant", "content": output})
             observations = self.tool_runner.execute_tool_call(tool_call, raw_inputs)
