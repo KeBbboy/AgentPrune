@@ -162,6 +162,14 @@ def cost_count_llama3(prompt, response, model, usage=None):
         pricing = MODEL_PRICING["qwen3-32b"]
         price = (billed_prompt * pricing["input"] + 
                  billed_completion * pricing["output"]) / 1000000
+    elif "qwen2.5-14b-instruct" in model_lower:
+        pricing = MODEL_PRICING["qwen2.5-14b-instruct"]
+        price = (billed_prompt * pricing["input"] + 
+                 billed_completion * pricing["output"]) / 1000000
+    elif "qwen2.5-32b-instruct" in model_lower:
+        pricing = MODEL_PRICING["qwen2.5-32b-instruct"]
+        price = (billed_prompt * pricing["input"] + 
+                 billed_completion * pricing["output"]) / 1000000
 
     Cost.instance().value += price
     PromptTokens.instance().value += prompt_len
@@ -349,6 +357,18 @@ MODEL_PRICING = {
     "qwen3-32b": {
         "input": 1.00,
         "output": 4.00,
+        "cache_read": 0,
+        "unit": "元/百万tokens"
+    },
+    "qwen2.5-14b-instruct": {
+        "input": 0.70,
+        "output": 0.70,
+        "cache_read": 0,
+        "unit": "元/百万tokens"
+    },
+    "qwen2.5-32b-instruct": {
+        "input": 1.26,
+        "output": 1.26,
         "cache_read": 0,
         "unit": "元/百万tokens"
     },
