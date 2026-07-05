@@ -266,14 +266,14 @@ async def main():
     if args.optimized_temporal or args.optimized_spatial:
         # graph.optimized_spatial=True
         # graph.optimized_temporal=True
-        for i_batch in range(0):
+        for i_batch in range(args.num_iterations):
             print(f"Train batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []
             answers = []
             add_losses = []
             
-            current_batch = dataloader(train_dataset,10,i_batch)
+            current_batch = dataloader(train_dataset,args.batch_size,i_batch)
             if current_batch is None:
                 print("No more data available.")
                 break
