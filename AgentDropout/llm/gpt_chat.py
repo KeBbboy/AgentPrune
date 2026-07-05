@@ -446,6 +446,12 @@ async def achat_qwen(model: str, msg: List[Dict], max_tokens: Optional[int] = No
     # the SDK choking on dataclass objects.
     messages = _normalize_openai_messages(msg)
     client = AsyncOpenAI(api_key=QWEN_KEY, base_url=QWEN_URL)
+    # Qwen2.5 系列服务端 max_seq_len=32768, 多 agent 全连接 + 多轮对话会让 prompt
+    # 累积到 ~33k token, 此时若回复预算仍用默认 32768 就会触发
+    # ``max_total_tokens must be less than or equal to max_seq_len`` 的 400 错误。
+    # 当调用方没显式传 max_tokens 且 model 命中 Qwen2.5 时, 把预算下调到 4096。
+    if max_tokens is None and "qwen2.5" in (model or "").lower():
+        max_tokens = 4096
     try:
         async with _SEMA:
             await _wait_slot()
