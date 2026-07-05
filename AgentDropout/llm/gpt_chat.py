@@ -576,17 +576,23 @@ class LlamaChat(LLM):
     # thinking-budget call against Qwen3, which routinely emits multi-KB
     # reasoning plus a final ``Answer: X`` line.
     DEFAULT_MAX_TOKENS = MAX_TOKENS
+    QWEN25_DEFAULT_MAX_TOKENS = 4096
     DEFAULT_TEMPERATURE = TEMPERATURE
 
     def __init__(self, model_name: str):
         self.model_name = model_name
 
+    def _defaults(self, max_tokens, temperature, num_comps):
+        if max_tokens is None and "qwen2.5" in (self.model_name or "").lower():
+            max_tokens = self.QWEN25_DEFAULT_MAX_TOKENS
+        return _defaults(self, max_tokens, temperature, num_comps)
+
     async def agen(self, messages: List[Message], max_tokens=None, temperature=None, num_comps=None):
-        max_tokens, temperature, num_comps = _defaults(self, max_tokens, temperature, num_comps)
+        max_tokens, temperature, num_comps = self._defaults(max_tokens, temperature, num_comps)
         return await achat_qwen(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature)
 
     def gen(self, messages: List[Message], max_tokens=None, temperature=None, num_comps=None):
-        max_tokens, temperature, num_comps = _defaults(self, max_tokens, temperature, num_comps)
+        max_tokens, temperature, num_comps = self._defaults(max_tokens, temperature, num_comps)
         return achat_qwen(self.model_name, _to_msg_list(messages), max_tokens=max_tokens, temperature=temperature)
 
 
