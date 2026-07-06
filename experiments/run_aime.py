@@ -56,7 +56,7 @@ def parse_args():
             "Use --enabled_tools with no values for no tools."
         ),
     )
-    parser.add_argument("--direct_tool_call", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--direct_tool_call", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--web_tool_provider", type=str, default="tavily")
     parser.add_argument("--top_k_results", type=int, default=3)
     parser.add_argument("--max_search_limit", type=int, default=3)
