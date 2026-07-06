@@ -205,24 +205,34 @@ class AIMEPromptSet(BenchmarkPromptSet):
     answer_kind = "math"
 
     @classmethod
-    def _answer_format(cls) -> str:
-        # Stricter AIME-specific contract: the answer is always a non-negative
-        # integer in [0, 999], and we ask the model to emit it in two redundant
-        # markers so the official extractor (extract_official_numeric_answer
-        # in AgentDropout/benchmarks/agent_benchmarks.py) can recover it even
-        # if the model is truncated mid-reasoning.
-        #
-        # The previous wording ("End with exactly one line: The answer is N,
-        # where N is the final integer.") was too permissive and produced
-        # predictions like "Wait, let" or "</think>" in MiniMax-M3 logs when
-        # the model ran out of tokens before producing a final line. Asking
-        # for \boxed{N} on a dedicated line gives the extractor an anchor
-        # that survives the answer_key line being dropped.
+    def get_analyze_constraint(cls, role: str, use_structured_output: bool = False) -> str:
         return (
-            "The answer is a non-negative integer between 0 and 999.\n"
-            "End your reply with exactly these two lines and nothing after:\n"
-            "The answer is N\n"
-            "\\boxed{N}\n"
-            "where N is the same integer in both lines. Do not write any text\n"
-            "after the \\boxed{N} line."
+            "You are a mathematical reasoning assistant. Solve the AIME problem accurately.\n"
+            "Accuracy is more important than brevity. Work carefully through the reasoning, "
+            "and verify numerical results whenever possible.\n"
+            "Do not claim to use computation, search, external references, or tools unless an "
+            "actual tool observation is provided in the conversation.\n"
+            "Before giving the final answer, check arithmetic, edge cases, and whether the "
+            "result satisfies the problem statement.\n"
+            "For AIME, the final answer must be a non-negative integer from 0 to 999. "
+            "If your computed answer is outside this range, re-check the interpretation and arithmetic.\n"
+            f"{cls._answer_format()}"
+        )
+
+    @classmethod
+    def get_decision_constraint(cls) -> str:
+        return (
+            "You will receive an AIME problem and outputs from other agents. "
+            "Choose the most reliable final answer by checking the mathematical reasoning, "
+            "arithmetic, and AIME range constraint.\n"
+            "Do not introduce a new answer unless the provided reasoning is clearly wrong.\n"
+            f"{cls._answer_format()}"
+        )
+
+    @classmethod
+    def _answer_format(cls) -> str:
+        return (
+            "Provide the final answer in the format:\n"
+            "\\boxed{YOUR_ANSWER}\n"
+            "where YOUR_ANSWER is the final integer. Do not write anything after the boxed answer."
         )
