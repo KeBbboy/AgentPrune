@@ -1,3 +1,5 @@
+import re
+from collections import Counter
 from typing import List,Any,Dict
 
 from AgentDropout.graph.node import Node
@@ -108,6 +110,43 @@ class FinalRefer(Node):
             return votes[0]
         return None
 
+    def _numeric_majority_answer(self, spatial_info: Dict[str, Any]) -> str | None:
+        if self.domain != "aime":
+            return None
+
+        def _get_output_content(output):
+            if isinstance(output, dict) and 'full_text' in output:
+                return output['full_text']
+            return output
+
+        votes = []
+        for info in spatial_info.values():
+            output = info.get("output", "") if isinstance(info, dict) else ""
+            output_content = _get_output_content(output)
+            try:
+                vote = self.prompt_set.postprocess_answer(output_content)
+            except Exception:
+                vote = ""
+            if not vote:
+                continue
+            try:
+                value = int(float(str(vote).replace(",", "")))
+            except ValueError:
+                match = re.search(r"-?\d+(?:\.0+)?", str(vote).replace(",", ""))
+                if match is None:
+                    continue
+                value = int(float(match.group(0)))
+            votes.append(value)
+
+        if not votes:
+            return None
+
+        counts = Counter(votes)
+        answer, count = counts.most_common(1)[0]
+        if count > 1 or len(counts) == 1:
+            return str(answer)
+        return None
+
     def _process_inputs(self, raw_inputs:Dict[str,str], spatial_info:Dict[str,Any], temporal_info:Dict[str,Any], **kwargs)->List[Any]:
         """ To be overriden by the descendant class """
         """ Process the raw_inputs(most of the time is a List[Dict]) """
@@ -131,6 +170,10 @@ class FinalRefer(Node):
     def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
         """ To be overriden by the descendant class """
         """ Use the processed input to get the result """
+        numeric_answer = self._numeric_majority_answer(spatial_info)
+        if numeric_answer is not None:
+            return numeric_answer
+
         unanimous_answer = self._unanimous_non_scenario_answer(input, spatial_info)
         if unanimous_answer is not None:
             return unanimous_answer
@@ -143,6 +186,10 @@ class FinalRefer(Node):
     async def _async_execute(self, input:Dict[str,str],  spatial_info:Dict[str,Any], temporal_info:Dict[str,Any],**kwargs):
         """ To be overriden by the descendant class """
         """ Use the processed input to get the result """
+        numeric_answer = self._numeric_majority_answer(spatial_info)
+        if numeric_answer is not None:
+            return numeric_answer
+
         unanimous_answer = self._unanimous_non_scenario_answer(input, spatial_info)
         if unanimous_answer is not None:
             return unanimous_answer

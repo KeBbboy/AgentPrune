@@ -133,6 +133,23 @@ def evaluate_with_math_verify(prediction: str, ground_truth: str) -> bool:
     return normalized_match(prediction, ground_truth)
 
 
+def _extract_int_answer(value: str) -> Optional[int]:
+    text = strip_latex_wrappers(str(value or "")).replace(",", "")
+    match = re.search(r"-?\d+(?:\.0+)?", text)
+    if match is None:
+        return None
+    try:
+        return int(float(match.group(0)))
+    except ValueError:
+        return None
+
+
+def _integer_match(prediction: str, ground_truth: str) -> bool:
+    pred_int = _extract_int_answer(prediction)
+    gt_int = _extract_int_answer(ground_truth)
+    return pred_int is not None and gt_int is not None and pred_int == gt_int
+
+
 def _evaluate_answer_single(
     prediction: str,
     ground_truth: str,
@@ -144,6 +161,8 @@ def _evaluate_answer_single(
     stripped_pred = strip_latex_wrappers(pred)
     stripped_gt = strip_latex_wrappers(gt)
     if normalize_answer(stripped_pred) == normalize_answer(stripped_gt):
+        return {"correct": True, "accuracy": 1.0, "em": 1.0, "f1": 1.0}
+    if choices is None and is_math_answer(stripped_gt) and _integer_match(stripped_pred, stripped_gt):
         return {"correct": True, "accuracy": 1.0, "em": 1.0, "f1": 1.0}
 
     if choices is not None:
