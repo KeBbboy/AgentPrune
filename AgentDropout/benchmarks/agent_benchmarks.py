@@ -209,6 +209,16 @@ def extract_official_numeric_answer(answer: Any) -> str:
     return extract_numeric_answer(answer)
 
 
+def _aime_integer_answer(answer: Any) -> Optional[int]:
+    value = extract_official_numeric_answer(answer)
+    if not value:
+        return None
+    try:
+        return int(value.replace(",", ""))
+    except ValueError:
+        return None
+
+
 def score_benchmark_prediction(
     dataset_name: str,
     prediction: Any,
@@ -224,10 +234,17 @@ def score_benchmark_prediction(
         return result
 
     if dataset_name == "aime":
-        result = evaluate_math(pred_text, ground_truth)
-        # Use the robust extractor first; only fall back to the raw prediction
-        # text when no integer could be salvaged from the model's output.
-        result["prediction"] = extract_official_numeric_answer(prediction) or pred_text
+        pred_int = _aime_integer_answer(prediction)
+        gt_int = _aime_integer_answer(ground_truth)
+        if pred_int is not None and gt_int is not None:
+            score = 1.0 if pred_int == gt_int else 0.0
+            result = {"correct": bool(score), "accuracy": score, "em": score, "f1": score}
+            result["prediction"] = str(pred_int)
+        else:
+            result = evaluate_math(pred_text, ground_truth)
+            # Use the robust extractor first; only fall back to the raw prediction
+            # text when no integer could be salvaged from the model's output.
+            result["prediction"] = extract_official_numeric_answer(prediction) or pred_text
         result["score"] = result.get("accuracy", float(result.get("correct", False)))
         return result
 
