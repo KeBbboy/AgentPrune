@@ -49,10 +49,10 @@ def parse_args():
     parser.add_argument(
         "--enabled_tools",
         nargs="*",
-        default=["code_generator", "web_search", "text_inspector"],
+        default=None,
         help=(
-            "Tools to enable for BenchmarkAgent. Defaults to "
-            "['code_generator', 'web_search', 'text_inspector']. "
+            "Tools to enable for BenchmarkAgent. Defaults to the AIME benchmark "
+            "spec tools ['web_search', 'code_generator']. "
             "Use --enabled_tools with no values for no tools."
         ),
     )
