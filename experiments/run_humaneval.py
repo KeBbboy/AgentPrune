@@ -1,6 +1,7 @@
 import sys
 import os
 import argparse
+import re
 import yaml
 import json
 import time
@@ -11,6 +12,40 @@ import torch.nn.functional as F
 import copy
 from typing import List,Union,Literal
 import random
+
+# 从 LLMResponse.full_text 中抽可执行代码: 兼容 <think>...、```python ...```、裸代码
+# 1) ```python ... ``` 闭合围栏 (非贪婪)
+_CODE_FENCE_RE = re.compile(
+    r"```(?:python|py)?\s*\n(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+# 2) ```python 开头但被截断 (MiniMax-M3 偶发, 没有闭合围栏): 从开头剥到字符串末尾
+_OPEN_FENCE_RE = re.compile(
+    r"```(?:python|py)?\s*\n(.*)$",
+    re.DOTALL | re.IGNORECASE,
+)
+# 3) 剥离 <think>...</think> 块
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+def extract_code(text: str) -> str:
+    """从 LLMResponse.full_text 里抽出可执行代码.
+
+    优先匹配 ```python ... ``` 围栏; 找不到闭合围栏时尝试从 ```python 开头剥到末尾;
+    再退化为 <think>...</think> 之后的剩余文本; 都没有则原样返回.
+    """
+    if not text:
+        return text
+    # 优先: 完整闭合围栏
+    m = _CODE_FENCE_RE.search(text)
+    if m:
+        return m.group(1).rstrip()
+    # 次优: 只有开头的 ```python 没有闭合 (截断)
+    m = _OPEN_FENCE_RE.search(text)
+    if m:
+        return m.group(1).rstrip()
+    # 再次: 剥离思考段落后, 取剩余文本
+    rest = _THINK_RE.sub("", text)
+    return rest.strip()
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -182,7 +217,7 @@ async def main():
             for task, answer, log_prob, add_loss, test in zip(current_batch, raw_answers, log_probs, add_losses, tests):
                 if not isinstance(answer,list):
                     raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
-                answer = answer[0].lstrip("```python\n").rstrip("\n```")
+                answer = extract_code(answer[0])
                 is_solved, _, _ = PyExecutor().execute(answer, [test], timeout=5)
                 total_solved = total_solved + is_solved
                 total_executed = total_executed + 1
@@ -309,7 +344,7 @@ async def main():
             for task, answer, log_prob, add_loss, test in zip(current_batch, raw_answers, log_probs, add_losses, tests):
                 if not isinstance(answer,list):
                     raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
-                answer = answer[0].lstrip("```python\n").rstrip("\n```")
+                answer = extract_code(answer[0])
                 is_solved, _, _ = PyExecutor().execute(answer, [test], timeout=100)
                 total_solved = total_solved + is_solved
                 total_executed = total_executed + 1
@@ -436,7 +471,7 @@ async def main():
         for task, answer, log_prob, add_loss, test in zip(current_batch, raw_answers, log_probs, add_losses, tests):
             if not isinstance(answer,list):
                 raise TypeError(f"Expected a list for the answer, but got {type(answer).__name__}")
-            answer = answer[0].lstrip("```python\n").rstrip("\n```")
+            answer = extract_code(answer[0])
             is_solved, _, _ = PyExecutor().execute(answer, [test], timeout=100)
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
