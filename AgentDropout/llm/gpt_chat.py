@@ -157,18 +157,23 @@ def _thinking_extra_body(model: str) -> Dict[str, Any]:
         * Qwen3: directly sets the token budget (only when 128 <= budget <= 32768)
         * MiniMax-M3: >0 for adaptive, 0 for disabled
     """
-    if not LLM_ENABLE_THINKING:
-        return {}
     model_lower = (model or "").lower()
     # Qwen3 / SiliconFlow path: enable_thinking + thinking_budget.
     if "qwen" in model_lower:
-        body: Dict[str, Any] = {"enable_thinking": True}
-        if 128 <= LLM_THINKING_BUDGET <= 32768:
+        body: Dict[str, Any] = {"enable_thinking": LLM_ENABLE_THINKING}
+        if LLM_ENABLE_THINKING and 128 <= LLM_THINKING_BUDGET <= 32768:
             body["thinking_budget"] = LLM_THINKING_BUDGET
+            # Qwen3 thinking tokens do not count toward the user-visible "max_tokens"
+            # cap on SiliconFlow, so we set max_tokens = 2 × thinking_budget to
+            # reserve generous headroom for the final answer on top of the
+            # thinking chain. Clamp to a safe upper bound to avoid 32k+ errors.
+            body["max_tokens"] = min(LLM_THINKING_BUDGET , 32768)
         return body
     # MiniMax-M3 path: thinking.type ∈ {adaptive, disabled}.
     # Use thinking_budget > 0 for adaptive, 0 for disabled.
     if "minimax" in model_lower or "MiniMax" in model:
+        if not LLM_ENABLE_THINKING:
+            return {"thinking": {"type": "disabled"}}
         thinking_type = "adaptive" if LLM_THINKING_BUDGET > 0 else "disabled"
         return {"thinking": {"type": thinking_type}}
     return {}
