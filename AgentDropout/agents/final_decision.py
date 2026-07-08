@@ -7,6 +7,7 @@ from AgentDropout.agents.agent_registry import AgentRegistry
 from AgentDropout.llm.llm_registry import LLMRegistry
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
 from AgentDropout.tools.coding.python_executor import PyExecutor
+from AgentDropout.benchmarks.agent_benchmarks import extract_official_numeric_answer
 
 @AgentRegistry.register('FinalWriteCodeAG')
 @AgentRegistry.register('FinalWriteCode')
@@ -124,7 +125,7 @@ class FinalRefer(Node):
             output = info.get("output", "") if isinstance(info, dict) else ""
             output_content = _get_output_content(output)
             try:
-                vote = self.prompt_set.postprocess_answer(output_content)
+                vote = extract_official_numeric_answer(output_content)
             except Exception:
                 vote = ""
             if not vote:
