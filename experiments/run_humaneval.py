@@ -66,6 +66,7 @@ from AgentDropout.utils.utils import nuclear_norm,frobenius_norm
 
 def load_result(result_file):
     if not result_file.exists():
+        Path(result_file).parent.mkdir(parents=True, exist_ok=True)
         with open(result_file, 'w',encoding='utf-8') as file:
             json.dump([], file)
 
