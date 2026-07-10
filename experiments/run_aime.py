@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -20,6 +22,7 @@ from AgentDropout.graph.graph import Graph
 from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, print_token_stats
+from AgentDropout.utils.utils import frobenius_norm, nuclear_norm
 from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
 
 
@@ -31,14 +34,30 @@ def parse_args():
     parser.add_argument("--split", type=str, default=None)
     parser.add_argument("--data_dir", type=str, default="dataset")
     parser.add_argument("--dataset_path", type=str, default=None)
+    parser.add_argument("--train_split", type=str, default=None,
+                        help="Split used only for AgentPrune training.")
+    parser.add_argument("--train_data_dir", type=str, default=None,
+                        help="Data directory used only for AgentPrune training.")
+    parser.add_argument("--train_dataset_path", type=str, default="dataset/AIME/train_extra.jsonl",
+                        help="Dataset path used only for AgentPrune training.")
+    parser.add_argument("--train_limit_questions", type=int, default=20,
+                        help="Number of training questions for AgentPrune. Default 20.")
     parser.add_argument("--result_file", type=str, default=None)
     parser.add_argument("--limit_questions", type=int, default=0)
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--llm_name", type=str, default="MiniMax-M3")
     parser.add_argument("--mode", type=str, default="FullConnected", choices=MODES)
+    parser.add_argument("--lr", type=float, default=0.1, help="AgentPrune learning rate.")
+    parser.add_argument("--delta", type=float, default=0.1, help="Regularization margin for fixed masks.")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--agent_names", nargs="+", type=str, default=["BenchmarkAgent"])
     parser.add_argument("--agent_nums", nargs="+", type=int, default=[4])
+    parser.add_argument("--num_iterations", type=int, default=10,
+                        help="Number of AgentPrune optimization iterations.")
+    parser.add_argument("--imp_per_iterations", type=int, default=5,
+                        help="Prune every N optimization iterations.")
+    parser.add_argument("--pruning_rate", type=float, default=0.25,
+                        help="Rate of graph edge pruning.")
     parser.add_argument("--num_rounds", type=int, default=1)
     parser.add_argument("--domain", type=str, default="aime")
     parser.add_argument("--decision_method", type=str, default="FinalRefer")
@@ -72,6 +91,8 @@ def parse_args():
         parser.error("The number of agent names must match the number of agent counts.")
     if args.limit_questions < 0:
         parser.error("--limit_questions must be >= 0.")
+    if args.train_limit_questions < 0:
+        parser.error("--train_limit_questions must be >= 0.")
     return args
 
 
@@ -183,6 +204,11 @@ def build_node_kwargs(
 
 
 def build_graph(args, dataset: AgentBenchmarkDataset) -> Graph:
+    graph, _ = build_graph_with_kwargs(args, dataset)
+    return graph
+
+
+def build_graph_with_kwargs(args, dataset: AgentBenchmarkDataset) -> tuple[Graph, Dict[str, Any]]:
     enabled_tools = dataset.default_tools if args.enabled_tools is None else list(args.enabled_tools)
     tool_config = {
         "enabled_tools": enabled_tools,
@@ -198,7 +224,7 @@ def build_graph(args, dataset: AgentBenchmarkDataset) -> Graph:
         agent_names = agent_names[:1] or ["BenchmarkAgent"]
     node_kwargs = build_node_kwargs(args.mode, agent_names, tool_config, enabled_tools)
     kwargs = get_kwargs(args.mode, len(agent_names), node_kwargs=node_kwargs)
-    return Graph(
+    graph = Graph(
         domain=args.domain or dataset.name,
         llm_name=args.llm_name,
         agent_names=agent_names,
@@ -210,6 +236,135 @@ def build_graph(args, dataset: AgentBenchmarkDataset) -> Graph:
         dec=args.dec,
         **kwargs,
     )
+    return graph, kwargs
+
+
+def _agent_count(graph: Graph) -> int:
+    return len(graph.agent_names)
+
+
+def _mask_matrix(mask_values: List[List[int]], n_agents: int) -> torch.Tensor:
+    return torch.tensor(mask_values, dtype=torch.float32).reshape((n_agents, n_agents))
+
+
+def _reshape_logits(logits, n_agents: int):
+    if isinstance(logits, torch.nn.ParameterList):
+        return [param.reshape((n_agents, n_agents)) for param in logits]
+    return logits.reshape((n_agents, n_agents))
+
+
+def _regularization_loss(graph: Graph, kwargs: Dict[str, Any], args) -> torch.Tensor:
+    n_agents = _agent_count(graph)
+    spatial_fixed = _mask_matrix(kwargs["fixed_spatial_masks"], n_agents)
+    temporal_fixed = _mask_matrix(kwargs["fixed_temporal_masks"], n_agents)
+    spatial_train = _reshape_logits(graph.spatial_logits, n_agents)
+    temporal_train = _reshape_logits(graph.temporal_logits, n_agents)
+
+    if not graph.diff:
+        loss_s = nuclear_norm(spatial_train)
+        loss_t = nuclear_norm(temporal_train)
+        frob_loss_s = frobenius_norm(spatial_fixed, spatial_train)
+        frob_loss_t = frobenius_norm(temporal_fixed, temporal_train)
+    else:
+        loss_s = torch.mean(torch.stack([nuclear_norm(matrix) for matrix in spatial_train]))
+        loss_t = torch.mean(torch.stack([nuclear_norm(matrix) for matrix in temporal_train]))
+        frob_loss_s = torch.mean(torch.stack([frobenius_norm(spatial_fixed, matrix) for matrix in spatial_train]))
+        frob_loss_t = torch.mean(torch.stack([frobenius_norm(temporal_fixed, matrix) for matrix in temporal_train]))
+
+    return loss_s + loss_t + F.relu(frob_loss_s - args.delta) + F.relu(frob_loss_t - args.delta)
+
+
+async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, kwargs: Dict[str, Any]) -> None:
+    records = selected_records(dataset, args.train_limit_questions)
+    if not records:
+        print("No AIME records selected for AgentPrune training.")
+        return
+    print(f"AgentPrune training records: {len(records)} / {len(dataset)}")
+
+    if not graph.diff:
+        optimizer = torch.optim.Adam([graph.spatial_logits, graph.temporal_logits], lr=args.lr)
+    else:
+        optimizer = torch.optim.Adam(
+            list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),
+            lr=args.lr,
+        )
+
+    graph.optimized_spatial = args.optimized_spatial
+    graph.optimized_temporal = args.optimized_temporal
+    loader_index = 0
+
+    for i_iter in range(args.num_iterations):
+        print(f"Train {i_iter + 1}/{args.num_iterations}", 80 * "-")
+        start_ts = time.time()
+        tasks = []
+        correct_records = []
+        add_losses = []
+
+        for _ in range(args.batch_size):
+            record = records[loader_index % len(records)]
+            loader_index += 1
+            realized_graph = copy.deepcopy(graph)
+            realized_graph.spatial_logits = graph.spatial_logits
+            realized_graph.temporal_logits = graph.temporal_logits
+            input_dict = dataset.record_to_input(record)
+            tasks.append(asyncio.create_task(realized_graph.arun(input_dict, args.num_rounds, compress_messages=False)))
+            correct_records.append(record)
+            add_losses.append(_regularization_loss(realized_graph, kwargs, args))
+
+        raw_results = await asyncio.gather(*tasks)
+        loss_list: List[torch.Tensor] = []
+        utilities: List[float] = []
+        answers: List[str] = []
+
+        for raw_result, add_loss, record in zip(raw_results, add_losses, correct_records):
+            raw_answer, log_prob = raw_result
+            answer_text = raw_answer[0] if isinstance(raw_answer, list) and raw_answer else raw_answer
+            score = dataset.score(answer_text, record)
+            utility = float(score.get("score", score.get("accuracy", float(score.get("correct", False)))))
+            utilities.append(utility)
+            answers.append(str(score.get("prediction", dataset.postprocess_answer(answer_text))))
+            loss_list.append(-log_prob * utility + add_loss)
+            print(f"ID: {record.question_id}")
+            print(f"Prediction: {answers[-1]}")
+            print(f"Target: {record.answer}")
+            print(f"Correct: {score.get('correct', False)}")
+
+        total_loss = torch.mean(torch.stack(loss_list))
+        optimizer.zero_grad()
+        total_loss.backward()
+        optimizer.step()
+
+        if not graph.diff:
+            spatial_probs = torch.sigmoid(graph.spatial_logits)
+            temporal_probs = torch.sigmoid(graph.temporal_logits)
+        else:
+            spatial_probs = [torch.sigmoid(logit) for logit in graph.spatial_logits]
+            temporal_probs = [torch.sigmoid(logit) for logit in graph.temporal_logits]
+
+        print("answers:", answers)
+        print(f"Batch time {time.time() - start_ts:.3f}")
+        print("utilities:", utilities)
+        print("loss:", total_loss.item())
+        print("Spatial logits:", graph.spatial_logits)
+        print("Temporal logits:", graph.temporal_logits)
+        print("Spatial probs:", spatial_probs)
+        print("Temporal probs:", temporal_probs)
+        print_token_stats()
+
+        if (i_iter + 1) % args.imp_per_iterations == 0:
+            if not graph.diff:
+                spatial_masks, temporal_masks = graph.update_masks(args.pruning_rate)
+            else:
+                spatial_masks, temporal_masks = graph.update_masks_diff(args.pruning_rate)
+            print("spatial masks:", spatial_masks)
+            print("temporal masks:", temporal_masks)
+            if not graph.diff:
+                print("spatial sparsity:", spatial_masks.sum() / spatial_masks.numel())
+                print("temporal sparsity:", temporal_masks.sum() / temporal_masks.numel())
+            elif len(spatial_masks) > 0:
+                print("spatial sparsity:", spatial_masks[0].sum() / spatial_masks[0].numel())
+                if len(temporal_masks) > 0:
+                    print("temporal sparsity:", temporal_masks[0].sum() / temporal_masks[0].numel())
 
 
 async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[str, Any]:
@@ -361,7 +516,38 @@ async def main():
         data_dir=args.data_dir,
         dataset_path=args.dataset_path,
     )
-    graph = build_graph(args, dataset)
+    graph, kwargs = build_graph_with_kwargs(args, dataset)
+    if not args.dry_run and (args.optimized_spatial or args.optimized_temporal):
+        if not (args.train_dataset_path or args.train_split or args.train_data_dir):
+            raise ValueError(
+                "AIME AgentPrune training requires an independent training dataset. "
+                "Please set --train_dataset_path or --train_split/--train_data_dir so training "
+                "does not reuse the 60 evaluation questions."
+            )
+        if args.train_dataset_path and not Path(args.train_dataset_path).exists():
+            raise FileNotFoundError(
+                f"AIME AgentPrune training dataset not found: {args.train_dataset_path}. "
+                "Create this independent jsonl file or pass --train_dataset_path to another "
+                "file that does not overlap with the evaluation questions."
+            )
+        train_dataset = AgentBenchmarkDataset(
+            name="aime",
+            split=args.train_split or args.split,
+            data_dir=args.train_data_dir or args.data_dir,
+            dataset_path=args.train_dataset_path,
+        )
+        eval_ids = {record.question_id for record in selected_records(dataset, args.limit_questions)}
+        overlap_ids = eval_ids.intersection(record.question_id for record in selected_records(train_dataset, args.train_limit_questions))
+        if overlap_ids:
+            raise ValueError(
+                f"Training dataset overlaps with evaluation questions: {sorted(overlap_ids)[:10]}. "
+                "Please provide a separate AIME training file."
+            )
+        await train_agentprune(graph, train_dataset, args, kwargs)
+        print("Final spatial logits:", graph.spatial_logits)
+        print("Final temporal logits:", graph.temporal_logits)
+        print("Final spatial masks:", graph.spatial_masks)
+        print("Final temporal masks:", graph.temporal_masks)
     summary = await evaluate(graph, dataset, args)
     print(f"Score: {summary}")
 
