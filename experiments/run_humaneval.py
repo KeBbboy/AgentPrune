@@ -162,14 +162,14 @@ async def main():
         else:
             optimizer = torch.optim.Adam(list(graph.spatial_logits_1.parameters()) + list(graph.temporal_logits_1.parameters()),lr=args.lr)
 
-        for i_batch in range(2):
+        for i_batch in range(args.num_iterations):
             print(f"dec Batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []
             tests = []
             add_losses = []        
-            current_batch = dataloader(dataset,20,i_batch)
-            if current_batch is None:
+            current_batch = dataloader(dataset,args.batch_size,i_batch)
+            if not current_batch:
                 print("No more data available.")
                 break
             
@@ -282,21 +282,21 @@ async def main():
     else:
         optimizer = torch.optim.Adam(list(graph.spatial_logits.parameters()) + list(graph.temporal_logits.parameters()),lr=args.lr)  
 
-    num_batches = int(len(dataset)/args.batch_size)
+    num_batches = (len(dataset) + args.batch_size - 1) // args.batch_size
     total_solved, total_executed = (0, 0)
 
     if args.optimized_temporal or args.optimized_spatial:
         graph.optimized_spatial=True
         graph.optimized_temporal=True
 
-        for i_batch in range(4):
+        for i_batch in range(args.num_iterations):
             print(f"train Batch {i_batch}",80*'-')
             start_ts = time.time()
             answer_log_probs = []
             tests = []
             add_losses = []        
-            current_batch = dataloader(dataset,10,i_batch)
-            if current_batch is None:
+            current_batch = dataloader(dataset,args.batch_size,i_batch)
+            if not current_batch:
                 print("No more data available.")
                 break
             
@@ -390,7 +390,7 @@ async def main():
             print("Spatial probs:", spatial_probs)
             print("Temporal probs:", temporal_probs)
 
-            if (i_batch+1)%2 == 0 and i_batch < 4 and (args.optimized_spatial or args.optimized_temporal):
+            if (i_batch+1) % args.imp_per_iterations == 0 and (args.optimized_spatial or args.optimized_temporal):
                 if not graph.diff:
                     spatial_masks, temporal_masks = graph.update_masks(args.pruning_rate)
                 else:
@@ -416,14 +416,14 @@ async def main():
     BilledCompletionTokens.instance().reset()
     total_solved, total_executed = (0, 0)
 
-    for i_batch in range(4,17):
+    for i_batch in range(args.num_iterations, num_batches):
         print(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
         answer_log_probs = []
         tests = []
         add_losses = []        
-        current_batch = dataloader(dataset,10,i_batch)
-        if current_batch is None:
+        current_batch = dataloader(dataset,args.batch_size,i_batch)
+        if not current_batch:
             print("No more data available.")
             break
         
