@@ -52,7 +52,7 @@ from AgentDropout.llm.format import Message
 from AgentDropout.llm.llm import LLM
 from AgentDropout.llm.llm_registry import LLMRegistry
 from AgentDropout.llm.price import cost_count, cost_count_llama3
-from AgentDropout.utils.globals import TokenUsageRecords
+from AgentDropout.utils.globals import TokenUsageRecords, get_token_usage_context
 
 
 load_dotenv()
@@ -389,11 +389,11 @@ _minimax_request_kwargs = _request_kwargs
 def _record_usage(prompt: str, response: str, usage: Any = None, model: str = MODEL) -> None:
     model_lower = model.lower()
     if "qwen" in model_lower:
-        _, prompt_tokens, completion_tokens = cost_count_llama3(prompt, response, model, usage=usage)
+        price, prompt_tokens, completion_tokens = cost_count_llama3(prompt, response, model, usage=usage)
     elif "minimax" in model_lower or "MiniMax" in model:
-        _, prompt_tokens, completion_tokens = cost_count(prompt, response, model, usage=usage)
+        price, prompt_tokens, completion_tokens = cost_count(prompt, response, model, usage=usage)
     else:
-        _, prompt_tokens, completion_tokens = cost_count(prompt, response, model, usage=usage)
+        price, prompt_tokens, completion_tokens = cost_count(prompt, response, model, usage=usage)
     
     cached_tokens = None
     reasoning_tokens = None
@@ -407,13 +407,21 @@ def _record_usage(prompt: str, response: str, usage: Any = None, model: str = MO
         completion_details = getattr(usage, "completion_tokens_details", None)
         if completion_details:
             reasoning_tokens = getattr(completion_details, "reasoning_tokens", None)
+    cached_value = int(cached_tokens or 0)
+    reasoning_value = int(reasoning_tokens or 0)
+    billed_prompt_tokens = max(int(prompt_tokens or 0) - cached_value, 0)
+    billed_completion_tokens = int(completion_tokens or 0)
     
     TokenUsageRecords.instance().value.append({
+        **get_token_usage_context(),
         "model": model,
+        "cost": price,
         "input_tokens": prompt_tokens,
         "output_tokens": completion_tokens,
-        "cached_tokens": cached_tokens,
-        "reasoning_tokens": reasoning_tokens,
+        "cached_tokens": cached_value,
+        "reasoning_tokens": reasoning_value,
+        "billed_prompt_tokens": billed_prompt_tokens,
+        "billed_completion_tokens": billed_completion_tokens,
     })
     if LOG_USAGE:
         cached_str = f" cached={cached_tokens}" if cached_tokens else ""
@@ -493,7 +501,7 @@ async def achat_qwen(model: str, msg: List[Dict], max_tokens: Optional[int] = No
         reasoning_content = getattr(message, "reasoning_content", None)
         if isinstance(text, str):
             prompt = "".join(item["content"] for item in messages)
-            cost_count_llama3(prompt, text, model, usage=completion.usage)
+            _record_usage(prompt, text, usage=completion.usage, model=model)
             if reasoning_content:
                 return create_llm_response_from_parts(reasoning_content, text)
             return split_thinking(text)

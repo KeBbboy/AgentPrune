@@ -1,6 +1,7 @@
 import sys
 import random
-from typing import Union, Literal, List
+import contextvars
+from typing import Any, Dict, Union, Literal, List
 from transformers import AutoTokenizer
 
 class Singleton:
@@ -49,6 +50,25 @@ class TokenUsageRecords(Singleton):
 
     def reset(self):
         self.value = []
+
+
+TokenUsageContext = contextvars.ContextVar("token_usage_context", default={})
+
+
+def set_token_usage_context(context: Dict[str, Any]):
+    """设置当前异步任务的 token 归因上下文。"""
+    return TokenUsageContext.set(dict(context))
+
+
+def reset_token_usage_context(token) -> None:
+    """恢复上一个 token 归因上下文。"""
+    TokenUsageContext.reset(token)
+
+
+def get_token_usage_context() -> Dict[str, Any]:
+    """读取当前异步任务的 token 归因上下文。"""
+    value = TokenUsageContext.get()
+    return dict(value) if isinstance(value, dict) else {}
 
 class Time(Singleton):
     def __init__(self):
