@@ -76,6 +76,7 @@ class Graph(ABC):
         # self.dec=False
         self.dec_1=False
         self.skip_nodes = []
+        self.sampled_edge_records: List[Dict[str, Any]] = []
 
         self.init_nodes() # add nodes to the self.nodes
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
@@ -202,8 +203,33 @@ class Graph(ABC):
             self.nodes[node_id].add_successor(self.decision_node)
 
 
+    def _reset_sampled_edge_records(self):
+        self.sampled_edge_records = []
 
-    def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None,): # temperature must >= 1.0
+
+    def _record_sampled_edge(
+        self,
+        edge_type: str,
+        edge_idx: int,
+        potential_connection: List[str],
+        selected: bool,
+        log_prob: torch.Tensor,
+        round_id: Any = None,
+    ):
+        self.sampled_edge_records.append(
+            {
+                "edge_type": edge_type,
+                "edge_idx": edge_idx,
+                "source": potential_connection[0],
+                "target": potential_connection[1],
+                "selected": bool(selected),
+                "round_id": round_id,
+                "log_prob": log_prob,
+            }
+        )
+
+
+    def construct_spatial_connection(self, temperature: float = 1.0, threshold: float = None, round_id: Any = None,): # temperature must >= 1.0
         self.clear_spatial_connection()
         log_probs = [torch.tensor(0.0, requires_grad=self.optimized_spatial)]
 
@@ -225,9 +251,13 @@ class Graph(ABC):
                     edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
-                    log_probs.append(torch.log(edge_prob))
+                    edge_log_prob = torch.log(edge_prob)
+                    log_probs.append(edge_log_prob)
+                    self._record_sampled_edge("spatial", edge_idx, potential_connection, True, edge_log_prob, round_id)
                 else:
-                    log_probs.append(torch.log(1 - edge_prob))
+                    edge_log_prob = torch.log(1 - edge_prob)
+                    log_probs.append(edge_log_prob)
+                    self._record_sampled_edge("spatial", edge_idx, potential_connection, False, edge_log_prob, round_id)
 
         return torch.sum(torch.stack(log_probs))
 
@@ -258,9 +288,13 @@ class Graph(ABC):
                     edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
                 if torch.rand(1) < edge_prob:
                     out_node.add_successor(in_node,'spatial')
-                    log_probs.append(torch.log(edge_prob))
+                    edge_log_prob = torch.log(edge_prob)
+                    log_probs.append(edge_log_prob)
+                    self._record_sampled_edge("spatial", edge_idx, potential_connection, True, edge_log_prob, round)
                 else:
-                    log_probs.append(torch.log(1 - edge_prob))
+                    edge_log_prob = torch.log(1 - edge_prob)
+                    log_probs.append(edge_log_prob)
+                    self._record_sampled_edge("spatial", edge_idx, potential_connection, False, edge_log_prob, round)
 
         return torch.sum(torch.stack(log_probs))
 
@@ -284,9 +318,13 @@ class Graph(ABC):
                 edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
-                log_probs.append(torch.log(edge_prob))
+                edge_log_prob = torch.log(edge_prob)
+                log_probs.append(edge_log_prob)
+                self._record_sampled_edge("temporal", edge_idx, potential_connection, True, edge_log_prob, round)
             else:
-                log_probs.append(torch.log(1 - edge_prob))
+                edge_log_prob = torch.log(1 - edge_prob)
+                log_probs.append(edge_log_prob)
+                self._record_sampled_edge("temporal", edge_idx, potential_connection, False, edge_log_prob, round)
 
         return torch.sum(torch.stack(log_probs))
 
@@ -311,9 +349,13 @@ class Graph(ABC):
                 edge_prob = torch.tensor(1 if edge_prob > threshold else 0)
             if torch.rand(1) < edge_prob:
                 out_node.add_successor(in_node,'temporal')
-                log_probs.append(torch.log(edge_prob))
+                edge_log_prob = torch.log(edge_prob)
+                log_probs.append(edge_log_prob)
+                self._record_sampled_edge("temporal", edge_idx, potential_connection, True, edge_log_prob, round)
             else:
-                log_probs.append(torch.log(1 - edge_prob))
+                edge_log_prob = torch.log(1 - edge_prob)
+                log_probs.append(edge_log_prob)
+                self._record_sampled_edge("temporal", edge_idx, potential_connection, False, edge_log_prob, round)
 
         return torch.sum(torch.stack(log_probs))
 
@@ -323,9 +365,10 @@ class Graph(ABC):
                   max_tries: int = 3, 
                   max_time: int = 600,) -> List[Any]:
         # inputs:{'task':"xxx"}
+        self._reset_sampled_edge_records()
         log_probs = 0
         for round in range(num_rounds):
-            log_probs += self.construct_spatial_connection()
+            log_probs += self.construct_spatial_connection(round_id=round)
             log_probs += self.construct_temporal_connection(round)
             
             in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
@@ -366,13 +409,14 @@ class Graph(ABC):
                   case: bool=False,
                   compress_messages: bool=False) -> List[Any]:
         # inputs:{'task':"xxx"}
+        self._reset_sampled_edge_records()
         log_probs = 0
         log_probs_skip = 0
         all_answers = []
         for round in range(num_rounds):
             round_answers = {}
             if not self.diff:
-                log_probs += self.construct_spatial_connection()
+                log_probs += self.construct_spatial_connection(round_id=round)
                 log_probs += self.construct_temporal_connection(round)
             else:
                 log_probs += self.construct_spatial_connection_diff(round)

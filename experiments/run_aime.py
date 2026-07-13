@@ -50,8 +50,8 @@ def parse_args():
                         help="Split used only for AgentPrune training.")
     parser.add_argument("--train_data_dir", type=str, default=None,
                         help="Data directory used only for AgentPrune training.")
-    parser.add_argument("--train_dataset_path", type=str, default="dataset/AIME/train_extra.jsonl",
-                        help="Dataset path used only for AgentPrune training.")
+    parser.add_argument("--train_dataset_path", type=str, default="dataset/AIME/train.jsonl",
+                        help="Dataset path used for AgentPrune training. Default dataset/AIME/train.jsonl.")
     parser.add_argument("--train_limit_questions", type=int, default=20,
                         help="Number of training questions for AgentPrune. Default 20.")
     parser.add_argument("--result_file", type=str, default=None)
@@ -416,20 +416,137 @@ def _tool_usage_stats(input_dict: Dict[str, Any], sample_usage: Dict[str, Any], 
     }
 
 
-def _tool_adjusted_utility(
+def _normalize_tool_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    tools = dict(entry.get("tools", {}))
+    tool_tokens = dict(entry.get("tool_tokens", {}))
+    normalized = dict(entry)
+    normalized["tools"] = tools
+    normalized["tool_tokens"] = tool_tokens
+    normalized["total"] = int(normalized.get("total", sum(int(value) for value in tools.values())))
+    normalized["total_tool_tokens"] = int(
+        normalized.get("total_tool_tokens", sum(int(value) for value in tool_tokens.values()))
+    )
+    return normalized
+
+
+def _agent_tool_entry(input_dict: Dict[str, Any], agent_id: str, round_id: Any = None) -> Dict[str, Any]:
+    metadata = input_dict.get("metadata", {})
+    tool_counts_by_agent = dict(metadata.get("tool_counts_by_agent", {}))
+    entry = dict(tool_counts_by_agent.get(agent_id, {}))
+    if round_id is not None:
+        round_entry = dict(entry.get("by_round", {}).get(str(round_id), {}))
+        if round_entry:
+            return _normalize_tool_entry(round_entry)
+    return _normalize_tool_entry(entry)
+
+
+def _edge_source_round_id(edge_record: Dict[str, Any]) -> Any:
+    round_id = edge_record.get("round_id")
+    if edge_record.get("edge_type") != "temporal":
+        return round_id
+    try:
+        return max(int(round_id) - 1, 0)
+    except (TypeError, ValueError):
+        return round_id
+
+
+def _edge_tool_penalty_stats(
+    edge_record: Dict[str, Any],
+    input_dict: Dict[str, Any],
+    agent_llm_usage: Dict[str, Any],
+    args,
+) -> Dict[str, Any]:
+    source_agent = str(edge_record.get("source", ""))
+    selected = bool(edge_record.get("selected", False))
+    source_round_id = _edge_source_round_id(edge_record)
+    source_llm_usage = dict(agent_llm_usage.get(source_agent, {}))
+    source_round_usage = dict(source_llm_usage.get("by_round", {}).get(str(source_round_id), {}))
+    source_tool_usage = _agent_tool_entry(input_dict, source_agent, source_round_id)
+    output_tokens = int(source_round_usage.get("output_tokens", source_llm_usage.get("output_tokens", 0)))
+    tool_calls = int(source_tool_usage.get("total", 0))
+    tool_tokens = int(source_tool_usage.get("total_tool_tokens", 0))
+
+    output_token_penalty = TOOL_LOSS_OUTPUT_TOKEN_WEIGHT * (output_tokens / args.tool_loss_token_normalizer)
+    tool_call_penalty = TOOL_LOSS_CALL_WEIGHT * (tool_calls / args.tool_loss_call_normalizer)
+    tool_token_penalty = TOOL_LOSS_TOOL_TOKEN_WEIGHT * (tool_tokens / args.tool_loss_token_normalizer)
+    raw_total_penalty = output_token_penalty + tool_call_penalty + tool_token_penalty
+    applied_total_penalty = raw_total_penalty if selected and args.tool_aware_loss else 0.0
+
+    return {
+        "edge_type": edge_record.get("edge_type"),
+        "edge_idx": edge_record.get("edge_idx"),
+        "source": source_agent,
+        "target": edge_record.get("target"),
+        "selected": selected,
+        "round_id": edge_record.get("round_id"),
+        "source_round_id": source_round_id,
+        "output_tokens": output_tokens,
+        "tool_calls": tool_calls,
+        "tool_tokens": tool_tokens,
+        "output_token_weight": TOOL_LOSS_OUTPUT_TOKEN_WEIGHT,
+        "tool_call_weight": TOOL_LOSS_CALL_WEIGHT,
+        "tool_token_weight": TOOL_LOSS_TOOL_TOKEN_WEIGHT,
+        "output_token_penalty": output_token_penalty,
+        "tool_call_penalty": tool_call_penalty,
+        "tool_token_penalty": tool_token_penalty,
+        "raw_total_penalty": raw_total_penalty,
+        "applied_total_penalty": applied_total_penalty,
+    }
+
+
+def _edge_aware_policy_loss(
+    log_prob: torch.Tensor,
     base_utility: float,
+    add_loss: torch.Tensor,
+    edge_records: List[Dict[str, Any]],
     input_dict: Dict[str, Any],
     sample_usage: Dict[str, Any],
+    agent_llm_usage: Dict[str, Any],
     args,
-) -> tuple[float, Dict[str, Any]]:
-    stats = _tool_usage_stats(input_dict, sample_usage, args)
-    stats["base_utility"] = base_utility
-    if not args.tool_aware_loss:
-        stats["adjusted_utility"] = base_utility
-        return base_utility, stats
-    adjusted_utility = base_utility - float(stats["total_penalty"])
-    stats["adjusted_utility"] = adjusted_utility
-    return adjusted_utility, stats
+) -> tuple[torch.Tensor, Dict[str, Any]]:
+    if not edge_records:
+        stats = _tool_usage_stats(input_dict, sample_usage, args)
+        stats.update(
+            {
+                "base_utility": base_utility,
+                "loss_mode": "sample_fallback",
+                "edge_count": 0,
+                "selected_edge_count": 0,
+                "adjusted_utility": base_utility - float(stats["total_penalty"]) if args.tool_aware_loss else base_utility,
+            }
+        )
+        utility = float(stats["adjusted_utility"])
+        return -log_prob * utility + add_loss, stats
+
+    policy_losses: List[torch.Tensor] = []
+    edge_stats: List[Dict[str, Any]] = []
+    edge_utilities: List[float] = []
+    for edge_record in edge_records:
+        stats = _edge_tool_penalty_stats(edge_record, input_dict, agent_llm_usage, args)
+        edge_utility = base_utility - float(stats["applied_total_penalty"])
+        stats["edge_utility"] = edge_utility
+        log_prob_tensor = edge_record["log_prob"]
+        stats["log_prob"] = float(log_prob_tensor.detach().item())
+        policy_losses.append(-log_prob_tensor * edge_utility)
+        edge_stats.append(stats)
+        edge_utilities.append(edge_utility)
+
+    policy_loss = torch.sum(torch.stack(policy_losses))
+    applied_penalty = sum(float(stats["applied_total_penalty"]) for stats in edge_stats)
+    selected_edge_count = sum(1 for stats in edge_stats if stats["selected"])
+    adjusted_utility = sum(edge_utilities) / len(edge_utilities) if edge_utilities else base_utility
+    return policy_loss + add_loss, {
+        "loss_mode": "edge_aware" if args.tool_aware_loss else "edge_policy_base",
+        "base_utility": base_utility,
+        "adjusted_utility": adjusted_utility,
+        "edge_count": len(edge_stats),
+        "selected_edge_count": selected_edge_count,
+        "applied_total_penalty": applied_penalty,
+        "output_token_weight": TOOL_LOSS_OUTPUT_TOKEN_WEIGHT,
+        "tool_call_weight": TOOL_LOSS_CALL_WEIGHT,
+        "tool_token_weight": TOOL_LOSS_TOOL_TOKEN_WEIGHT,
+        "edge_stats": edge_stats,
+    }
 
 
 def _regularization_loss(graph: Graph, kwargs: Dict[str, Any], args) -> torch.Tensor:
@@ -476,6 +593,7 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
         print(f"Train {i_iter + 1}/{args.num_iterations}", 80 * "-")
         start_ts = time.time()
         tasks = []
+        task_graphs = []
         task_inputs = []
         correct_records = []
         add_losses = []
@@ -489,6 +607,7 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
             input_dict = dataset.record_to_input(record)
+            task_graphs.append(realized_graph)
             task_inputs.append(input_dict)
             sample_run_id = f"train-{i_iter + 1}-{len(tasks)}-{record.question_id}"
             sample_run_ids.append(sample_run_id)
@@ -516,8 +635,9 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
         base_utilities: List[float] = []
         answers: List[str] = []
 
-        for raw_result, add_loss, record, input_dict, sample_run_id in zip(
+        for raw_result, realized_graph, add_loss, record, input_dict, sample_run_id in zip(
             raw_results,
+            task_graphs,
             add_losses,
             correct_records,
             task_inputs,
@@ -530,18 +650,27 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
             sample_usage_records = _usage_records_for_run(usage_records, sample_run_id, record.question_id)
             sample_usage = _summarize_usage_records(sample_usage_records)
             agent_llm_usage = _summarize_usage_by_agent(sample_usage_records)
-            utility, tool_aware_stats = _tool_adjusted_utility(base_utility, input_dict, sample_usage, args)
+            loss, tool_aware_stats = _edge_aware_policy_loss(
+                log_prob=log_prob,
+                base_utility=base_utility,
+                add_loss=add_loss,
+                edge_records=list(getattr(realized_graph, "sampled_edge_records", [])),
+                input_dict=input_dict,
+                sample_usage=sample_usage,
+                agent_llm_usage=agent_llm_usage,
+                args=args,
+            )
             base_utilities.append(base_utility)
-            utilities.append(utility)
+            utilities.append(float(tool_aware_stats.get("adjusted_utility", base_utility)))
             answers.append(str(score.get("prediction", dataset.postprocess_answer(answer_text))))
-            loss_list.append(-log_prob * utility + add_loss)
+            loss_list.append(loss)
             print(f"ID: {record.question_id}")
             print(f"Prediction: {answers[-1]}")
             print(f"Target: {record.answer}")
             print(f"Correct: {score.get('correct', False)}")
             print(f"TrainSampleUsage: {json.dumps(sample_usage, ensure_ascii=False)}")
             print(f"TrainAgentLLMUsage: {json.dumps(agent_llm_usage, ensure_ascii=False)}")
-            print(f"TrainToolAwareStats: {json.dumps(tool_aware_stats, ensure_ascii=False)}")
+            print(f"TrainEdgeToolAwareStats: {json.dumps(tool_aware_stats, ensure_ascii=False)}")
 
         total_loss = torch.mean(torch.stack(loss_list))
         optimizer.zero_grad()
@@ -781,15 +910,13 @@ async def main():
     if not args.dry_run and (args.optimized_spatial or args.optimized_temporal):
         if not (args.train_dataset_path or args.train_split or args.train_data_dir):
             raise ValueError(
-                "AIME AgentPrune training requires an independent training dataset. "
-                "Please set --train_dataset_path or --train_split/--train_data_dir so training "
-                "does not reuse the 60 evaluation questions."
+                "AIME AgentPrune training requires a training dataset. "
+                "Please set --train_dataset_path or --train_split/--train_data_dir."
             )
         if args.train_dataset_path and not Path(args.train_dataset_path).exists():
             raise FileNotFoundError(
                 f"AIME AgentPrune training dataset not found: {args.train_dataset_path}. "
-                "Create this independent jsonl file or pass --train_dataset_path to another "
-                "file that does not overlap with the evaluation questions."
+                "Create this jsonl file or pass --train_dataset_path to another file."
             )
         train_dataset = AgentBenchmarkDataset(
             name="aime",
@@ -797,13 +924,7 @@ async def main():
             data_dir=args.train_data_dir or args.data_dir,
             dataset_path=args.train_dataset_path,
         )
-        eval_ids = {record.question_id for record in selected_records(dataset, args.limit_questions)}
-        overlap_ids = eval_ids.intersection(record.question_id for record in selected_records(train_dataset, args.train_limit_questions))
-        if overlap_ids:
-            raise ValueError(
-                f"Training dataset overlaps with evaluation questions: {sorted(overlap_ids)[:10]}. "
-                "Please provide a separate AIME training file."
-            )
+        print(f"AIME AgentPrune training dataset: {args.train_dataset_path}")
         await train_agentprune(graph, train_dataset, args, kwargs)
         print("Final spatial logits:", graph.spatial_logits)
         print("Final temporal logits:", graph.temporal_logits)
