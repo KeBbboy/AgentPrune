@@ -36,6 +36,9 @@ from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, Benc
 
 
 MODES = ["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"]
+TOOL_LOSS_OUTPUT_TOKEN_WEIGHT = 0.05
+TOOL_LOSS_CALL_WEIGHT = 0.10
+TOOL_LOSS_TOOL_TOKEN_WEIGHT = 0.10
 
 
 def parse_args():
@@ -91,6 +94,12 @@ def parse_args():
     parser.add_argument("--max_tool_chars", type=int, default=6000)
     parser.add_argument("--max_tool_turns", type=int, default=1,
                         help="Max number of tool calls per agent per round. Default 1 (one-shot tool use).")
+    parser.add_argument("--tool_aware_loss", action="store_true",
+                        help="Enable tool-aware reward penalties during AgentPrune training.")
+    parser.add_argument("--tool_loss_token_normalizer", type=float, default=10000.0,
+                        help="Token normalizer used by tool-aware output/tool-token penalties.")
+    parser.add_argument("--tool_loss_call_normalizer", type=float, default=10.0,
+                        help="Call-count normalizer used by tool-aware call penalties.")
     parser.add_argument("--llm_enable_thinking", type=parse_bool_arg, default=True,
                         help="Enable model thinking mode: true or false")
     parser.add_argument("--llm_thinking_budget", type=int, default=8192,
@@ -102,6 +111,10 @@ def parse_args():
         parser.error("--limit_questions must be >= 0.")
     if args.train_limit_questions < 0:
         parser.error("--train_limit_questions must be >= 0.")
+    if args.tool_loss_token_normalizer <= 0:
+        parser.error("--tool_loss_token_normalizer must be > 0.")
+    if args.tool_loss_call_normalizer <= 0:
+        parser.error("--tool_loss_call_normalizer must be > 0.")
     return args
 
 
@@ -283,6 +296,17 @@ def _usage_records_for_sample(records: List[Dict[str, Any]], sample_id: Any) -> 
     return [record for record in records if str(record.get("sample_id", "")) == sample_key]
 
 
+def _usage_records_for_run(
+    records: List[Dict[str, Any]],
+    sample_run_id: str,
+    sample_id: Any,
+) -> List[Dict[str, Any]]:
+    run_records = [record for record in records if str(record.get("sample_run_id", "")) == sample_run_id]
+    if run_records:
+        return run_records
+    return _usage_records_for_sample(records, sample_id)
+
+
 def _summarize_usage_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     summary: Dict[str, Any] = {"llm_calls": len(records)}
     for field in TOKEN_USAGE_SUM_FIELDS:
@@ -292,6 +316,46 @@ def _summarize_usage_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         else:
             summary[field] = int(total)
     return summary
+
+
+def _summarize_usage_by_agent(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """按智能体聚合 LLM token/cost，用于解释 tool-aware graph pruning 的成本来源。"""
+    agent_usage: Dict[str, Any] = {}
+    for record in records:
+        agent_id = str(record.get("agent_id") or "__unknown__")
+        entry = agent_usage.setdefault(
+            agent_id,
+            {
+                "agent_id": agent_id,
+                "agent_role": record.get("agent_role", ""),
+                "agent_name": record.get("agent_name", ""),
+                "node_name": record.get("node_name", ""),
+                "node_type": record.get("node_type", ""),
+                "llm_calls": 0,
+                "by_round": {},
+            },
+        )
+        for key in ["agent_role", "agent_name", "node_name", "node_type"]:
+            if record.get(key):
+                entry[key] = record.get(key)
+        entry["llm_calls"] = int(entry.get("llm_calls", 0)) + 1
+        for field in TOKEN_USAGE_SUM_FIELDS:
+            value = float(record.get(field) or 0.0)
+            if field == "cost":
+                entry[field] = float(entry.get(field, 0.0)) + value
+            else:
+                entry[field] = int(entry.get(field, 0)) + int(value)
+
+        round_id = str(record.get("round_id", "__unknown__"))
+        round_entry = entry["by_round"].setdefault(round_id, {"round_id": round_id, "llm_calls": 0})
+        round_entry["llm_calls"] = int(round_entry.get("llm_calls", 0)) + 1
+        for field in TOKEN_USAGE_SUM_FIELDS:
+            value = float(record.get(field) or 0.0)
+            if field == "cost":
+                round_entry[field] = float(round_entry.get(field, 0.0)) + value
+            else:
+                round_entry[field] = int(round_entry.get(field, 0)) + int(value)
+    return agent_usage
 
 
 def _compact_usage_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -310,15 +374,62 @@ def _compact_usage_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]
                     "billed_prompt_tokens",
                     "billed_completion_tokens",
                     "sample_id",
+                    "sample_run_id",
                     "phase",
                     "benchmark",
                     "split",
                     "mode",
+                    "agent_id",
+                    "agent_role",
+                    "agent_name",
+                    "node_name",
+                    "node_type",
+                    "round_id",
                 ]
                 if key in record
             }
         )
     return compact_records
+
+
+def _tool_usage_stats(input_dict: Dict[str, Any], sample_usage: Dict[str, Any], args) -> Dict[str, Any]:
+    metadata = input_dict.get("metadata", {})
+    tool_counts = dict(metadata.get("tool_counts", {}))
+    tool_tokens = dict(metadata.get("tool_tokens", {}))
+    tool_calls = sum(int(count) for count in tool_counts.values())
+    tool_token_count = sum(int(count) for count in tool_tokens.values())
+    output_tokens = int(sample_usage.get("output_tokens", 0))
+    tool_call_penalty = TOOL_LOSS_CALL_WEIGHT * (tool_calls / args.tool_loss_call_normalizer)
+    tool_token_penalty = TOOL_LOSS_TOOL_TOKEN_WEIGHT * (tool_token_count / args.tool_loss_token_normalizer)
+    output_token_penalty = TOOL_LOSS_OUTPUT_TOKEN_WEIGHT * (output_tokens / args.tool_loss_token_normalizer)
+    return {
+        "tool_calls": tool_calls,
+        "tool_tokens": tool_token_count,
+        "output_tokens": output_tokens,
+        "output_token_weight": TOOL_LOSS_OUTPUT_TOKEN_WEIGHT,
+        "tool_call_weight": TOOL_LOSS_CALL_WEIGHT,
+        "tool_token_weight": TOOL_LOSS_TOOL_TOKEN_WEIGHT,
+        "tool_call_penalty": tool_call_penalty,
+        "tool_token_penalty": tool_token_penalty,
+        "output_token_penalty": output_token_penalty,
+        "total_penalty": tool_call_penalty + tool_token_penalty + output_token_penalty,
+    }
+
+
+def _tool_adjusted_utility(
+    base_utility: float,
+    input_dict: Dict[str, Any],
+    sample_usage: Dict[str, Any],
+    args,
+) -> tuple[float, Dict[str, Any]]:
+    stats = _tool_usage_stats(input_dict, sample_usage, args)
+    stats["base_utility"] = base_utility
+    if not args.tool_aware_loss:
+        stats["adjusted_utility"] = base_utility
+        return base_utility, stats
+    adjusted_utility = base_utility - float(stats["total_penalty"])
+    stats["adjusted_utility"] = adjusted_utility
+    return adjusted_utility, stats
 
 
 def _regularization_loss(graph: Graph, kwargs: Dict[str, Any], args) -> torch.Tensor:
@@ -365,8 +476,11 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
         print(f"Train {i_iter + 1}/{args.num_iterations}", 80 * "-")
         start_ts = time.time()
         tasks = []
+        task_inputs = []
         correct_records = []
         add_losses = []
+        sample_run_ids = []
+        usage_start_index = len(TokenUsageRecords.instance().value)
 
         for _ in range(args.batch_size):
             record = records[loader_index % len(records)]
@@ -375,20 +489,49 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
             input_dict = dataset.record_to_input(record)
-            tasks.append(asyncio.create_task(realized_graph.arun(input_dict, args.num_rounds, compress_messages=False)))
+            task_inputs.append(input_dict)
+            sample_run_id = f"train-{i_iter + 1}-{len(tasks)}-{record.question_id}"
+            sample_run_ids.append(sample_run_id)
+            context_token = set_token_usage_context(
+                {
+                    "sample_id": str(record.question_id),
+                    "sample_run_id": sample_run_id,
+                    "phase": "train",
+                    "benchmark": dataset.name,
+                    "split": dataset.split,
+                    "mode": args.mode,
+                }
+            )
+            try:
+                tasks.append(asyncio.create_task(realized_graph.arun(input_dict, args.num_rounds, compress_messages=False)))
+            finally:
+                reset_token_usage_context(context_token)
             correct_records.append(record)
             add_losses.append(_regularization_loss(realized_graph, kwargs, args))
 
         raw_results = await asyncio.gather(*tasks)
+        usage_records = _usage_records_since(usage_start_index)
         loss_list: List[torch.Tensor] = []
         utilities: List[float] = []
+        base_utilities: List[float] = []
         answers: List[str] = []
 
-        for raw_result, add_loss, record in zip(raw_results, add_losses, correct_records):
+        for raw_result, add_loss, record, input_dict, sample_run_id in zip(
+            raw_results,
+            add_losses,
+            correct_records,
+            task_inputs,
+            sample_run_ids,
+        ):
             raw_answer, log_prob = raw_result
             answer_text = raw_answer[0] if isinstance(raw_answer, list) and raw_answer else raw_answer
             score = dataset.score(answer_text, record)
-            utility = float(score.get("score", score.get("accuracy", float(score.get("correct", False)))))
+            base_utility = float(score.get("score", score.get("accuracy", float(score.get("correct", False)))))
+            sample_usage_records = _usage_records_for_run(usage_records, sample_run_id, record.question_id)
+            sample_usage = _summarize_usage_records(sample_usage_records)
+            agent_llm_usage = _summarize_usage_by_agent(sample_usage_records)
+            utility, tool_aware_stats = _tool_adjusted_utility(base_utility, input_dict, sample_usage, args)
+            base_utilities.append(base_utility)
             utilities.append(utility)
             answers.append(str(score.get("prediction", dataset.postprocess_answer(answer_text))))
             loss_list.append(-log_prob * utility + add_loss)
@@ -396,6 +539,9 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
             print(f"Prediction: {answers[-1]}")
             print(f"Target: {record.answer}")
             print(f"Correct: {score.get('correct', False)}")
+            print(f"TrainSampleUsage: {json.dumps(sample_usage, ensure_ascii=False)}")
+            print(f"TrainAgentLLMUsage: {json.dumps(agent_llm_usage, ensure_ascii=False)}")
+            print(f"TrainToolAwareStats: {json.dumps(tool_aware_stats, ensure_ascii=False)}")
 
         total_loss = torch.mean(torch.stack(loss_list))
         optimizer.zero_grad()
@@ -411,6 +557,7 @@ async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, k
 
         print("answers:", answers)
         print(f"Batch time {time.time() - start_ts:.3f}")
+        print("base utilities:", base_utilities)
         print("utilities:", utilities)
         print("loss:", total_loss.item())
         print("Spatial logits:", graph.spatial_logits)
@@ -455,6 +602,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             "tool_tokens": tool_tokens,
             "tool_usage_by_agent": {},
             "tool_usage_by_dataset": {dataset.name: tool_usage},
+            "llm_usage_by_agent": {},
             "result_file": str(result_file),
             "dry_run": True,
         }
@@ -473,15 +621,19 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
     for record_batch in tqdm(iter_batches(records, args.batch_size), total=num_batches):
         tasks = []
         task_inputs = []
+        sample_run_ids = []
         for record in record_batch:
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
             input_dict = dataset.record_to_input(record)
             task_inputs.append(input_dict)
+            sample_run_id = f"eval-{len(results) + len(tasks)}-{record.question_id}"
+            sample_run_ids.append(sample_run_id)
             context_token = set_token_usage_context(
                 {
                     "sample_id": str(record.question_id),
+                    "sample_run_id": sample_run_id,
                     "phase": "eval",
                     "benchmark": dataset.name,
                     "split": dataset.split,
@@ -495,7 +647,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
 
         raw_results = await asyncio.gather(*tasks)
         usage_records = _usage_records_since(usage_start_index)
-        for raw_result, record, input_dict in zip(raw_results, record_batch, task_inputs):
+        for raw_result, record, input_dict, sample_run_id in zip(raw_results, record_batch, task_inputs, sample_run_ids):
             raw_answer, _, all_answers = raw_result
             answer_text = raw_answer[0] if isinstance(raw_answer, list) and raw_answer else raw_answer
             score = dataset.score(answer_text, record)
@@ -503,8 +655,9 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             tool_tokens = dict(input_dict.get("metadata", {}).get("tool_tokens", {}))
             tool_counts_by_agent = dict(input_dict.get("metadata", {}).get("tool_counts_by_agent", {}))
             tool_history = list(input_dict.get("metadata", {}).get("tool_history", []))
-            sample_usage_records = _usage_records_for_sample(usage_records, record.question_id)
+            sample_usage_records = _usage_records_for_run(usage_records, sample_run_id, record.question_id)
             sample_usage = _summarize_usage_records(sample_usage_records)
+            agent_llm_usage = _summarize_usage_by_agent(sample_usage_records)
             for tool_name, count in tool_counts.items():
                 tool_totals[tool_name] = int(tool_totals.get(tool_name, 0)) + int(count)
             for tool_name, token_count in tool_tokens.items():
@@ -549,6 +702,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
                     "tool_counts_by_agent": tool_counts_by_agent,
                     "tool_history": tool_history,
                     "sample_usage": sample_usage,
+                    "llm_usage_by_agent": agent_llm_usage,
                     "llm_usage_records": _compact_usage_records(sample_usage_records),
                 }
             )
@@ -572,6 +726,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
                 "SampleLLMUsageRecords: "
                 + json.dumps(_compact_usage_records(sample_usage_records), ensure_ascii=False)
             )
+            print("SampleAgentLLMUsage: " + json.dumps(agent_llm_usage, ensure_ascii=False))
 
         summary = {
             "benchmark": dataset.name,
@@ -588,6 +743,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             "tool_usage_by_agent": agent_tool_totals,
             "tool_usage_by_dataset": {dataset.name: tool_totals},
             "llm_usage": _summarize_usage_records(_usage_records_since(usage_start_index)),
+            "llm_usage_by_agent": _summarize_usage_by_agent(_usage_records_since(usage_start_index)),
             "result_file": str(result_file),
         }
         result_file.write_text(json.dumps({"summary": summary, "results": results}, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -604,6 +760,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
         "tool_tokens": tool_token_totals,
         "tool_usage_by_agent": agent_tool_totals,
         "llm_usage": _summarize_usage_records(_usage_records_since(usage_start_index)),
+        "llm_usage_by_agent": _summarize_usage_by_agent(_usage_records_since(usage_start_index)),
         "result_file": str(result_file),
     }
 

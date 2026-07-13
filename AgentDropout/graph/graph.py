@@ -336,7 +336,7 @@ class Graph(ABC):
                 tries = 0
                 while tries < max_tries:
                     try:
-                        self.nodes[current_node_id].execute(inputs) # output is saved in the node.outputs
+                        self.nodes[current_node_id].execute(inputs, round_id=round, node_type="agent") # output is saved in the node.outputs
                         break
                     except Exception as e:
                         print(f"Error during execution of node {current_node_id}: {e}")
@@ -351,7 +351,7 @@ class Graph(ABC):
             self.update_memory()
             
         self.connect_decision_node()
-        self.decision_node.execute(inputs)
+        self.decision_node.execute(inputs, round_id="decision", node_type="decision")
         final_answers = self.decision_node.outputs
         if len(final_answers) == 0:
             final_answers.append("No answer of the decision node")
@@ -471,7 +471,7 @@ class Graph(ABC):
                             if list(self.nodes).index(current_node_id) == self.skip_nodes[round]:
                                 self.find_node(current_node_id).outputs = ['None.']
                                 break
-                        await asyncio.wait_for(self.nodes[current_node_id].async_execute(input),timeout=max_time) # output is saved in the node.outputs
+                        await asyncio.wait_for(self.nodes[current_node_id].async_execute(input, round_id=round, node_type="agent"),timeout=max_time) # output is saved in the node.outputs
                         # print(self.find_node(current_node_id).outputs)
                         break
                     except Exception as e:
@@ -491,7 +491,7 @@ class Graph(ABC):
         # if self.dec_1==False:
         if len(self.potential_spatial_edges)>0:
             self.connect_decision_node()
-            await self.decision_node.async_execute(input)
+            await self.decision_node.async_execute(input, round_id="decision", node_type="decision")
             final_answers = self.decision_node.outputs
         else:
             final_answers = list(self.nodes.values())[0].outputs

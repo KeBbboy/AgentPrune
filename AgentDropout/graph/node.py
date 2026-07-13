@@ -5,6 +5,12 @@ import warnings
 import asyncio
 import re
 
+from AgentDropout.utils.globals import (
+    get_token_usage_context,
+    reset_token_usage_context,
+    set_token_usage_context,
+)
+
 
 class Node(ABC):
     """
@@ -225,7 +231,22 @@ class Node(ABC):
         self.outputs = []
         spatial_info:Dict[str,Dict] = self.get_spatial_info()
         temporal_info:Dict[str,Dict] = self.get_temporal_info(raw_inputs=input)
-        results = [self._execute(input, spatial_info, temporal_info, **kwargs)]
+        token_context = get_token_usage_context()
+        token_context.update(
+            {
+                "agent_id": self.id,
+                "agent_role": self.role,
+                "agent_name": self.agent_name,
+                "node_name": self.node_name,
+                "node_type": kwargs.get("node_type", "agent"),
+                "round_id": kwargs.get("round_id"),
+            }
+        )
+        context_token = set_token_usage_context(token_context)
+        try:
+            results = [self._execute(input, spatial_info, temporal_info, **kwargs)]
+        finally:
+            reset_token_usage_context(context_token)
 
         for result in results:
             if not isinstance(result, list):
@@ -240,8 +261,23 @@ class Node(ABC):
         spatial_info:Dict[str,Any] = self.get_spatial_info()
         temporal_info:Dict[str,Any] = await self.aget_temporal_info(raw_inputs=input)
         # print(temporal_info)
-        tasks = [asyncio.create_task(self._async_execute(input, spatial_info, temporal_info, **kwargs))]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
+        token_context = get_token_usage_context()
+        token_context.update(
+            {
+                "agent_id": self.id,
+                "agent_role": self.role,
+                "agent_name": self.agent_name,
+                "node_name": self.node_name,
+                "node_type": kwargs.get("node_type", "agent"),
+                "round_id": kwargs.get("round_id"),
+            }
+        )
+        context_token = set_token_usage_context(token_context)
+        try:
+            tasks = [asyncio.create_task(self._async_execute(input, spatial_info, temporal_info, **kwargs))]
+            results = await asyncio.gather(*tasks, return_exceptions=False)
+        finally:
+            reset_token_usage_context(context_token)
         for result in results:
             # Guarantee ``outputs`` is a list of strings (the legacy contract
             # used by ``graph.arun`` and downstream evaluators).  When an
