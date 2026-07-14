@@ -2,6 +2,7 @@ import itertools
 import re
 from typing import Any, Dict, List, Union
 
+from AgentDropout.benchmarks.agent_benchmarks import extract_official_numeric_answer
 from AgentDropout.prompt.common import get_combine_materials
 from AgentDropout.prompt.prompt_set import PromptSet
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
@@ -203,6 +204,12 @@ class GPQAPromptSet(BenchmarkPromptSet):
 @PromptSetRegistry.register("aime")
 class AIMEPromptSet(BenchmarkPromptSet):
     answer_kind = "math"
+
+    @classmethod
+    def postprocess_answer(cls, answer: Union[str, List[str]]) -> str:
+        if isinstance(answer, list):
+            answer = answer[0] if answer else ""
+        return extract_official_numeric_answer(answer)
 
     @classmethod
     def get_analyze_constraint(cls, role: str, use_structured_output: bool = False) -> str:
