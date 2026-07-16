@@ -1,11 +1,12 @@
 import ast
 import asyncio
-import io
 import json
 import os
 import re
+import signal
+import subprocess
+import sys
 import threading
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -30,6 +31,8 @@ DEFAULT_TOOL_CONFIG: Dict[str, Any] = {
     "max_tool_chars": 6000,
     "max_tool_turns": 3,
 }
+
+CODE_EXECUTION_TIMEOUT_SECONDS = 10 * 60
 
 
 @dataclass
@@ -342,7 +345,7 @@ class CodeGeneratorTool(_BenchmarkToolMixin, BaseTool):
         llm_name: str,
         direct_tool_call: bool = False,
         max_tool_chars: int = 6000,
-        timeout_seconds: int = 10,
+        timeout_seconds: int = CODE_EXECUTION_TIMEOUT_SECONDS,
     ) -> None:
         super().__init__(llm_name, direct_tool_call, max_tool_chars)
         self.timeout_seconds = max(1, int(timeout_seconds))
@@ -693,6 +696,31 @@ def _strip_code_fences(text: str) -> str:
     return text
 
 
+_PYTHON_EXEC_WRAPPER = r"""
+import io
+import sys
+import traceback
+from contextlib import redirect_stderr, redirect_stdout
+
+code = sys.stdin.read()
+stdout = io.StringIO()
+stderr = io.StringIO()
+try:
+    globals_dict = {"__builtins__": __builtins__}
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        exec(code, globals_dict, globals_dict)
+except BaseException:
+    captured_stderr = stderr.getvalue()
+    if captured_stderr:
+        sys.stderr.write(captured_stderr)
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(1)
+
+sys.stdout.write(stdout.getvalue())
+sys.stderr.write(stderr.getvalue())
+"""
+
+
 def _run_async_from_sync(coro_factory):
     try:
         asyncio.get_running_loop()
@@ -716,32 +744,38 @@ def _run_async_from_sync(coro_factory):
     return result.get("value")
 
 
-def _execute_python(code: str, timeout_seconds: int = 10) -> str:
-    stdout = io.StringIO()
-    stderr = io.StringIO()
-    old_alarm = None
-
-    def _timeout_handler(signum, frame):
-        raise TimeoutError("Python execution timed out")
-
-    if hasattr(os, "alarm"):
-        import signal
-
-        old_alarm = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(timeout_seconds)
+def _execute_python(code: str, timeout_seconds: int = CODE_EXECUTION_TIMEOUT_SECONDS) -> str:
+    timeout_seconds = max(1, int(timeout_seconds))
     try:
-        globals_dict = {"__builtins__": __builtins__}
-        with redirect_stdout(stdout), redirect_stderr(stderr):
-            exec(code, globals_dict, globals_dict)
-    finally:
-        if hasattr(os, "alarm"):
-            import signal
+        process = subprocess.Popen(
+            [sys.executable, "-c", _PYTHON_EXEC_WRAPPER],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=(os.name == "posix"),
+        )
+    except OSError as exc:
+        raise RuntimeError(f"Unable to start Python subprocess: {exc}") from exc
 
-            signal.alarm(0)
-            if old_alarm is not None:
-                signal.signal(signal.SIGALRM, old_alarm)
-    output = stdout.getvalue().strip()
-    err = stderr.getvalue().strip()
+    try:
+        stdout, stderr = process.communicate(input=code, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            process.kill()
+        process.communicate()
+        raise TimeoutError(f"Python execution timed out after {timeout_seconds} seconds") from exc
+
+    output = (stdout or "").strip()
+    err = (stderr or "").strip()
+    if process.returncode != 0:
+        detail = err or output or "[no output]"
+        raise RuntimeError(f"Python execution failed with exit code {process.returncode}: {detail}")
     if err:
         output = f"{output}\nSTDERR:\n{err}".strip()
     return output or "[no stdout]"

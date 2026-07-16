@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List
 
 from AgentDropout.agents.agent_registry import AgentRegistry
@@ -121,7 +122,7 @@ class BenchmarkAgent(Node):
             if tool_call is None or not self.tool_runner.has_tools:
                 return output
             messages.append({"role": "assistant", "content": output})
-            observations = self.tool_runner.execute_tool_call(tool_call, raw_inputs)
+            observations = await asyncio.to_thread(self.tool_runner.execute_tool_call, tool_call, raw_inputs)
             self._record_tool_usage(raw_inputs, tool_call, observations)
             messages.append({"role": "user", "content": self._format_tool_result(tool_call, observations)})
 
