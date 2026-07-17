@@ -7,6 +7,11 @@ import asyncio
 
 from AgentDropout.graph.node import Node
 from AgentDropout.agents.agent_registry import AgentRegistry
+from AgentDropout.graph.message_compression import (
+    MessageCompressionConfig,
+    apply_temporal_api_summary,
+    get_message_compression_config,
+)
 import random
 
 class Graph(ABC):
@@ -46,6 +51,7 @@ class Graph(ABC):
                 initial_temporal_probability: float = 0.5,
                 fixed_temporal_masks:List[List[int]] = None,
                 node_kwargs:List[Dict] = None,
+                ours_message_config: MessageCompressionConfig = None,
                 ):
         
         if fixed_spatial_masks is None:
@@ -77,9 +83,14 @@ class Graph(ABC):
         self.dec_1=False
         self.skip_nodes = []
         self.sampled_edge_records: List[Dict[str, Any]] = []
+        self.ours_message_config: MessageCompressionConfig = (
+            ours_message_config if ours_message_config is not None else get_message_compression_config()
+        )
 
         self.init_nodes() # add nodes to the self.nodes
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
+        for node in self.nodes.values():
+            node.bind_to_graph(self)
 
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
@@ -530,6 +541,7 @@ class Graph(ABC):
             for node in self.nodes:
                 round_answers[self.nodes[node].role+str(node)] = self.nodes[node].outputs
             all_answers.append(round_answers)
+            await apply_temporal_api_summary(self, self.ours_message_config, round)
             self.update_memory()
         
         # if self.dec_1==False:

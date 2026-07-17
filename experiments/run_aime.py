@@ -19,6 +19,12 @@ sys.stdout.reconfigure(encoding="utf-8")
 import AgentDropout.agents  # noqa: F401
 import AgentDropout.prompt  # noqa: F401
 from AgentDropout.graph.graph import Graph
+from AgentDropout.graph.message_compression import (
+    add_message_compression_arguments,
+    build_message_compression_config_from_args,
+    get_message_compression_config,
+    set_message_compression_config,
+)
 from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import (
@@ -104,7 +110,9 @@ def parse_args():
                         help="Enable model thinking mode: true or false")
     parser.add_argument("--llm_thinking_budget", type=int, default=8192,
                         help="Thinking token budget for both Qwen3 and MiniMax-M3 providers")
+    add_message_compression_arguments(parser)
     args = parser.parse_args()
+    set_message_compression_config(build_message_compression_config_from_args(args))
     if len(args.agent_names) != len(args.agent_nums):
         parser.error("The number of agent names must match the number of agent counts.")
     if args.limit_questions < 0:
@@ -256,6 +264,7 @@ def build_graph_with_kwargs(args, dataset: AgentBenchmarkDataset) -> tuple[Graph
         rounds=args.num_rounds,
         diff=args.diff,
         dec=args.dec,
+        ours_message_config=get_message_compression_config(),
         **kwargs,
     )
     return graph, kwargs

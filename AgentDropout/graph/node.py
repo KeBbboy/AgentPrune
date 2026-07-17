@@ -5,6 +5,10 @@ import warnings
 import asyncio
 import re
 
+from AgentDropout.graph.message_compression import (
+    aggregate_node_aware,
+    compress_messages_role_aware,
+)
 from AgentDropout.utils.globals import (
     get_token_usage_context,
     reset_token_usage_context,
@@ -111,6 +115,10 @@ class Node(ABC):
         self.spatial_successors: List[Node] = []
         self.temporal_predecessors: List[Node] = []
         self.temporal_successors: List[Node] = []        
+
+    def bind_to_graph(self, graph) -> None:
+        """绑定所属 Graph, 让消息压缩钩子读取图级配置。"""
+        self.graph = graph
     
     def update_memory(self):
         self.last_memory['inputs'] = self.inputs
@@ -157,6 +165,36 @@ class Node(ABC):
         _, reasoning = self._split_answer_and_reasoning(predecessor_output)
         return reasoning
 
+    def _message_compression_enabled(self) -> bool:
+        cfg = getattr(getattr(self, "graph", None), "ours_message_config", None)
+        return bool(
+            cfg
+            and (
+                getattr(cfg, "role_aware_compression", False)
+                or getattr(cfg, "node_aware_aggregation", False)
+            )
+        )
+
+    def _rehydrate_full_to_structured(self, output: Any) -> Dict[str, Any] | None:
+        """把压扁后的 full_text 还原为 structured payload, 供消息压缩使用。"""
+        if not isinstance(output, str) or not output:
+            return None
+
+        think_match = re.search(r"<(?:redacted_)?think>(.*?)</(?:redacted_)?think>", output, re.DOTALL)
+        if think_match is not None:
+            reasoning = think_match.group(1).strip()
+            answer = (output[: think_match.start()] + output[think_match.end():]).strip()
+        else:
+            answer, reasoning = self._split_answer_and_reasoning(output)
+
+        if not answer and not reasoning:
+            return None
+        return {
+            "reasoning": reasoning,
+            "answer": answer,
+            "full_text": output,
+        }
+
     def _resolve_message_payload(self, predecessor: 'Node', output: Any, source: str = "spatial") -> tuple[str, Any]:
         if hasattr(output, 'reasoning') and hasattr(output, 'answer') and hasattr(output, 'full_text'):
             return "structured", {
@@ -164,6 +202,10 @@ class Node(ABC):
                 "answer": output.answer,
                 "full_text": output.full_text,
             }
+        if self._message_compression_enabled():
+            structured = self._rehydrate_full_to_structured(output)
+            if structured is not None:
+                return "structured", structured
         return "full", output
 
     def get_spatial_info(self)->Dict[str,Dict]:
@@ -185,7 +227,7 @@ class Node(ABC):
                     "message_type": message_type,
                 }
 
-        return spatial_info
+        return self._apply_message_compression_hooks(spatial_info)
 
     def get_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
         temporal_info = {}
@@ -205,7 +247,7 @@ class Node(ABC):
                     "message_type": message_type,
                 }
 
-        return temporal_info
+        return self._apply_message_compression_hooks(temporal_info)
 
     async def aget_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
         temporal_info = {}
@@ -225,7 +267,32 @@ class Node(ABC):
                     "message_type": message_type,
                 }
 
-        return temporal_info
+        return self._apply_message_compression_hooks(temporal_info)
+
+    def _apply_message_compression_hooks(self, info: Dict[str, Any]) -> Dict[str, Any]:
+        """按图级配置应用 role-aware 压缩和 node-aware 聚合。"""
+        cfg = getattr(getattr(self, "graph", None), "ours_message_config", None)
+        if not cfg or not info:
+            return info
+
+        if getattr(cfg, "node_aware_aggregation", False):
+            info = aggregate_node_aware(info, cfg, getattr(self, "role", ""))
+        if getattr(cfg, "role_aware_compression", False):
+            info = compress_messages_role_aware(info, cfg, getattr(self, "role", ""))
+
+        for payload in info.values():
+            if not isinstance(payload, dict) or "output" in payload:
+                continue
+            if isinstance(payload.get("full_text"), str):
+                payload["output"] = payload["full_text"]
+                continue
+            parts = []
+            if isinstance(payload.get("reasoning"), str):
+                parts.append(payload["reasoning"])
+            if isinstance(payload.get("answer"), str):
+                parts.append(payload["answer"])
+            payload["output"] = "\n".join(parts)
+        return info
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []
