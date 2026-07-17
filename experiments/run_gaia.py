@@ -19,9 +19,25 @@ import AgentDropout.prompt  # noqa: F401
 from AgentDropout.graph.graph import Graph
 from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.utils.const import AgentPrune_ROOT
-from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, print_token_stats
+from AgentDropout.utils.globals import (
+    CompletionTokens,
+    Cost,
+    PromptTokens,
+    Time,
+    TokenUsageRecords,
+    print_token_stats,
+    reset_token_usage_context,
+    set_token_usage_context,
+)
 from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
-from experiments.run_aime import train_agentprune
+from experiments.run_aime import (
+    _compact_usage_records,
+    _summarize_usage_by_agent,
+    _summarize_usage_records,
+    _usage_records_for_run,
+    _usage_records_since,
+    train_agentprune,
+)
 
 
 MODES = ["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"]
@@ -251,6 +267,7 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
 
     if args.dry_run:
         tool_usage = {tool: 0 for tool in configured_tools}
+        tool_tokens = {tool: 0 for tool in configured_tools}
         summary = {
             "benchmark": dataset.name,
             "split": dataset.split,
@@ -259,7 +276,10 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             "expected_samples": dataset.expected_samples(),
             "default_tools": dataset.default_tools,
             "tool_usage": tool_usage,
+            "tool_tokens": tool_tokens,
+            "tool_usage_by_agent": {},
             "tool_usage_by_dataset": {dataset.name: tool_usage},
+            "llm_usage_by_agent": {},
             "result_file": str(result_file),
             "dry_run": True,
         }
@@ -270,28 +290,78 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
     correct = 0
     total = 0
     tool_totals: Dict[str, int] = {tool: 0 for tool in configured_tools}
+    tool_token_totals: Dict[str, int] = {tool: 0 for tool in configured_tools}
+    agent_tool_totals: Dict[str, Dict[str, Any]] = {}
     num_batches = int(math.ceil(len(records) / args.batch_size)) if records else 0
+    usage_start_index = len(TokenUsageRecords.instance().value)
 
     for record_batch in tqdm(iter_batches(records, args.batch_size), total=num_batches):
         tasks = []
         task_inputs = []
+        sample_run_ids = []
         for record in record_batch:
             realized_graph = copy.deepcopy(graph)
             realized_graph.spatial_logits = graph.spatial_logits
             realized_graph.temporal_logits = graph.temporal_logits
             input_dict = dataset.record_to_input(record)
             task_inputs.append(input_dict)
-            tasks.append(asyncio.create_task(realized_graph.arun(input_dict, args.num_rounds, case=True)))
+            sample_run_id = f"eval-{len(results) + len(tasks)}-{record.question_id}"
+            sample_run_ids.append(sample_run_id)
+            context_token = set_token_usage_context(
+                {
+                    "sample_id": str(record.question_id),
+                    "sample_run_id": sample_run_id,
+                    "phase": "eval",
+                    "benchmark": dataset.name,
+                    "split": dataset.split,
+                    "mode": args.mode,
+                }
+            )
+            try:
+                tasks.append(asyncio.create_task(realized_graph.arun(input_dict, args.num_rounds, case=True)))
+            finally:
+                reset_token_usage_context(context_token)
 
         raw_results = await asyncio.gather(*tasks)
-        for raw_result, record, input_dict in zip(raw_results, record_batch, task_inputs):
+        usage_records = _usage_records_since(usage_start_index)
+        for raw_result, record, input_dict, sample_run_id in zip(raw_results, record_batch, task_inputs, sample_run_ids):
             raw_answer, _, all_answers = raw_result
             answer_text = raw_answer[0] if isinstance(raw_answer, list) and raw_answer else raw_answer
             score = dataset.score(answer_text, record)
             tool_counts = dict(input_dict.get("metadata", {}).get("tool_counts", {}))
+            tool_tokens = dict(input_dict.get("metadata", {}).get("tool_tokens", {}))
+            tool_counts_by_agent = dict(input_dict.get("metadata", {}).get("tool_counts_by_agent", {}))
             tool_history = list(input_dict.get("metadata", {}).get("tool_history", []))
+            sample_usage_records = _usage_records_for_run(usage_records, sample_run_id, record.question_id)
+            sample_usage = _summarize_usage_records(sample_usage_records)
+            agent_llm_usage = _summarize_usage_by_agent(sample_usage_records)
             for tool_name, count in tool_counts.items():
                 tool_totals[tool_name] = int(tool_totals.get(tool_name, 0)) + int(count)
+            for tool_name, token_count in tool_tokens.items():
+                tool_token_totals[tool_name] = int(tool_token_totals.get(tool_name, 0)) + int(token_count)
+            for agent_id, agent_counts in tool_counts_by_agent.items():
+                agent_entry = agent_tool_totals.setdefault(
+                    agent_id,
+                    {
+                        "id": agent_id,
+                        "role": agent_counts.get("role", ""),
+                        "agent_name": agent_counts.get("agent_name", ""),
+                        "tools": {},
+                        "tool_tokens": {},
+                        "total": 0,
+                        "total_tool_tokens": 0,
+                    },
+                )
+                agent_entry["role"] = agent_counts.get("role", agent_entry.get("role", ""))
+                agent_entry["agent_name"] = agent_counts.get("agent_name", agent_entry.get("agent_name", ""))
+                for tool_name, count in dict(agent_counts.get("tools", {})).items():
+                    count = int(count)
+                    agent_entry["tools"][tool_name] = int(agent_entry["tools"].get(tool_name, 0)) + count
+                    agent_entry["total"] = int(agent_entry.get("total", 0)) + count
+                for tool_name, token_count in dict(agent_counts.get("tool_tokens", {})).items():
+                    token_count = int(token_count)
+                    agent_entry["tool_tokens"][tool_name] = int(agent_entry["tool_tokens"].get(tool_name, 0)) + token_count
+                    agent_entry["total_tool_tokens"] = int(agent_entry.get("total_tool_tokens", 0)) + token_count
             total += 1
             correct += int(score.get("correct", False))
             results.append(
@@ -305,13 +375,35 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
                     "score": score,
                     "all_answers": all_answers,
                     "tool_counts": tool_counts,
+                    "tool_tokens": tool_tokens,
+                    "tool_counts_by_agent": tool_counts_by_agent,
                     "tool_history": tool_history,
+                    "sample_usage": sample_usage,
+                    "llm_usage_by_agent": agent_llm_usage,
+                    "llm_usage_records": _compact_usage_records(sample_usage_records),
                 }
             )
             print(f"ID: {record.question_id}")
             print(f"Prediction: {results[-1]['prediction']}")
             print(f"Target: {record.answer}")
             print(f"Correct: {score.get('correct', False)}")
+            print(f"SampleUsage: {json.dumps(sample_usage, ensure_ascii=False)}")
+            print(
+                "SampleToolUsage: "
+                + json.dumps(
+                    {
+                        "tool_counts": tool_counts,
+                        "tool_tokens": tool_tokens,
+                        "tool_counts_by_agent": tool_counts_by_agent,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            print(
+                "SampleLLMUsageRecords: "
+                + json.dumps(_compact_usage_records(sample_usage_records), ensure_ascii=False)
+            )
+            print("SampleAgentLLMUsage: " + json.dumps(agent_llm_usage, ensure_ascii=False))
 
         summary = {
             "benchmark": dataset.name,
@@ -324,7 +416,11 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
             "total": total,
             "default_tools": dataset.default_tools,
             "tool_usage": tool_totals,
+            "tool_tokens": tool_token_totals,
+            "tool_usage_by_agent": agent_tool_totals,
             "tool_usage_by_dataset": {dataset.name: tool_totals},
+            "llm_usage": _summarize_usage_records(_usage_records_since(usage_start_index)),
+            "llm_usage_by_agent": _summarize_usage_by_agent(_usage_records_since(usage_start_index)),
             "result_file": str(result_file),
         }
         result_file.write_text(json.dumps({"summary": summary, "results": results}, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -338,6 +434,10 @@ async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[s
         "correct": correct,
         "total": total,
         "tool_usage": tool_totals,
+        "tool_tokens": tool_token_totals,
+        "tool_usage_by_agent": agent_tool_totals,
+        "llm_usage": _summarize_usage_records(_usage_records_since(usage_start_index)),
+        "llm_usage_by_agent": _summarize_usage_by_agent(_usage_records_since(usage_start_index)),
         "result_file": str(result_file),
     }
 
