@@ -573,7 +573,7 @@ def _regularization_loss(graph: Graph, kwargs: Dict[str, Any], args) -> torch.Te
 async def train_agentprune(graph: Graph, dataset: AgentBenchmarkDataset, args, kwargs: Dict[str, Any]) -> None:
     records = selected_records(dataset, args.train_limit_questions)
     if not records:
-        print("No AIME records selected for AgentPrune training.")
+        print(f"No {dataset.name.upper()} records selected for AgentPrune training.")
         return
     print(f"AgentPrune training records: {len(records)} / {len(dataset)}")
 

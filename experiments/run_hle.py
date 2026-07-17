@@ -21,6 +21,7 @@ from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, print_token_stats
 from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
+from experiments.run_aime import train_agentprune
 
 
 MODES = ["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"]
@@ -31,14 +32,30 @@ def parse_args():
     parser.add_argument("--split", type=str, default=None)
     parser.add_argument("--data_dir", type=str, default="dataset")
     parser.add_argument("--dataset_path", type=str, default=None)
+    parser.add_argument("--train_split", type=str, default=None,
+                        help="Split used only for AgentPrune training.")
+    parser.add_argument("--train_data_dir", type=str, default=None,
+                        help="Data directory used only for AgentPrune training.")
+    parser.add_argument("--train_dataset_path", type=str, default=None,
+                        help="Dataset path used only for AgentPrune training.")
+    parser.add_argument("--train_limit_questions", type=int, default=20,
+                        help="Number of training questions for AgentPrune. Default 20.")
     parser.add_argument("--result_file", type=str, default=None)
     parser.add_argument("--limit_questions", type=int, default=0)
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--llm_name", type=str, default="MiniMax-M3")
     parser.add_argument("--mode", type=str, default="FullConnected", choices=MODES)
+    parser.add_argument("--lr", type=float, default=0.1, help="AgentPrune learning rate.")
+    parser.add_argument("--delta", type=float, default=0.1, help="Regularization margin for fixed masks.")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--agent_names", nargs="+", type=str, default=["BenchmarkAgent"])
     parser.add_argument("--agent_nums", nargs="+", type=int, default=[4])
+    parser.add_argument("--num_iterations", type=int, default=10,
+                        help="Number of AgentPrune optimization iterations.")
+    parser.add_argument("--imp_per_iterations", type=int, default=5,
+                        help="Prune every N optimization iterations.")
+    parser.add_argument("--pruning_rate", type=float, default=0.25,
+                        help="Rate of graph edge pruning.")
     parser.add_argument("--num_rounds", type=int, default=1)
     parser.add_argument("--domain", type=str, default="hle")
     parser.add_argument("--decision_method", type=str, default="FinalRefer")
@@ -58,6 +75,12 @@ def parse_args():
     parser.add_argument("--max_search_limit", type=int, default=3)
     parser.add_argument("--max_tool_chars", type=int, default=6000)
     parser.add_argument("--max_tool_turns", type=int, default=3)
+    parser.add_argument("--tool_aware_loss", action="store_true",
+                        help="Enable tool-aware reward penalties during AgentPrune training.")
+    parser.add_argument("--tool_loss_token_normalizer", type=float, default=10000.0,
+                        help="Token normalizer used by tool-aware output/tool-token penalties.")
+    parser.add_argument("--tool_loss_call_normalizer", type=float, default=10.0,
+                        help="Call-count normalizer used by tool-aware call penalties.")
     parser.add_argument("--llm_enable_thinking", type=parse_bool_arg, default=True,
                         help="Enable model thinking mode: true or false")
     parser.add_argument("--llm_thinking_budget", type=int, default=8192,
@@ -67,6 +90,12 @@ def parse_args():
         parser.error("The number of agent names must match the number of agent counts.")
     if args.limit_questions < 0:
         parser.error("--limit_questions must be >= 0.")
+    if args.train_limit_questions < 0:
+        parser.error("--train_limit_questions must be >= 0.")
+    if args.tool_loss_token_normalizer <= 0:
+        parser.error("--tool_loss_token_normalizer must be > 0.")
+    if args.tool_loss_call_normalizer <= 0:
+        parser.error("--tool_loss_call_normalizer must be > 0.")
     return args
 
 
@@ -179,6 +208,11 @@ def build_node_kwargs(
 
 
 def build_graph(args, dataset: AgentBenchmarkDataset) -> Graph:
+    graph, _ = build_graph_with_kwargs(args, dataset)
+    return graph
+
+
+def build_graph_with_kwargs(args, dataset: AgentBenchmarkDataset) -> tuple[Graph, Dict[str, Any]]:
     enabled_tools = dataset.default_tools if args.enabled_tools is None else list(args.enabled_tools)
     tool_config = {
         "enabled_tools": enabled_tools,
@@ -194,7 +228,7 @@ def build_graph(args, dataset: AgentBenchmarkDataset) -> Graph:
         agent_names = agent_names[:1] or ["BenchmarkAgent"]
     node_kwargs = build_node_kwargs(args.mode, agent_names, tool_config, enabled_tools)
     kwargs = get_kwargs(args.mode, len(agent_names), node_kwargs=node_kwargs)
-    return Graph(
+    graph = Graph(
         domain=args.domain or dataset.name,
         llm_name=args.llm_name,
         agent_names=agent_names,
@@ -206,6 +240,7 @@ def build_graph(args, dataset: AgentBenchmarkDataset) -> Graph:
         dec=args.dec,
         **kwargs,
     )
+    return graph, kwargs
 
 
 async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[str, Any]:
@@ -319,7 +354,26 @@ async def main():
         data_dir=args.data_dir,
         dataset_path=args.dataset_path,
     )
-    graph = build_graph(args, dataset)
+    graph, kwargs = build_graph_with_kwargs(args, dataset)
+    if not args.dry_run and (args.optimized_spatial or args.optimized_temporal):
+        if args.train_dataset_path and not Path(args.train_dataset_path).exists():
+            raise FileNotFoundError(
+                f"HLE AgentPrune training dataset not found: {args.train_dataset_path}. "
+                "Create this jsonl file or pass --train_dataset_path to another file."
+            )
+        train_dataset = AgentBenchmarkDataset(
+            name="hle",
+            split=args.train_split or args.split,
+            data_dir=args.train_data_dir or args.data_dir,
+            dataset_path=args.train_dataset_path,
+        )
+        train_source = args.train_dataset_path or f"{train_dataset.data_dir}/{train_dataset.spec.data_subdir}/{train_dataset.split}.jsonl"
+        print(f"HLE AgentPrune training dataset: {train_source}")
+        await train_agentprune(graph, train_dataset, args, kwargs)
+        print("Final spatial logits:", graph.spatial_logits)
+        print("Final temporal logits:", graph.temporal_logits)
+        print("Final spatial masks:", graph.spatial_masks)
+        print("Final temporal masks:", graph.temporal_masks)
     summary = await evaluate(graph, dataset, args)
     print(f"HLE Score: {summary}")
 
