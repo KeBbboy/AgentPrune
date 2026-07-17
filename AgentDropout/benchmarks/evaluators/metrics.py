@@ -217,7 +217,12 @@ def _mc_correct(prediction: str, ground_truth: str, choices: List[str]) -> bool:
 
 
 def evaluate_gaia(prediction: str, ground_truth: str) -> Dict[str, Any]:
-    return evaluate_answer(prediction, ground_truth)
+    pred = (prediction or "").strip()
+    gt = (ground_truth or "").strip()
+    score = float(question_scorer(pred, gt))
+    em_score = float(exact_match(pred, gt, case_sensitive=False))
+    f1_score = token_f1(pred, gt)
+    return {"correct": score > 0, "accuracy": score, "em": em_score, "f1": f1_score}
 
 
 def evaluate_math(prediction: str, ground_truth: str) -> Dict[str, Any]:

@@ -105,22 +105,38 @@ def extract_answer_text(answer: Any) -> str:
     if not isinstance(answer, str):
         answer = str(answer)
     answer = answer.strip()
+    think_matches = list(re.finditer(r"</think\s*>", answer, flags=re.IGNORECASE))
+    if think_matches:
+        answer = answer[think_matches[-1].end() :].strip()
 
-    xml_match = re.search(r"<answer>\s*(.*?)\s*</answer>", answer, flags=re.IGNORECASE | re.DOTALL)
-    if xml_match is not None:
-        return _clean_answer(xml_match.group(1))
-
-    boxed_match = re.search(r"\\boxed\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", answer)
-    if boxed_match is not None:
-        return _clean_answer(boxed_match.group(1))
-
-    final_match = re.search(
-        r"(?:final\s+answer|answer)\s*(?:is|:)\s*(.+)$",
-        answer,
-        flags=re.IGNORECASE | re.DOTALL,
+    xml_matches = list(
+        re.finditer(
+            r"<answer>\s*(.*?)\s*</answer>",
+            answer,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
     )
-    if final_match is not None:
-        return _clean_answer(final_match.group(1))
+    if xml_matches:
+        return _clean_answer(xml_matches[-1].group(1))
+
+    boxed_matches = list(re.finditer(r"\\boxed\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", answer))
+    if boxed_matches:
+        return _clean_answer(boxed_matches[-1].group(1))
+
+    final_matches = list(
+        re.finditer(
+            r"(?:final\s+answer|the\s+answer|answer)\s*(?:is\s*:|is|:)\s*",
+            answer,
+            flags=re.IGNORECASE,
+        )
+    )
+    if final_matches:
+        answer_lines = [
+            line.strip()
+            for line in answer[final_matches[-1].end() :].splitlines()
+            if line.strip()
+        ]
+        return _clean_answer(answer_lines[0]) if answer_lines else ""
 
     lines = [line.strip() for line in answer.splitlines() if line.strip()]
     return _clean_answer(lines[-1]) if lines else ""

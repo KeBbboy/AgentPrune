@@ -4,12 +4,14 @@ import json
 import os
 import re
 import signal
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -65,6 +67,61 @@ def _truncate_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n...[truncated]"
+
+
+def _clean_path_text(path_like: Any) -> str:
+    if path_like is None:
+        return ""
+    return str(path_like).strip().strip('"').strip("'")
+
+
+def _path_suffix(path_like: Any) -> str:
+    if not path_like:
+        return ""
+    return Path(str(path_like)).suffix.lower()
+
+
+def _normalize_web_provider(provider: str) -> str:
+    normalized = str(provider or "tavily").strip().lower()
+    if normalized == "serper":
+        return "searchapi"
+    return normalized
+
+
+def _web_provider_unavailable_reason(provider: str) -> Optional[str]:
+    provider = _normalize_web_provider(provider)
+    if provider == "wiki":
+        try:
+            from AgentDropout.tools.search import wiki as wiki_module
+        except Exception as exc:
+            return f"Wikipedia search module is unavailable: {exc}"
+        return None if getattr(wiki_module, "wikipedia", None) is not None else "wikipedia package is not installed"
+    if provider == "tavily":
+        return None if os.getenv("TAVILY_API_KEY") else "TAVILY_API_KEY is not set"
+    if provider == "searchapi":
+        return None if os.getenv("SEARCHAPI_API_KEY") else "SEARCHAPI_API_KEY is not set"
+    if provider == "google":
+        missing = [name for name in ("GOOGLE_API_KEY", "GOOGLE_CSE_ID") if not os.getenv(name)]
+        return None if not missing else f"{', '.join(missing)} is not set"
+    return f"unsupported web_tool_provider '{provider}'"
+
+
+def _select_available_web_provider(provider: str) -> Tuple[Optional[str], Optional[str]]:
+    requested = _normalize_web_provider(provider)
+    requested_reason = _web_provider_unavailable_reason(requested)
+    if requested_reason is None:
+        return requested, None
+
+    for fallback in ("tavily", "searchapi", "google", "wiki"):
+        if fallback == requested:
+            continue
+        if _web_provider_unavailable_reason(fallback) is None:
+            return fallback, f"{requested} unavailable ({requested_reason}); using {fallback}"
+    return None, (
+        f"{requested} unavailable ({requested_reason}); no credentialed fallback provider is available. "
+        "Set TAVILY_API_KEY, SEARCHAPI_API_KEY, or GOOGLE_API_KEY plus GOOGLE_CSE_ID, "
+        "or install the wikipedia package and run with --web_tool_provider wiki for Wikipedia-only search."
+    )
 
 
 class _BenchmarkToolMixin:
@@ -148,6 +205,120 @@ class TextInspectorTool(_BenchmarkToolMixin, BaseTool):
             },
         }
 
+    def _attachment_candidates(self, raw_inputs: Dict[str, Any], requested_path: Any) -> List[Any]:
+        if requested_path:
+            if isinstance(requested_path, (list, tuple)):
+                return list(requested_path)
+            return [requested_path]
+
+        attachments = raw_inputs.get("attachments") or raw_inputs.get("metadata", {}).get("attachments") or []
+        if isinstance(attachments, (list, tuple)):
+            return list(attachments)
+        return [attachments]
+
+    def _candidate_path_value(self, candidate: Any) -> Any:
+        if isinstance(candidate, dict):
+            for key in ("path", "file_path", "full_file_path", "file", "filename", "attachment"):
+                value = candidate.get(key)
+                if value:
+                    return value
+            return ""
+        return candidate
+
+    def _resolve_attachment_path(self, candidate: Any, raw_inputs: Dict[str, Any]) -> Tuple[Optional[Path], str]:
+        value = self._candidate_path_value(candidate)
+        candidate_text = _clean_path_text(value)
+        if not candidate_text:
+            return None, ""
+
+        path = Path(candidate_text).expanduser()
+        if path.exists():
+            return path, candidate_text
+
+        if candidate_text.startswith("./"):
+            absolute_text = candidate_text[1:]
+            absolute_path = Path(absolute_text).expanduser()
+            if absolute_path.is_absolute() and absolute_path.exists():
+                return absolute_path, candidate_text
+
+        metadata = raw_inputs.get("metadata", {}) if isinstance(raw_inputs.get("metadata"), dict) else {}
+        for source in (raw_inputs, metadata):
+            full_file_path = source.get("full_file_path") if isinstance(source, dict) else None
+            if not full_file_path:
+                continue
+            full_path = Path(str(full_file_path)).expanduser()
+            source_names = {
+                _clean_path_text(source.get("file_name", "")),
+                _clean_path_text(source.get("file_path", "")),
+                _clean_path_text(full_file_path),
+            }
+            if candidate_text in source_names or Path(candidate_text).name in source_names:
+                if full_path.exists():
+                    return full_path, candidate_text
+        return None, candidate_text
+
+    def _infer_attachment_suffix(
+        self,
+        candidate: Any,
+        raw_inputs: Dict[str, Any],
+        actual_path: Optional[Path],
+    ) -> str:
+        suffix = _path_suffix(actual_path)
+        if suffix:
+            return suffix
+
+        values: List[Any] = []
+        if isinstance(candidate, dict):
+            values.extend(candidate.get(key) for key in ("file_name", "filename", "file_path", "path"))
+        values.append(self._candidate_path_value(candidate))
+
+        metadata = raw_inputs.get("metadata", {}) if isinstance(raw_inputs.get("metadata"), dict) else {}
+        for source in (raw_inputs, metadata):
+            if isinstance(source, dict):
+                values.extend(source.get(key) for key in ("file_name", "filename", "file_path", "path"))
+
+        for value in values:
+            suffix = _path_suffix(value)
+            if suffix:
+                return suffix
+        return ""
+
+    def _read_attachment(self, file_path: Path, suffix: str, task: str) -> str:
+        from AgentDropout.tools.reader.readers import IMGReader, READER_MAP, VideoReader
+
+        suffix = suffix.lower()
+        if suffix not in READER_MAP:
+            raise ValueError(f"unsupported file type '{suffix or 'unknown'}'")
+
+        reader = READER_MAP[suffix]
+        def parse_with_reader(path_to_read: Path) -> Any:
+            path_text = str(path_to_read)
+            if isinstance(reader, (IMGReader, VideoReader)):
+                return reader.parse(path_text, task)
+            return reader.parse(path_text)
+
+        if _path_suffix(file_path) == suffix:
+            file_content = parse_with_reader(file_path)
+        else:
+            with tempfile.TemporaryDirectory(prefix="agentprune_attachment_") as temp_dir:
+                alias_path = Path(temp_dir) / f"attachment{suffix}"
+                try:
+                    alias_path.symlink_to(file_path)
+                except OSError:
+                    shutil.copyfile(file_path, alias_path)
+                file_content = parse_with_reader(alias_path)
+
+        suffix_name = suffix.lstrip(".")
+        if isinstance(file_content, tuple):
+            parts = [f"\nThe {suffix_name} file contains:\n---\n{file_content[0]}"]
+            if len(file_content) > 1 and file_content[1]:
+                parts.append(f"\nExecution result:\n{file_content[1]}")
+            if len(file_content) > 2 and file_content[2]:
+                parts.append(f"\nExecution error message:\n{file_content[2]}")
+            parts.append("\n---")
+            return "".join(parts)
+        return f"\nThe {suffix_name} file contains:\n---\n{file_content}\n---"
+
     def execute(
         self,
         raw_inputs: Optional[Dict[str, Any]] = None,
@@ -160,29 +331,39 @@ class TextInspectorTool(_BenchmarkToolMixin, BaseTool):
     ) -> ToolResult:
         raw_inputs = raw_inputs or {}
         requested_path = path or file_path or file or filename or attachment
-        attachments = raw_inputs.get("attachments") or raw_inputs.get("metadata", {}).get("attachments") or []
-        if requested_path:
-            attachments = list(requested_path) if isinstance(requested_path, (list, tuple)) else [requested_path]
+        attachments = self._attachment_candidates(raw_inputs, requested_path)
         try:
-            from AgentDropout.tools.reader.readers import GeneralReader
+            from AgentDropout.tools.reader.readers import READER_MAP  # noqa: F401
         except ModuleNotFoundError as exc:
             if attachments:
                 return ToolResult(success=False, output="", metadata={}, error=f"text_inspector unavailable: missing dependency {exc.name}")
             return ToolResult(success=True, output="", metadata={"attachments": 0})
 
-        reader = GeneralReader()
         sections = []
+        failures = []
+        inspected = 0
+        task = str(raw_inputs.get("question") or raw_inputs.get("task") or "")
         for candidate in attachments:
             try:
-                if not candidate or not Path(candidate).exists():
+                actual_path, display_path = self._resolve_attachment_path(candidate, raw_inputs)
+                if actual_path is None:
+                    if display_path:
+                        failures.append(f"Attachment not found: {display_path}")
                     continue
-                content = reader.read(str(raw_inputs.get("question") or raw_inputs.get("task") or ""), str(candidate))
+                suffix = self._infer_attachment_suffix(candidate, raw_inputs, actual_path)
+                content = self._read_attachment(actual_path, suffix, task)
                 if content:
+                    inspected += 1
                     sections.append(content)
             except Exception as exc:
                 sections.append(f"Failed to inspect {candidate}: {exc}")
-        output = "\n\n".join(sections)
-        return ToolResult(success=True, output=self._truncate(output), metadata={"attachments": len(attachments)})
+        output = "\n\n".join(sections + failures)
+        metadata = {"attachments": len(attachments), "inspected": inspected}
+        if sections:
+            return ToolResult(success=True, output=self._truncate(output), metadata=metadata)
+        if failures:
+            return ToolResult(success=False, output="", metadata=metadata, error=self._truncate(output))
+        return ToolResult(success=True, output="", metadata=metadata)
 
 
 class WebSearchTool(_BenchmarkToolMixin, BaseTool):
@@ -276,15 +457,19 @@ class WebSearchTool(_BenchmarkToolMixin, BaseTool):
             return question[:240]
 
     def _search(self, query: str) -> str:
-        provider = self.provider.lower()
+        provider = _normalize_web_provider(self.provider)
+        unavailable_reason = _web_provider_unavailable_reason(provider)
+        if unavailable_reason is not None:
+            raise RuntimeError(
+                f"{provider} provider unavailable: {unavailable_reason}. "
+                "Set the required environment variables or choose another --web_tool_provider."
+            )
         if provider == "wiki":
             queries = [query]
             result = _run_async_from_sync(lambda: search_wiki_main(queries))
             return "\n".join(item for item in result if item)
         if provider == "tavily":
             return self._search_tavily(query)
-        if provider == "serper":
-            provider = "searchapi"
         if self._search_engine is None:
             if provider == "google":
                 self._search_engine = GoogleSearchEngine()
@@ -473,16 +658,22 @@ class BenchmarkToolRunner:
         self.max_search_limit = max(1, int(max_search_limit))
         self.max_tool_chars = max(1000, int(max_tool_chars))
         self.max_tool_turns = max(0, int(max_tool_turns))
+        self.unavailable_tools: Dict[str, str] = {}
         self.registry = self._build_registry()
 
     def _build_registry(self) -> ToolRegistry:
         registry = ToolRegistry()
         for tool_name in self.enabled_tools:
             if tool_name == "web_search":
+                provider, unavailable_reason = _select_available_web_provider(self.web_tool_provider)
+                if provider is None:
+                    self.unavailable_tools["web_search"] = unavailable_reason or "web_search is unavailable"
+                    continue
+                self.web_tool_provider = provider
                 registry.register(
                     WebSearchTool(
                         llm_name=self.llm_name,
-                        provider=self.web_tool_provider,
+                        provider=provider,
                         top_k_results=self.top_k_results,
                         direct_tool_call=self.direct_tool_call,
                         max_tool_chars=self.max_tool_chars,
@@ -556,6 +747,13 @@ class BenchmarkToolRunner:
         tool = self.registry.get(name)
         if tool is None:
             enabled = ", ".join(self.registry.list_tools()) if self.registry.list_tools() else "none"
+            if name in self.unavailable_tools:
+                return [
+                    ToolObservation(
+                        name,
+                        f"Tool '{name}' is unavailable: {self.unavailable_tools[name]} Enabled tools: {enabled}.",
+                    )
+                ]
             return [ToolObservation(name, f"Tool '{name}' is not enabled. Enabled tools: {enabled}.")]
 
         if name == "web_search":
