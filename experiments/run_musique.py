@@ -21,7 +21,7 @@ from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, print_token_stats
 from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
-from experiments.run_aime import train_agentprune
+from experiments.run_aime import evaluate as evaluate_with_usage, train_agentprune
 
 
 MODES = ["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"]
@@ -244,102 +244,7 @@ def build_graph_with_kwargs(args, dataset: AgentBenchmarkDataset) -> tuple[Graph
 
 
 async def evaluate(graph: Graph, dataset: AgentBenchmarkDataset, args) -> Dict[str, Any]:
-    records = selected_records(dataset, args.limit_questions)
-    result_file = Path(args.result_file) if args.result_file else default_result_file(args, dataset)
-    result_file.parent.mkdir(parents=True, exist_ok=True)
-    configured_tools = dataset.default_tools if args.enabled_tools is None else list(args.enabled_tools)
-
-    if args.dry_run:
-        tool_usage = {tool: 0 for tool in configured_tools}
-        summary = {
-            "benchmark": dataset.name,
-            "split": dataset.split,
-            "loaded": len(dataset),
-            "selected": len(records),
-            "expected_samples": dataset.expected_samples(),
-            "default_tools": dataset.default_tools,
-            "tool_usage": tool_usage,
-            "tool_usage_by_dataset": {dataset.name: tool_usage},
-            "result_file": str(result_file),
-            "dry_run": True,
-        }
-        result_file.write_text(json.dumps({"summary": summary, "results": []}, indent=2, ensure_ascii=False), encoding="utf-8")
-        return summary
-
-    results = []
-    correct = 0
-    total = 0
-    tool_totals: Dict[str, int] = {tool: 0 for tool in configured_tools}
-    num_batches = int(math.ceil(len(records) / args.batch_size)) if records else 0
-
-    for record_batch in tqdm(iter_batches(records, args.batch_size), total=num_batches):
-        tasks = []
-        task_inputs = []
-        for record in record_batch:
-            realized_graph = copy.deepcopy(graph)
-            realized_graph.spatial_logits = graph.spatial_logits
-            realized_graph.temporal_logits = graph.temporal_logits
-            input_dict = dataset.record_to_input(record)
-            task_inputs.append(input_dict)
-            tasks.append(asyncio.create_task(realized_graph.arun(input_dict, args.num_rounds, case=True)))
-
-        raw_results = await asyncio.gather(*tasks)
-        for raw_result, record, input_dict in zip(raw_results, record_batch, task_inputs):
-            raw_answer, _, all_answers = raw_result
-            answer_text = raw_answer[0] if isinstance(raw_answer, list) and raw_answer else raw_answer
-            score = dataset.score(answer_text, record)
-            tool_counts = dict(input_dict.get("metadata", {}).get("tool_counts", {}))
-            tool_history = list(input_dict.get("metadata", {}).get("tool_history", []))
-            for tool_name, count in tool_counts.items():
-                tool_totals[tool_name] = int(tool_totals.get(tool_name, 0)) + int(count)
-            total += 1
-            correct += int(score.get("correct", False))
-            results.append(
-                {
-                    "id": record.question_id,
-                    "question": record.question,
-                    "answer": record.answer,
-                    "metadata": record.metadata,
-                    "response": raw_answer,
-                    "prediction": score.get("prediction", dataset.postprocess_answer(answer_text)),
-                    "score": score,
-                    "all_answers": all_answers,
-                    "tool_counts": tool_counts,
-                    "tool_history": tool_history,
-                }
-            )
-            print(f"ID: {record.question_id}")
-            print(f"Prediction: {results[-1]['prediction']}")
-            print(f"Target: {record.answer}")
-            print(f"Correct: {score.get('correct', False)}")
-
-        summary = {
-            "benchmark": dataset.name,
-            "split": dataset.split,
-            "loaded": len(dataset),
-            "selected": len(records),
-            "expected_samples": dataset.expected_samples(),
-            "accuracy": correct / total if total else None,
-            "correct": correct,
-            "total": total,
-            "default_tools": dataset.default_tools,
-            "tool_usage": tool_totals,
-            "tool_usage_by_dataset": {dataset.name: tool_totals},
-            "result_file": str(result_file),
-        }
-        result_file.write_text(json.dumps({"summary": summary, "results": results}, indent=2, ensure_ascii=False), encoding="utf-8")
-        print(f"Summary: {summary}")
-        print_token_stats()
-
-    return {
-        "benchmark": dataset.name,
-        "split": dataset.split,
-        "accuracy": correct / total if total else None,
-        "correct": correct,
-        "total": total,
-        "tool_usage": tool_totals,
-        "result_file": str(result_file),
-    }
+    return await evaluate_with_usage(graph, dataset, args)
 
 
 async def main():
