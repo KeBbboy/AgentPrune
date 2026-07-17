@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional
 from AgentDropout.benchmarks.evaluators.metrics import (
     evaluate_gaia,
     evaluate_gpqa,
+    evaluate_hle,
     evaluate_math,
     evaluate_musique,
     evaluate_qa,
@@ -97,6 +98,15 @@ def normalize_text(text: Any) -> str:
     return " ".join(text.split())
 
 
+def choice_letters_for_answer(choices: List[str], answer: Any) -> str:
+    count = len(choices or [])
+    answer_text = str(answer).strip().upper()
+    if len(answer_text) == 1 and answer_text in string.ascii_uppercase:
+        count = max(count, string.ascii_uppercase.index(answer_text) + 1)
+    count = min(max(count, 1), len(string.ascii_uppercase))
+    return string.ascii_uppercase[:count]
+
+
 def extract_answer_text(answer: Any) -> str:
     if isinstance(answer, list):
         answer = answer[0] if answer else ""
@@ -142,16 +152,36 @@ def extract_answer_text(answer: Any) -> str:
     return _clean_answer(lines[-1]) if lines else ""
 
 
-def extract_choice(answer: Any) -> str:
+def extract_choice(answer: Any, letters: str = "ABCD") -> str:
     text = extract_answer_text(answer)
-    for pattern in (
-        r"^\(?\s*([A-J])\s*\)?$",
-        r"answer\s*(?:is|:)?\s*\(?\s*([A-J])\s*\)?",
-        r"\b([A-J])\b",
-    ):
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match is not None:
-            return match.group(1).upper()
+    letters = "".join(
+        dict.fromkeys(ch for ch in str(letters).upper() if ch in string.ascii_uppercase)
+    )
+    if not letters:
+        return ""
+    letter_class = re.escape(letters)
+    exact_match = re.fullmatch(rf"\(?\s*([{letter_class}])\s*\)?", text, flags=re.IGNORECASE)
+    if exact_match is not None:
+        return exact_match.group(1).upper()
+
+    marker_matches = list(
+        re.finditer(
+            rf"(?:final\s+answer|the\s+answer|answer|option|choice|choose|select)"
+            rf"\s*(?:is|:)?\s*(?:option\s*)?\(?\s*([{letter_class}])\s*\)?",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+    if marker_matches:
+        return marker_matches[-1].group(1).upper()
+
+    leading_match = re.match(rf"\(?\s*([{letter_class}])(?:\)|[.,;:\s]|$)", text, flags=re.IGNORECASE)
+    if leading_match is not None:
+        return leading_match.group(1).upper()
+
+    standalone_matches = list(re.finditer(rf"\b([{letter_class}])\b", text, flags=re.IGNORECASE))
+    if standalone_matches:
+        return standalone_matches[-1].group(1).upper()
     return ""
 
 
@@ -245,7 +275,8 @@ def score_benchmark_prediction(
     pred_text = extract_answer_text(prediction)
     if dataset_name == "gpqa":
         result = evaluate_gpqa(pred_text, ground_truth, metadata.get("choices", []))
-        result["prediction"] = extract_choice(prediction) or pred_text
+        letters = choice_letters_for_answer(metadata.get("choices", []), ground_truth)
+        result["prediction"] = extract_choice(prediction, letters) or pred_text
         result["score"] = result.get("accuracy", float(result.get("correct", False)))
         return result
 
@@ -270,7 +301,16 @@ def score_benchmark_prediction(
     elif dataset_name == "gaia":
         result = evaluate_gaia(pred_text, ground_truth)
     elif dataset_name == "hle":
-        result = evaluate_qa(pred_text, ground_truth)
+        answer_type = metadata.get("answer_type", "")
+        choices = metadata.get("choices", [])
+        if str(answer_type).strip().lower() == "multiplechoice":
+            letters = choice_letters_for_answer(choices, ground_truth)
+            pred_choice = extract_choice(prediction, letters)
+            result = evaluate_hle(pred_choice or pred_text, ground_truth, answer_type, choices)
+            result["prediction"] = pred_choice or pred_text
+            result["score"] = result.get("accuracy", float(result.get("correct", False)))
+            return result
+        result = evaluate_hle(pred_text, ground_truth, answer_type, choices)
     else:
         result = evaluate_qa(pred_text, ground_truth)
 
@@ -421,22 +461,50 @@ class AgentBenchmarkDataset:
         )
 
     def _normalize_gpqa(self, idx: int, data: Dict[str, Any]) -> BenchmarkRecord:
-        choices = list(data.get("Choices") or data.get("choices") or [])
+        question_id = data.get("id", idx)
+        answer_text = str(data.get("AnswerText", data.get("answer_text", "")) or "").strip()
+        raw_answer = str(data.get("Answer", data.get("answer", ""))).strip().upper()
+        choices = [str(choice) for choice in list(data.get("Choices") or data.get("choices") or [])]
+        answer = raw_answer
+        if choices and answer_text:
+            correct_idx = self._gpqa_correct_choice_index(choices, answer_text)
+            if correct_idx is not None:
+                paired_choices = [(choice, choice_idx == correct_idx) for choice_idx, choice in enumerate(choices)]
+                random.Random(f"gpqa-choice-shuffle:{self.shuffle_seed}:{question_id}").shuffle(paired_choices)
+                choices = [choice for choice, _ in paired_choices]
+                answer = next(
+                    chr(ord("A") + choice_idx)
+                    for choice_idx, (_, is_correct) in enumerate(paired_choices)
+                    if is_correct
+                )
         question = str(data.get("Question", data.get("question", ""))).strip()
         if choices:
             question += "\n\nChoices:"
             for i, choice in enumerate(choices):
                 question += f"\n{chr(ord('A') + i)}. {choice}"
         return BenchmarkRecord(
-            question_id=data.get("id", idx),
+            question_id=question_id,
             question=question,
-            answer=str(data.get("Answer", data.get("answer", ""))).strip().upper(),
+            answer=answer,
             metadata={
                 "choices": choices,
-                "answer_text": data.get("AnswerText", data.get("answer_text", "")),
+                "answer_text": answer_text,
+                "original_answer": raw_answer,
                 "domain": data.get("Domain", data.get("domain", "")),
             },
         )
+
+    @staticmethod
+    def _gpqa_correct_choice_index(choices: List[str], answer_text: str) -> Optional[int]:
+        answer_text = str(answer_text).strip()
+        for idx, choice in enumerate(choices):
+            if str(choice).strip() == answer_text:
+                return idx
+        answer_norm = normalize_text(answer_text)
+        for idx, choice in enumerate(choices):
+            if normalize_text(choice) == answer_norm:
+                return idx
+        return None
 
     def _normalize_aime(self, idx: int, data: Dict[str, Any]) -> BenchmarkRecord:
         return BenchmarkRecord(
@@ -458,22 +526,48 @@ class AgentBenchmarkDataset:
         )
 
     def _normalize_hle(self, idx: int, data: Dict[str, Any]) -> BenchmarkRecord:
+        question = str(data.get("Question", data.get("question", "")))
+        answer_type = str(data.get("Answer_type", data.get("answer_type", "")))
+        choices = self._extract_hle_choices(question) if answer_type.strip().lower() == "multiplechoice" else []
         metadata = {
             "id": data.get("id", f"hle_{self.split}_{idx}"),
-            "answer_type": data.get("Answer_type", data.get("answer_type", "")),
+            "answer_type": answer_type,
             "category": data.get("category", ""),
             "raw_subject": data.get("raw_subject", ""),
             "file_name": data.get("file_name", ""),
             "file_path": data.get("file_path", ""),
             "full_file_path": data.get("full_file_path", ""),
             "attachments": self._attachments(data),
+            "choices": choices,
         }
         return BenchmarkRecord(
             question_id=metadata["id"],
-            question=str(data.get("Question", data.get("question", ""))),
+            question=question,
             answer=str(data.get("Answer", data.get("answer", ""))),
             metadata=metadata,
         )
+
+    @staticmethod
+    def _extract_hle_choices(question: str) -> List[str]:
+        choices: List[str] = []
+        choice_block = question or ""
+        choice_headers = list(re.finditer(r"(?i)\banswer\s+choices\s*:\s*", choice_block))
+        if choice_headers:
+            choice_block = choice_block[choice_headers[-1].end() :]
+        matches = list(
+            re.finditer(
+                r"(?ms)^\s*([A-Z])\.\s*(.*?)(?=^\s*[A-Z]\.\s|\Z)",
+                choice_block,
+            )
+        )
+        for match in matches:
+            idx = ord(match.group(1).upper()) - ord("A")
+            if idx < 0 or idx >= len(string.ascii_uppercase):
+                continue
+            while len(choices) < idx:
+                choices.append("")
+            choices.append(match.group(2).strip())
+        return choices
 
 
 def _clean_answer(answer: str) -> str:

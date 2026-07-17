@@ -137,6 +137,7 @@ def _evaluate_answer_single(
     prediction: str,
     ground_truth: str,
     choices: Optional[List[str]] = None,
+    allow_contains: bool = True,
 ) -> Dict[str, Any]:
     pred = (prediction or "").strip()
     gt = (ground_truth or "").strip()
@@ -164,7 +165,7 @@ def _evaluate_answer_single(
         em_score = float(exact_match(pred, gt, case_sensitive=False))
         f1_score = token_f1(pred, gt)
 
-    if choices is None and contains_match(pred, gt):
+    if allow_contains and choices is None and contains_match(pred, gt):
         score = max(score, 1.0)
         em_score = max(em_score, 1.0)
         f1_score = max(f1_score, token_f1(pred, gt))
@@ -177,14 +178,15 @@ def evaluate_answer(
     ground_truth: str,
     choices: Optional[List[str]] = None,
     answer_aliases: Optional[List[str]] = None,
+    allow_contains: bool = True,
 ) -> Dict[str, Any]:
-    result = _evaluate_answer_single(prediction, ground_truth, choices)
+    result = _evaluate_answer_single(prediction, ground_truth, choices, allow_contains=allow_contains)
     if not answer_aliases or result["accuracy"] >= 1.0:
         return result
     for alias in answer_aliases:
         if alias == ground_truth:
             continue
-        alias_result = _evaluate_answer_single(prediction, alias, choices)
+        alias_result = _evaluate_answer_single(prediction, alias, choices, allow_contains=allow_contains)
         if alias_result["accuracy"] > result["accuracy"]:
             result = alias_result
         if result["accuracy"] >= 1.0:
@@ -195,14 +197,31 @@ def evaluate_answer(
 def _mc_correct(prediction: str, ground_truth: str, choices: List[str]) -> bool:
     gt_norm = ground_truth.strip().upper()
     pred_norm = prediction.strip().upper()
+    valid_letters = _valid_choice_letters(choices, gt_norm)
 
     pred_letter: Optional[str] = None
-    if len(pred_norm) == 1 and pred_norm in "ABCDE":
-        pred_letter = pred_norm
+    letter_class = re.escape(valid_letters)
+    exact_match_letter = re.fullmatch(rf"\(?\s*([{letter_class}])\s*\)?", pred_norm)
+    if exact_match_letter:
+        pred_letter = exact_match_letter.group(1)
     else:
-        match = re.search(r"\b([A-E])\b", pred_norm)
-        if match:
-            pred_letter = match.group(1)
+        marker_matches = list(
+            re.finditer(
+                rf"(?:final\s+answer|the\s+answer|answer|option|choice|choose|select)"
+                rf"\s*(?:is|:)?\s*(?:option\s*)?\(?\s*([{letter_class}])\s*\)?",
+                pred_norm,
+            )
+        )
+        if marker_matches:
+            pred_letter = marker_matches[-1].group(1)
+
+    if pred_letter == gt_norm:
+        return True
+
+    if pred_letter is None:
+        leading_match = re.match(rf"\(?\s*([{letter_class}])(?:\)|[.,;:\s]|$)", pred_norm)
+        if leading_match:
+            pred_letter = leading_match.group(1)
 
     if pred_letter == gt_norm:
         return True
@@ -210,10 +229,54 @@ def _mc_correct(prediction: str, ground_truth: str, choices: List[str]) -> bool:
     if choices:
         pred_text_norm = normalize_answer(prediction)
         for i, choice in enumerate(choices):
-            if normalize_answer(choice) == pred_text_norm:
+            if choice and normalize_answer(choice) == pred_text_norm:
                 return chr(ord("A") + i) == gt_norm
 
-    return False
+    if pred_letter is None:
+        standalone_matches = list(re.finditer(rf"\b([{letter_class}])\b", pred_norm))
+        if standalone_matches:
+            pred_letter = standalone_matches[-1].group(1)
+
+    return pred_letter == gt_norm
+
+
+def _valid_choice_letters(choices: Optional[List[str]], ground_truth: str) -> str:
+    count = len(choices or [])
+    gt_norm = ground_truth.strip().upper()
+    if len(gt_norm) == 1 and gt_norm in string.ascii_uppercase:
+        count = max(count, string.ascii_uppercase.index(gt_norm) + 1)
+    count = min(max(count, 1), len(string.ascii_uppercase))
+    return string.ascii_uppercase[:count]
+
+
+def evaluate_strict_qa(prediction: str, ground_truth: str) -> Dict[str, Any]:
+    pred = (prediction or "").strip()
+    gt = (ground_truth or "").strip()
+    stripped_pred = strip_latex_wrappers(pred)
+    stripped_gt = strip_latex_wrappers(gt)
+    if normalize_answer(stripped_pred) == normalize_answer(stripped_gt):
+        return {"correct": True, "accuracy": 1.0, "em": 1.0, "f1": 1.0}
+
+    pred_date = _try_parse_date(pred)
+    gt_date = _try_parse_date(gt)
+    if pred_date is not None and gt_date is not None and pred_date == gt_date:
+        return {"correct": True, "accuracy": 1.0, "em": 1.0, "f1": 1.0}
+
+    score = float(question_scorer(pred, gt))
+    em_score = float(exact_match(pred, gt, case_sensitive=False))
+    f1_score = token_f1(pred, gt)
+    return {"correct": score > 0, "accuracy": score, "em": em_score, "f1": f1_score}
+
+
+def evaluate_hle(
+    prediction: str,
+    ground_truth: str,
+    answer_type: str = "",
+    choices: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    if str(answer_type).strip().lower() == "multiplechoice":
+        return evaluate_answer(prediction, ground_truth, choices=choices or [])
+    return evaluate_strict_qa(prediction, ground_truth)
 
 
 def evaluate_gaia(prediction: str, ground_truth: str) -> Dict[str, Any]:
@@ -242,14 +305,14 @@ def evaluate_musique(
     ground_truth: str,
     answer_aliases: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    base_result = evaluate_answer(prediction, ground_truth)
+    base_result = evaluate_strict_qa(prediction, ground_truth)
     if base_result.get("correct", False):
         return base_result
 
     for alias in answer_aliases or []:
         if not alias:
             continue
-        alias_result = evaluate_answer(prediction, alias)
+        alias_result = evaluate_strict_qa(prediction, alias)
         if alias_result.get("correct", False):
             return alias_result
     return base_result
