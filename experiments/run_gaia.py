@@ -206,21 +206,7 @@ def build_node_kwargs(
     base_tool_config: Dict[str, Any],
     enabled_tools: List[str],
 ) -> List[Dict[str, Any]]:
-    if mode != "FullConnected" or any(agent_name != "BenchmarkAgent" for agent_name in agent_names):
-        return [{"tool_config": dict(base_tool_config)} for _ in agent_names]
-
-    specialists = []
-    if "code_generator" in enabled_tools:
-        specialists.append(("Code Execution Specialist", ["code_generator"]))
-    specialists.extend([("Independent Solver", []), ("Synthesis Verifier", [])])
-
-    node_kwargs = []
-    for idx, _ in enumerate(agent_names):
-        role, role_tools = specialists[idx % len(specialists)]
-        tool_config = dict(base_tool_config)
-        tool_config["enabled_tools"] = [tool for tool in role_tools if tool in enabled_tools]
-        node_kwargs.append({"role": role, "tool_config": tool_config})
-    return node_kwargs
+    return [{"tool_config": dict(base_tool_config)} for _ in agent_names]
 
 
 def build_graph(args, dataset: AgentBenchmarkDataset) -> Graph:
