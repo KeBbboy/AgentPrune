@@ -456,6 +456,8 @@ async def main():
         train_source = args.train_dataset_path or f"{train_dataset.data_dir}/{train_dataset.spec.data_subdir}/{train_dataset.split}.jsonl"
         print(f"GAIA AgentPrune training dataset: {train_source}")
         await train_agentprune(graph, train_dataset, args, kwargs)
+        graph.optimized_spatial = False
+        graph.optimized_temporal = False
         print("Final spatial logits:", graph.spatial_logits)
         print("Final temporal logits:", graph.temporal_logits)
         print("Final spatial masks:", graph.spatial_masks)
