@@ -21,7 +21,12 @@ from AgentDropout.llm.gpt_chat import configure_thinking, parse_bool_arg
 from AgentDropout.utils.const import AgentPrune_ROOT
 from AgentDropout.utils.globals import CompletionTokens, Cost, PromptTokens, Time, print_token_stats
 from AgentDropout.benchmarks.agent_benchmarks import AgentBenchmarkDataset, BenchmarkRecord, iter_batches
-from experiments.run_aime import evaluate as evaluate_with_usage, train_agentprune
+from experiments.run_aime import (
+    add_taylor_prune_argument,
+    configure_taylor_prune,
+    evaluate as evaluate_with_usage,
+    train_agentprune,
+)
 
 
 MODES = ["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered", "Star", "Mesh"]
@@ -56,6 +61,7 @@ def parse_args():
                         help="Prune every N optimization iterations.")
     parser.add_argument("--pruning_rate", type=float, default=0.25,
                         help="Rate of graph edge pruning.")
+    add_taylor_prune_argument(parser, "musique")
     parser.add_argument("--num_rounds", type=int, default=1)
     parser.add_argument("--domain", type=str, default="musique")
     parser.add_argument("--decision_method", type=str, default="FinalRefer")
@@ -246,6 +252,7 @@ async def main():
         dataset_path=args.dataset_path,
     )
     graph, kwargs = build_graph_with_kwargs(args, dataset)
+    configure_taylor_prune(graph, args, "musique")
     if not args.dry_run and (args.optimized_spatial or args.optimized_temporal):
         if args.train_dataset_path and not Path(args.train_dataset_path).exists():
             raise FileNotFoundError(

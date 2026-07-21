@@ -577,6 +577,14 @@ class Graph(ABC):
         return False
 
     def update_masks(self, pruning_rate: float) -> torch.Tensor:
+        if getattr(self, "use_taylor_prune", False):
+            self.last_taylor_prune_stats = self.taylor_prune(
+                pruning_rate=float(getattr(self, "taylor_prune_ratio", pruning_rate)),
+                use_ema=bool(getattr(self, "taylor_prune_ema", False)),
+                ema_decay=float(getattr(self, "taylor_prune_ema_decay", 0.9)),
+            )
+            return self.spatial_masks, self.temporal_masks
+
         if self.optimized_spatial:
             num_edges = (self.spatial_masks > 0).sum()
             num_masks = (self.spatial_masks == 0).sum()
@@ -601,6 +609,14 @@ class Graph(ABC):
         return self.spatial_masks, self.temporal_masks
     
     def update_masks_diff(self, pruning_rate: float) -> torch.Tensor:
+        if getattr(self, "use_taylor_prune", False):
+            self.last_taylor_prune_stats = self.taylor_prune(
+                pruning_rate=float(getattr(self, "taylor_prune_ratio", pruning_rate)),
+                use_ema=bool(getattr(self, "taylor_prune_ema", False)),
+                ema_decay=float(getattr(self, "taylor_prune_ema_decay", 0.9)),
+            )
+            return self.spatial_masks, self.temporal_masks
+
         if self.optimized_spatial:
             for i in range(self.rounds):
                 num_edges = (self.spatial_masks[i] > 0).sum()
@@ -629,6 +645,87 @@ class Graph(ABC):
         # self.spatial_logits_1 = self.spatial_logits.clone()
         # self.temporal_logits_1 = self.temporal_logits.clone()
         return self.spatial_masks, self.temporal_masks
+
+    def taylor_prune(self, pruning_rate: float = 0.1, use_ema: bool = False, ema_decay: float = 0.9) -> Dict[str, Any]:
+        """基于 Taylor 展开 importance = |logit * grad| 的剪枝。
+
+        必须先调用过 ``total_loss.backward()``，否则 ``spatial_logits.grad``
+        为 ``None``，函数会返回空操作。
+
+        参数:
+            pruning_rate: 本次剪掉的"活跃边"比例（0~1）
+            use_ema: 是否对梯度做指数移动平均，缓解单 batch 噪声
+            ema_decay: EMA 平滑系数，0~1，越大越平滑
+
+        返回:
+            统计信息 dict（含剪枝前后活跃边数、各 round 剪了多少边）
+        """
+        if pruning_rate <= 0:
+            return {"pruned": 0, "skipped": True, "reason": "non_positive_rate"}
+
+        stats: Dict[str, Any] = {"pruned": 0, "skipped": False, "per_round": []}
+
+        def _apply_to_pair(logits: torch.Tensor, masks: torch.Tensor, round_id: Any = None) -> int:
+            """对一对 (logits, masks) 做 Taylor Pruning；返回剪掉的边数。"""
+            if masks is None or logits is None or logits.grad is None:
+                return 0
+            # 真实"活跃边"用 masks 维度算
+            n_mask = int(masks.numel())
+            # logits 可能比 masks 短（项目里 spatial 用 20 条潜在边，去掉自环）
+            if logits.numel() < n_mask:
+                # 把 logits pad 到 masks 长度，缺的位置用 0（importance = 0）
+                pad = torch.zeros(n_mask - logits.numel(), dtype=logits.dtype, device=logits.device)
+                logits_full = torch.cat([logits.detach(), pad])
+                grad_full = torch.cat([logits.grad.detach(), pad])
+            elif logits.numel() > n_mask:
+                # 截断到 masks 长度
+                logits_full = logits.detach()[:n_mask]
+                grad_full = logits.grad.detach()[:n_mask]
+            else:
+                logits_full = logits.detach()
+                grad_full = logits.grad.detach()
+
+            if use_ema:
+                if not hasattr(self, "_taylor_grad_ema"):
+                    self._taylor_grad_ema = {}
+                key = id(logits)
+                prev = self._taylor_grad_ema.get(key)
+                if prev is None or prev.shape != grad_full.shape:
+                    ema = grad_full.clone()
+                else:
+                    ema = ema_decay * prev + (1.0 - ema_decay) * grad_full
+                self._taylor_grad_ema[key] = ema.detach().clone()
+                grad_full = ema
+
+            # importance = |w * grad|
+            importance = (logits_full * grad_full).abs()
+            # 已经被 mask=0 剪掉的边置为 +inf，不参与排序
+            importance = importance.masked_fill(masks == 0, float("inf"))
+            active = int((masks > 0).sum().item())
+            n_prune = int(round(active * pruning_rate))
+            if n_prune <= 0 or active <= 1:
+                return 0
+            # argsort 升序，importance 最小的 n_prune 条优先剪
+            prune_idx = torch.argsort(importance)[:n_prune]
+            masks[prune_idx] = 0
+            return int(n_prune)
+
+        if not self.diff:
+            stats["spatial_pruned"] = _apply_to_pair(self.spatial_logits, self.spatial_masks, "spatial")
+            stats["temporal_pruned"] = _apply_to_pair(self.temporal_logits, self.temporal_masks, "temporal")
+            stats["pruned"] = stats["spatial_pruned"] + stats["temporal_pruned"]
+        else:
+            n_rounds = self.rounds
+            for r in range(n_rounds):
+                sp = _apply_to_pair(self.spatial_logits[r], self.spatial_masks[r], f"spatial-{r}")
+                stats["per_round"].append({"round": r, "spatial_pruned": sp})
+                stats["pruned"] += sp
+            for r in range(n_rounds - 1):
+                tp = _apply_to_pair(self.temporal_logits[r], self.temporal_masks[r], f"temporal-{r}")
+                if r < len(stats["per_round"]):
+                    stats["per_round"][r]["temporal_pruned"] = tp
+                stats["pruned"] += tp
+        return stats
 
     def update_masks_dec(self):
         spatial_matrix_train = [param.reshape((5, 5)) for param in self.spatial_logits_1]

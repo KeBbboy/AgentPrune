@@ -36,6 +36,8 @@ from experiments.run_aime import (
     _summarize_usage_records,
     _usage_records_for_run,
     _usage_records_since,
+    add_taylor_prune_argument,
+    configure_taylor_prune,
     train_agentprune,
 )
 
@@ -72,6 +74,7 @@ def parse_args():
                         help="Prune every N optimization iterations.")
     parser.add_argument("--pruning_rate", type=float, default=0.25,
                         help="Rate of graph edge pruning.")
+    add_taylor_prune_argument(parser, "gaia")
     parser.add_argument("--num_rounds", type=int, default=1)
     parser.add_argument("--domain", type=str, default="gaia")
     parser.add_argument("--decision_method", type=str, default="FinalRefer")
@@ -441,6 +444,7 @@ async def main():
         dataset_path=args.dataset_path,
     )
     graph, kwargs = build_graph_with_kwargs(args, dataset)
+    configure_taylor_prune(graph, args, "gaia")
     if not args.dry_run and (args.optimized_spatial or args.optimized_temporal):
         if args.train_dataset_path and not Path(args.train_dataset_path).exists():
             raise FileNotFoundError(

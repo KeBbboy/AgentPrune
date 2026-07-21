@@ -45,6 +45,32 @@ MODES = ["DirectAnswer", "FullConnected", "Random", "Chain", "Debate", "Layered"
 TOOL_LOSS_OUTPUT_TOKEN_WEIGHT = 0.05
 TOOL_LOSS_CALL_WEIGHT = 0.10
 TOOL_LOSS_TOOL_TOKEN_WEIGHT = 0.10
+TAYLOR_PRUNE_EVERY = 2
+TAYLOR_PRUNE_RATIO = 0.1
+TAYLOR_PRUNE_EMA_DECAY = 0.9
+
+
+def add_taylor_prune_argument(parser: argparse.ArgumentParser, dataset_name: str) -> None:
+    parser.add_argument("--taylor_prune", action=argparse.BooleanOptionalAction, default=False,
+                        help=(
+                            f"Enable {dataset_name.upper()} Taylor Pruning during AgentPrune "
+                            f"training (every {TAYLOR_PRUNE_EVERY} iterations, ratio {TAYLOR_PRUNE_RATIO})."
+                        ))
+
+
+def configure_taylor_prune(graph: Graph, args, dataset_name: str) -> None:
+    if not getattr(args, "taylor_prune", False):
+        return
+    graph.use_taylor_prune = True
+    graph.taylor_prune_ratio = TAYLOR_PRUNE_RATIO
+    graph.taylor_prune_ema = False
+    graph.taylor_prune_ema_decay = TAYLOR_PRUNE_EMA_DECAY
+    args.imp_per_iterations = TAYLOR_PRUNE_EVERY
+    args.pruning_rate = TAYLOR_PRUNE_RATIO
+    print(
+        f"{dataset_name.upper()} Taylor Pruning enabled: "
+        f"every={TAYLOR_PRUNE_EVERY}, ratio={TAYLOR_PRUNE_RATIO}"
+    )
 
 
 def parse_args():
@@ -76,6 +102,7 @@ def parse_args():
                         help="Prune every N optimization iterations.")
     parser.add_argument("--pruning_rate", type=float, default=0.25,
                         help="Rate of graph edge pruning.")
+    add_taylor_prune_argument(parser, "aime")
     parser.add_argument("--num_rounds", type=int, default=1)
     parser.add_argument("--domain", type=str, default="aime")
     parser.add_argument("--decision_method", type=str, default="FinalRefer")
@@ -916,6 +943,7 @@ async def main():
         dataset_path=args.dataset_path,
     )
     graph, kwargs = build_graph_with_kwargs(args, dataset)
+    configure_taylor_prune(graph, args, "aime")
     if not args.dry_run and (args.optimized_spatial or args.optimized_temporal):
         if not (args.train_dataset_path or args.train_split or args.train_data_dir):
             raise ValueError(
