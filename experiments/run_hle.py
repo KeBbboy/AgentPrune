@@ -214,6 +214,7 @@ def build_graph_with_kwargs(args, dataset: AgentBenchmarkDataset) -> tuple[Graph
         "max_search_limit": args.max_search_limit,
         "max_tool_chars": args.max_tool_chars,
         "max_tool_turns": args.max_tool_turns,
+        "return_code": getattr(args, "return_code", False),
     }
     agent_names = [name for name, num in zip(args.agent_names, args.agent_nums) for _ in range(num)]
     if args.mode == "DirectAnswer":

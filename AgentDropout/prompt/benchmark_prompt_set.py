@@ -2,7 +2,7 @@ import itertools
 import re
 from typing import Any, Dict, List, Union
 
-from AgentDropout.benchmarks.agent_benchmarks import extract_official_numeric_answer
+from AgentDropout.benchmarks.agent_benchmarks import extract_answer_text, extract_official_numeric_answer
 from AgentDropout.prompt.common import get_combine_materials
 from AgentDropout.prompt.prompt_set import PromptSet
 from AgentDropout.prompt.prompt_set_registry import PromptSetRegistry
@@ -243,3 +243,100 @@ class AIMEPromptSet(BenchmarkPromptSet):
             "\\boxed{YOUR_ANSWER}\n"
             "where YOUR_ANSWER is the final integer. Do not write anything after the boxed answer."
         )
+
+
+@PromptSetRegistry.register("math500")
+class MATH500PromptSet(AIMEPromptSet):
+    answer_kind = "math"
+
+    @classmethod
+    def postprocess_answer(cls, answer: Union[str, List[str]]) -> str:
+        if isinstance(answer, list):
+            answer = answer[0] if answer else ""
+        return extract_answer_text(answer)
+
+    @classmethod
+    def get_analyze_constraint(cls, role: str, use_structured_output: bool = False) -> str:
+        return (
+            "You are a mathematical reasoning assistant. Solve the MATH500 problem accurately.\n"
+            "Accuracy is more important than brevity. Work carefully through the reasoning, "
+            "verify algebra and numerical results whenever possible, and only claim tool use "
+            "when an actual tool observation is provided.\n"
+            f"{cls._answer_format()}"
+        )
+
+    @classmethod
+    def get_decision_constraint(cls) -> str:
+        return (
+            "You will receive a MATH500 problem and outputs from other agents. "
+            "Choose the most reliable final answer by checking the mathematical reasoning, "
+            "algebra, arithmetic, and consistency with the problem statement.\n"
+            f"{cls._answer_format()}"
+        )
+
+    @classmethod
+    def _answer_format(cls) -> str:
+        return (
+            "Provide the final answer in the format:\n"
+            "\\boxed{YOUR_ANSWER}\n"
+            "where YOUR_ANSWER is the final expression, number, tuple, matrix, or other requested object. "
+            "Do not write anything after the boxed answer."
+        )
+
+
+@PromptSetRegistry.register("bigcodebench")
+class BigCodeBenchPromptSet(BenchmarkPromptSet):
+    answer_kind = "code"
+
+    @classmethod
+    def get_analyze_constraint(cls, role: str, use_structured_output: bool = False) -> str:
+        role_instruction = ROLE_DESCRIPTION.get(role, ROLE_DESCRIPTION["Code Execution Specialist"])
+        return (
+            f"{role_instruction}\n"
+            "You are solving a BigCodeBench Python coding task. Implement the requested function exactly. "
+            "Respect the provided signature/stub, include necessary imports, and avoid standalone execution "
+            "code such as print calls or an __main__ block. If code_generator is available, use it to "
+            "syntax-check or draft the implementation.\n"
+            f"{cls._answer_format()}"
+        )
+
+    @staticmethod
+    def get_format() -> str:
+        return "python code"
+
+    @classmethod
+    def get_decision_constraint(cls) -> str:
+        return (
+            "You will receive a BigCodeBench coding task and candidate implementations from other agents. "
+            "Choose or synthesize the implementation most likely to pass the hidden unittest harness. "
+            "Return only the final Python implementation.\n"
+            f"{cls._answer_format()}"
+        )
+
+    @classmethod
+    def _answer_format(cls) -> str:
+        return (
+            "Output the final solution as exactly one fenced Python code block:\n"
+            "```python\n"
+            "<your implementation here>\n"
+            "```\n"
+            "Do not write prose before or after the code block."
+        )
+
+    @classmethod
+    def postprocess_answer(cls, answer: Union[str, List[str]]) -> str:
+        if isinstance(answer, list):
+            answer = answer[0] if answer else ""
+        if not isinstance(answer, str):
+            answer = str(answer)
+        return cls._extract_code(answer)
+
+    @staticmethod
+    def _extract_code(answer: str) -> str:
+        answer = answer.strip()
+        if "</think>" in answer:
+            answer = answer.rsplit("</think>", 1)[-1].strip()
+        matches = list(re.finditer(r"```(?:python)?\s*(.*?)\s*```", answer, flags=re.IGNORECASE | re.DOTALL))
+        if matches:
+            return matches[-1].group(1).strip()
+        return re.sub(r"^\s*\[Syntax check:\s*OK\]\s*", "", answer, flags=re.IGNORECASE).strip()

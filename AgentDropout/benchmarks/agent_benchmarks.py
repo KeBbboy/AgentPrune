@@ -14,11 +14,13 @@ from AgentDropout.benchmarks.evaluators.metrics import (
     evaluate_musique,
     evaluate_qa,
 )
+from AgentDropout.benchmarks.evaluators.bigcodebench_scorer import evaluate_bigcodebench
 
 
 QA_DATASETS = {"gaia", "hle", "musique"}
 MC_DATASETS = {"gpqa"}
-MATH_DATASETS = {"aime"}
+MATH_DATASETS = {"aime", "math500"}
+CODE_DATASETS = {"bigcodebench"}
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,15 @@ BENCHMARK_SPECS: Dict[str, BenchmarkSpec] = {
         expected_samples=60,
         notes="msc-thesis downloader combines AIME 2024 and 2025.",
     ),
+    "math500": BenchmarkSpec(
+        name="math500",
+        data_subdir="MATH500",
+        default_split="test_subset_200",
+        default_tools=("web_search", "code_generator"),
+        answer_kind="math",
+        expected_samples=200,
+        notes="msc-thesis direct-tools config uses web_search + code_generator on test_subset_200.",
+    ),
     "musique": BenchmarkSpec(
         name="musique",
         data_subdir="MuSiQue",
@@ -77,6 +88,15 @@ BENCHMARK_SPECS: Dict[str, BenchmarkSpec] = {
         answer_kind="qa",
         expected_samples=200,
         notes="msc-thesis runs a 200-example HLE test subset.",
+    ),
+    "bigcodebench": BenchmarkSpec(
+        name="bigcodebench",
+        data_subdir="BigCodeBench",
+        default_split="v0.1.4_subset_200",
+        default_tools=("code_generator",),
+        answer_kind="code",
+        expected_samples=200,
+        notes="msc-thesis direct-tools config uses only code_generator with return_code=true.",
     ),
 }
 
@@ -199,6 +219,19 @@ def extract_numeric_answer(answer: Any) -> str:
     return value
 
 
+def extract_code_answer(answer: Any) -> str:
+    if answer is None:
+        return ""
+    text = str(answer).strip()
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[-1].strip()
+    matches = list(re.finditer(r"```(?:python)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL))
+    if matches:
+        text = matches[-1].group(1).strip()
+    text = re.sub(r"^\s*\[Syntax check:\s*OK\]\s*", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
 # AIME / MATH official final-answer markers. Order matters: the last-seen
 # marker in the body wins, matching the convention used by lm-eval-harness
 # MATH and `math_verify` (downstream scoring treats the most recent
@@ -272,6 +305,12 @@ def score_benchmark_prediction(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     metadata = metadata or {}
+    if dataset_name == "bigcodebench":
+        result = evaluate_bigcodebench(str(prediction or ""), metadata)
+        result["prediction"] = result.get("prediction", extract_code_answer(prediction))
+        result["score"] = result.get("accuracy", result.get("score", float(result.get("correct", False))))
+        return result
+
     pred_text = extract_answer_text(prediction)
     if dataset_name == "gpqa":
         result = evaluate_gpqa(pred_text, ground_truth, metadata.get("choices", []))
@@ -292,6 +331,12 @@ def score_benchmark_prediction(
             # Use the robust extractor first; only fall back to the raw prediction
             # text when no integer could be salvaged from the model's output.
             result["prediction"] = extract_official_numeric_answer(prediction) or pred_text
+        result["score"] = result.get("accuracy", float(result.get("correct", False)))
+        return result
+
+    if dataset_name == "math500":
+        result = evaluate_math(pred_text, ground_truth)
+        result["prediction"] = pred_text
         result["score"] = result.get("accuracy", float(result.get("correct", False)))
         return result
 
@@ -374,6 +419,8 @@ class AgentBenchmarkDataset:
             return extract_choice(answer)
         if self.name == "aime":
             return extract_numeric_answer(answer)
+        if self.name == "bigcodebench":
+            return extract_code_answer(answer)
         return extract_answer_text(answer)
 
     def score(self, prediction: Any, record: BenchmarkRecord) -> Dict[str, Any]:
@@ -385,10 +432,14 @@ class AgentBenchmarkDataset:
             candidates.append(self.dataset_path)
 
         filenames = [f"{self.split}.jsonl"]
+        if self.name == "math500" and self.split == "test":
+            filenames.append("test_subset_200.jsonl")
         if self.name == "musique":
             filenames.append("validation_subset_200.jsonl")
         if self.name == "hle" and self.split == "test":
             filenames.append("test_subset_200.jsonl")
+        if self.name == "bigcodebench" and self.split == "v0.1.4":
+            filenames.append("v0.1.4_subset_200.jsonl")
 
         roots = [self.data_dir]
         if self.data_dir.name != "data":
@@ -431,10 +482,14 @@ class AgentBenchmarkDataset:
             return self._normalize_gpqa(idx, data)
         if self.name == "aime":
             return self._normalize_aime(idx, data)
+        if self.name == "math500":
+            return self._normalize_math500(idx, data)
         if self.name == "musique":
             return self._normalize_musique(idx, data)
         if self.name == "hle":
             return self._normalize_hle(idx, data)
+        if self.name == "bigcodebench":
+            return self._normalize_bigcodebench(idx, data)
         raise ValueError(f"Unsupported benchmark dataset: {self.name}")
 
     @staticmethod
@@ -512,6 +567,39 @@ class AgentBenchmarkDataset:
             question=str(data.get("Question", data.get("question", data.get("problem", "")))),
             answer=str(data.get("Answer", data.get("answer", ""))),
             metadata={"year": data.get("Year", data.get("year", "")), "problem_id": data.get("ID", idx)},
+        )
+
+    def _normalize_math500(self, idx: int, data: Dict[str, Any]) -> BenchmarkRecord:
+        return BenchmarkRecord(
+            question_id=data.get("ID", data.get("id", idx)),
+            question=str(data.get("Question", data.get("question", data.get("problem", "")))),
+            answer=str(data.get("Answer", data.get("answer", data.get("solution", "")))),
+            metadata={
+                "problem_type": data.get("type", data.get("problem_type", "unknown")),
+                "difficulty": data.get("level", data.get("difficulty", "unknown")),
+            },
+        )
+
+    def _normalize_bigcodebench(self, idx: int, data: Dict[str, Any]) -> BenchmarkRecord:
+        instruct_prompt = str(data.get("instruct_prompt", data.get("question", ""))).strip()
+        code_prompt = str(data.get("code_prompt", "")).strip()
+        question = instruct_prompt
+        if code_prompt:
+            question += (
+                "\n\nWrite self-contained Python code starting from this stub:\n"
+                f"```python\n{code_prompt}\n```"
+            )
+        return BenchmarkRecord(
+            question_id=data.get("task_id", data.get("id", f"bigcodebench/{idx}")),
+            question=question,
+            answer="",
+            metadata={
+                "task_id": data.get("task_id", f"bigcodebench/{idx}"),
+                "code_prompt": code_prompt,
+                "test": data.get("test", ""),
+                "entry_point": data.get("entry_point", ""),
+                "libs": data.get("libs", []),
+            },
         )
 
     def _normalize_musique(self, idx: int, data: Dict[str, Any]) -> BenchmarkRecord:

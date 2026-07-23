@@ -27,6 +27,7 @@ load_dotenv()
 DEFAULT_TOOL_CONFIG: Dict[str, Any] = {
     "enabled_tools": [],
     "direct_tool_call": False,
+    "return_code": False,
     "web_tool_provider": "tavily",
     "top_k_results": 3,
     "max_search_limit": 3,
@@ -531,9 +532,11 @@ class CodeGeneratorTool(_BenchmarkToolMixin, BaseTool):
         direct_tool_call: bool = False,
         max_tool_chars: int = 6000,
         timeout_seconds: int = CODE_EXECUTION_TIMEOUT_SECONDS,
+        return_code: bool = False,
     ) -> None:
         super().__init__(llm_name, direct_tool_call, max_tool_chars)
         self.timeout_seconds = max(1, int(timeout_seconds))
+        self.return_code = bool(return_code)
 
     @property
     def name(self) -> str:
@@ -541,10 +544,36 @@ class CodeGeneratorTool(_BenchmarkToolMixin, BaseTool):
 
     @property
     def description(self) -> str:
+        if self.return_code:
+            return "Generate or syntax-check Python code and return the code without executing it"
         return "Generate and execute Python code for calculations and verification"
 
     def get_schema(self) -> Dict[str, Any]:
         if self.direct_mode:
+            if self.return_code:
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": self.name,
+                        "description": (
+                            "Syntax-check a Python function implementation and return the code. "
+                            "Use this for code-generation benchmarks where external tests run later."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string",
+                                    "description": (
+                                        "Complete Python function implementation. Include required imports; "
+                                        "do not include markdown fences."
+                                    ),
+                                }
+                            },
+                            "required": ["code"],
+                        },
+                    },
+                }
             properties = {
                 "code": {
                     "type": "string",
@@ -554,6 +583,32 @@ class CodeGeneratorTool(_BenchmarkToolMixin, BaseTool):
             required = ["code"]
             description = "Execute Python code to perform calculations, data processing, or verification."
         else:
+            if self.return_code:
+                return {
+                    "type": "function",
+                    "function": {
+                        "name": self.name,
+                        "description": (
+                            "Generate a Python function implementation and return the code without executing it."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "task": {
+                                    "type": "string",
+                                    "description": (
+                                        "Description of the function to implement, including its required stub."
+                                    ),
+                                },
+                                "code": {
+                                    "type": "string",
+                                    "description": "Optional pre-written implementation to syntax-check.",
+                                },
+                            },
+                            "required": ["task"],
+                        },
+                    },
+                }
             properties = {
                 "task": {
                     "type": "string",
@@ -609,6 +664,21 @@ class CodeGeneratorTool(_BenchmarkToolMixin, BaseTool):
             resolved_code = _strip_code_fences(str(resolved_code)).strip()
             if not resolved_code or resolved_code.upper().startswith("SKIP"):
                 return ToolResult(success=True, output="", metadata={"skipped": True})
+            if self.return_code:
+                try:
+                    ast.parse(resolved_code)
+                except SyntaxError as exc:
+                    return ToolResult(
+                        success=False,
+                        output=resolved_code,
+                        metadata={"mode": "return_code"},
+                        error=f"Syntax error: {exc}",
+                    )
+                return ToolResult(
+                    success=True,
+                    output=self._truncate(f"[Syntax check: OK]\n\n{resolved_code}"),
+                    metadata={"mode": "return_code"},
+                )
             output = _execute_python(resolved_code, timeout_seconds=self.timeout_seconds)
             return ToolResult(
                 success=True,
@@ -619,6 +689,17 @@ class CodeGeneratorTool(_BenchmarkToolMixin, BaseTool):
             return ToolResult(success=False, output="", metadata={}, error=f"Code helper failed: {exc}")
 
     def _generate_code(self, task: str) -> str:
+        if self.return_code:
+            prompt = (
+                "Write a complete Python function implementation for this coding benchmark. "
+                "Return only Python code, with no prose, no markdown fences, no print statements, "
+                "and no __main__ block. Include any imports required by the implementation.\n\n"
+                f"Problem:\n{task}"
+            )
+            return self._llm_complete(
+                "You generate Python function implementations for code benchmarks. Return only Python code.",
+                prompt,
+            )
         prompt = (
             "Write a short Python calculation, transformation, or verification to help solve the problem. "
             "If code is not useful, return only the word SKIP. "
@@ -649,10 +730,12 @@ class BenchmarkToolRunner:
         max_search_limit: int = 3,
         max_tool_chars: int = 6000,
         max_tool_turns: int = 3,
+        return_code: bool = False,
     ) -> None:
         self.llm_name = llm_name
         self.enabled_tools = normalize_enabled_tools(enabled_tools)
         self.direct_tool_call = direct_tool_call
+        self.return_code = bool(return_code)
         self.web_tool_provider = web_tool_provider
         self.top_k_results = max(1, int(top_k_results))
         self.max_search_limit = max(1, int(max_search_limit))
@@ -685,6 +768,7 @@ class BenchmarkToolRunner:
                         llm_name=self.llm_name,
                         direct_tool_call=self.direct_tool_call,
                         max_tool_chars=self.max_tool_chars,
+                        return_code=self.return_code,
                     )
                 )
             elif tool_name == "text_inspector":
