@@ -264,7 +264,7 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
 
 \subsection{MiniMax-M3补充结果}
 
-表\ref{tab:tool-aware-minimax-results}展示了MiniMax-M3上的补充结果。可以看到，本文方法在AIME、GAIA和GPQA三个任务上均取得当前工具调用对比组中的最高准确率。AIME上，本文方法达到98.33\%，高于FullConnected+Tools的88.30\%和AgentPrune+Tools的95.00\%；GAIA上，本文方法达到32.00\%，同时高于Direct+Tools、FullConnected+Tools和AgentPrune+Tools，并且推理成本低于FullConnected+Tools和AgentPrune+Tools；GPQA上，本文方法达到90.00\%，比AgentPrune+Tools高3.00个百分点，且成本相对AgentPrune+Tools降低约15.64\%。
+表\ref{tab:tool-aware-minimax-results}展示了MiniMax-M3上的补充结果。可以看到，本文方法在AIME、GAIA和GPQA三个任务上均取得当前工具调用对比组中的最高准确率。AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnected+Tools的88.30\%和AgentPrune+Tools的95.00\%；GAIA上，本文方法达到32.00\%，同时高于Direct+Tools、FullConnected+Tools和AgentPrune+Tools，并且推理成本低于FullConnected+Tools和AgentPrune+Tools；GPQA上，本文方法达到90.00\%，比AgentPrune+Tools高3.00个百分点，且成本相对AgentPrune+Tools降低约15.64\%。
 
 \begin{table}[H]
   \centering
@@ -275,7 +275,7 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
     \toprule
     数据集 & Direct+Tools & FullConnected+Tools & AgentPrune+Tools & 本文方法 \\
     \midrule
-    AIME & -- & 88.30 / 16.18 & 95.00 / 22.99 & 98.33 / 27.19 \\
+    AIME & 73.30 / 5.87 & 88.30 / 16.18 & 95.00 / 22.99 & 98.33 / 27.19 \\
     GAIA & 25.40 / 5.87 & 29.00 / 26.11 & 30.00 / 29.36 & 32.00 / 23.16 \\
     GPQA & 76.20 / 11.03 & 87.80 / 28.06 & 87.00 / 44.75 & 90.00 / 37.75 \\
     \bottomrule
