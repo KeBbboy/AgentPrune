@@ -1,0 +1,167 @@
+\documentclass[10pt,a4paper]{ctexart}
+
+% ---------- 基础设置 ----------
+%\usepackage[margin=1.2cm]{geometry} % 更小边距（关键）
+\usepackage[left=0.9cm,right=0.9cm,top=0.8cm,bottom=0.8cm]{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{fontawesome5}
+\usepackage{xcolor}
+\usepackage{ragged2e}
+\usepackage{setspace}
+
+\setstretch{1.0} % 这里调的间距
+\setlength{\parskip}{1.0pt}
+\setlength{\parindent}{0pt}
+
+% 列表更紧凑
+\setlist[itemize]{leftmargin=1.1em, topsep=0pt, itemsep=0.5pt}
+
+\hypersetup{
+  colorlinks=true,
+  urlcolor=black,
+  linkcolor=black
+}
+
+\definecolor{sec}{HTML}{0F766E}
+
+\newcommand{\cvsection}[1]{%
+  \vspace{3mm}%
+  {\large\bfseries\textcolor{sec}{#1}}\par
+  \vspace{-0.5mm}
+  {\color{sec}\rule[2pt]{\linewidth}{0.55pt}}\vspace{-1mm}
+}
+
+
+% cventry 只调节间距，不动内容
+\newcommand{\cventry}[4]{%
+\textbf{#1} \hfill {\small #4}\par
+{\itshape #2}\par
+\vspace{-1mm}
+#3
+\vspace{0.3mm}
+}
+
+\newcommand{\cvname}{\textbf{\fontsize{28}{28}\selectfont 柯逸宸}}
+\newcommand{\cvemail}{\href{mailto:1328142689@qq.com}{1328142689@qq.com}}
+\newcommand{\cvphone}{+86 139-5954-2912}
+\newcommand{\cvrole}{计算机技术 · 硕士研究生}
+
+\begin{document}
+\pagestyle{empty}
+
+\begin{center}
+  \cvname \\[2pt]
+  {\small \cvrole} \\[2pt]
+  \faIcon{envelope}~\cvemail
+  \quad|\quad
+  \faIcon{phone}~\cvphone
+\end{center}
+
+\vspace{1mm}
+
+% ---------- 教育背景 ----------
+\cvsection{教育背景}
+\vspace{-0.1em}
+\textbf{北京理工大学} \quad 硕士 · 计算机技术 \hfill 2024 — 2027
+
+\vspace{1pt}
+
+\textbf{福州大学} \quad 本科 · 信息管理与信息系统  \hfill 2020 — 2024
+
+
+
+% ---------- 科研经历 ----------
+\cvsection{项目经历}
+\vspace{-0.1em}
+\textbf{\large 长上下文大模型 KV Cache 稀疏化与显存优化} \hfill {\large 2024.11 -- 2025.6}
+
+\begin{itemize}
+
+\item \textbf{研究背景}：面向长上下文 LLM推理场景，KV Cache 显存占用随序列长度线性增长，成为 32K+ 上下文部署的主要瓶颈；项目聚焦 Prefill/Decode 两阶段稀疏化与 GQA 架构下的kvcache优化。
+
+\item \textbf{主要工作}：
+\begin{enumerate}
+\item \textbf{系统评测}：基于 OpenCompass 搭建长上下文评测流程，复现并对比 SnapKV、PyramidKV 等代表性稀疏注意力方法，从显存占用、推理速度与任务精度三个维度定位 Prefill/Decode 阶段瓶颈。
+
+\item \textbf{算法创新}：针对 GQA 组内均值聚合稀释专家头高置信度信号的问题，提出 L2 加权稀疏注意力机制，用 Query-Key 来得到 Token 重要性，减少关键上下文被误驱逐的概率。
+
+\item \textbf{实验效果}：在 512 token 缓存预算下，相比 SnapKV/PyramidKV 显存降低 \textbf{86\%}（196MB$\rightarrow$28MB），长文本任务精度损失控制在 \textbf{1\%} 以内。
+\end{enumerate}
+
+
+\end{itemize}
+
+
+
+
+\textcolor{gray}{\rule{\linewidth}{0.4pt}}
+
+\textbf{\large 面向多智能体系统的高效通信技术研究（毕业论文）} \hfill {\large 2026.3 -- 至今}
+\begin{itemize}
+
+    \item \textbf{项目背景}：面向复杂推理任务中多智能体全连接通信成本高的问题，构建可训练的多智能体系统通信图优化方案，在保留关键信息的同时降低模型调用成本，并支撑数学推理与代码生成等基准评测。
+
+    \item \textbf{主要工作}：
+    \begin{enumerate}
+        \item 针对工具调用场景，将智能体通信边建模为可学习概率，结合任务正确性与工具调用成本构建优化目标，使系统保留高价值通信边；引入 Taylor 一阶重要性评估与边重要性剪枝策略，在多轮推理中动态压缩通信图结构。
+
+        \item 设计答案和推理过程分离的结构化消息，并兼容 Qwen3 与 MiniMax-M3 思维链输出，保证智能体间传递完整推理且评测后处理仍能定位最终答案；进一步按接收方角色保留关键推理句、跨通信边去除语义重复内容，并在跨轮通信中生成答案共识摘要，避免长上下文中重复推理过程造成不必要的成本增加。
+
+    \end{enumerate}
+
+    \item \textbf{实验结果}：相较单智能体基线，在 AIME、GAIA、BigCodeBench 三个数据集上准确率分别由 43.3\%/9.1\%/37.0\% 提升至 65.0\%/20.6\%/43.0\%，对应提升 \textbf{+21.7/+11.5/+6.0 pp}。
+
+
+
+\end{itemize}
+
+
+
+
+
+
+% ---------- 实习经历1 ----------
+\cvsection{实习经历}
+\vspace{-0.1em}
+\textbf{\large 南方科技大学 · 研究助理 (Research Assistant)} \hfill {\large 2025.7 -- 2026.3}
+
+\vspace{0.3em}
+\textbf{项目背景}：参与智能体执行平台的核心开发，负责构建面向 CSV/Excel 表格处理场景和深度调研的智能体系统。
+
+\textbf{个人职责}：
+\begin{enumerate}
+    \item \textbf{Agent 架构搭建}：基于 LangGraph 框架实现 Planner-Executor-Verifier 智能体架构；
+    Planner 负责将用户需求分解为任务执行路径；Executor 根据任务拆分调用工具并完成子任务；Verifier 负责审核最终智能体的执行效果。
+    
+    \item \textbf{工具调用容错}：针对表格处理任务中工具调用不稳定的问题，设计超时重试与异常降级机制；引入 JSON Schema 对模型输出进行结构化约束，减少参数解析失败。
+
+
+    \item \textbf{记忆管理}：针对大模型输入长度限制，构建三层上下文管理：JSON 文件保存当前短期会话历史；SQLite 维护近期对话与表格操作缓存（会话级状态），引入摘要模型对历史交互进行压缩；同时结合向量数据库（Milvus）实现长期记忆的语义存储。
+\end{enumerate}
+
+
+% \textcolor{gray}{\rule{\linewidth}{0.4pt}}
+
+% ---------- 实习经历2 ----------
+
+\textbf{\large 锐捷网络 · 自动化测试实习生 } \hfill {\large 2022.09 — 2023.03}
+
+\begin{itemize}
+    \item 基于 Pytest+Shell 构建自动化测试框架，覆盖功能/性能/兼容性测试场景，保障 5 个云桌面版本的平稳发布。
+\end{itemize}
+
+
+\cvsection{专业技能}
+\begin{itemize}[itemsep=1pt]
+
+\item 熟悉智能体系统架构设计，包括 ReAct、Reflection、Planner-Executor-Verifier、多智能体协作等范式，具备基于 LangGraph 搭建任务编排流程的经验。
+
+\item 熟悉智能体上下文与记忆管理，包括短期上下文维护、历史对话摘要压缩、长期记忆检索与向量数据库存储，能够缓解长任务中的上下文膨胀问题。
+
+\item 熟悉工具调用与结构化输出工程，包括 Tool Calling、Function Calling、JSON Schema 参数约束、异常重试与降级机制，能够提升智能体工具执行稳定性。
+
+\end{itemize}
+
+
+\end{document}
