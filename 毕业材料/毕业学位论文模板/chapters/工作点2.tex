@@ -3,47 +3,208 @@
 % This file has no copyright assigned and is placed in the Public Domain.
 %%
 
-
-
-\chapter{工作点2}
-
-具体研究内容是学位论文的主要部分，是研究结果及其依据的具体表述，是研究能力的集中体现，一般应包括第2章、第3章至结论前一章。具体研究内容应该结构合理，层次清楚，重点突出，文字简练、通顺。可包括以下各方面：研究对象、研究方法、仪器设备、材料原料、实验和观测结果、理论推导、计算方法和编程原理、数据资料和经过加工整理的图表、理论分析、形成的论点和导出的结论等。具体研究内容各章后可有一节“本章小结”（必要时）。
-
-\begin{them}[留数定理]
-\label{thm:res}
-  假设$U$是复平面上的一个单连通开子集，$a_1,\ldots,a_n$是复平面上有限个点，$f$是定义在$U\backslash \{a_1,\ldots,a_n\}$上的全纯函数，
-  如果$\gamma$是一条把$a_1,\ldots,a_n$包围起来的可求长曲线，但不经过任何一个$a_k$，并且其起点与终点重合，那么：
-  \begin{equation}
-    \label{eq:res}
-    \ointop_{\gamma}f(z)\,\mathrm{d}z = 2\pi\mathbf{i}\sum^n_{k=1}\mathrm{I}(\gamma,a_k)\mathrm{Res}(f,a_k)
-  \end{equation}
-
-  如果$\gamma$是若尔当曲线，那么$\mathrm{I}(\gamma, a_k)=1$，因此：
-  \begin{equation}
-    \label{eq:resthm}
-    \ointop_{\gamma}f(z)\,\mathrm{d}z = 2\pi\mathbf{i}\sum^n_{k=1}\mathrm{Res}(f,a_k)
-  \end{equation}
-
-  在这里，$\mathrm{Res}(f, a_k)$表示$f$在点$a_k$的留数，$\mathrm{I}(\gamma,a_k)$表示$\gamma$关于点$a_k$的卷绕数。
-  卷绕数是一个整数，它描述了曲线$\gamma$绕过点$a_k$的次数。如果$\gamma$依逆时针方向绕着$a_k$移动，卷绕数就是一个正数，
-  如果$\gamma$根本不绕过$a_k$，卷绕数就是零。
-\end{them}
-
-\begin{proof}
-  首先，由……
-
-  其次，……
-
-  所以，由\autoref{thm:res}可知……
-  \qedhere
-\end{proof}
-
-\textit{有关公式与上下文间距的一些注意事项：请保证源码中的公式的环境（如}
-\\ \verb|\begin{equation}|
-  \textit{）与上一段落不要有空行。否则，公式和上文段落之间会有额外的空白。}
+\chapter{工具成本感知的多智能体通信图剪枝方法}
+\label{chap:tool-aware-pruning}
 
 \section{引言和动机}
 
+上一章从语义内容出发，研究了如何在多智能体系统内部压缩智能体之间传递的自然语言消息。然而，在更复杂的工具调用场景中，仅压缩消息内容仍不足以解决全部通信成本问题。随着大语言模型智能体逐步具备搜索、代码执行、文本检查和外部API调用能力\cite{ref17,ref18}，多智能体系统的成本不再只来自模型输入输出Token，还来自工具调用次数、工具返回内容长度以及工具观察结果在智能体之间的重复传播。
+
+工具调用型智能体通常遵循``推理--行动--观察''的闭环过程\cite{ref23}：智能体先根据任务生成中间推理，再决定是否调用搜索、代码执行或文本检查等外部工具，随后把工具返回结果写入上下文并继续推理。在单智能体系统中，工具观察主要影响当前智能体的上下文长度；而在多智能体系统中，某个智能体产生的工具观察还可能沿通信边传播给多个后继智能体，进而触发下游重复分析或二次工具调用。因此，工具调用成本具有明显的图结构放大效应。
+
+在这类场景下，通信边的价值具有更强的异质性。一条边如果连接的是高质量求解智能体和最终验证智能体，可能显著提升任务正确率；但如果该边只是传播冗长的工具观察、重复的中间代码或无关搜索结果，就会增加下游上下文长度，并进一步放大系统开销。因此，面向工具调用任务的通信优化需要同时回答两个问题：第一，哪些智能体之间的通信确实有助于最终任务正确性；第二，哪些通信边会携带高成本工具信息，应当在图结构层面被抑制或剪除。
+
+现有多智能体通信图优化方法通常将边的重要性与任务效用直接关联\cite{ref43,ref48}，但较少显式区分普通推理输出和工具调用输出。本文第二个工作点针对这一不足，提出一种工具成本感知的多智能体通信图剪枝方法。该方法将智能体通信边建模为可学习概率，在训练过程中结合任务正确性、模型输出Token、工具调用次数和工具返回Token构造边级优化目标；进一步引入Taylor一阶重要性评估\cite{ref74}，对低贡献通信边进行动态剪枝，从而在多轮推理中获得更稀疏、成本更可控的通信结构。
+
+\section{工具调用场景建模}
+
+考虑一个由$n$个智能体组成的多智能体系统。每个智能体既可以直接基于大语言模型生成推理结果，也可以根据任务需要调用外部工具。系统通信图包含两类边：同一轮内部的空间边和跨轮历史传递的时间边。空间边表示同一轮中智能体输出向后继智能体传递，时间边表示上一轮智能体状态或记忆向下一轮传递。
+
+设第$t$轮中智能体$i$的输出为
+\begin{equation}
+  o_i^{(t)} = (r_i^{(t)}, a_i^{(t)}, q_i^{(t)}),
+  \label{eq:tool-agent-output}
+\end{equation}
+其中$r_i^{(t)}$表示推理文本，$a_i^{(t)}$表示候选答案，$q_i^{(t)}$表示工具调用相关信息。工具调用信息进一步包含工具名称、调用参数、返回观察和调用轮次等元数据。为衡量工具调用带来的通信负担，本文统计三类开销：
+\begin{equation}
+  c_i^{(t)} = \lambda_o \frac{O_i^{(t)}}{N_o}
+  + \lambda_k \frac{K_i^{(t)}}{N_k}
+  + \lambda_z \frac{Z_i^{(t)}}{N_z},
+  \label{eq:tool-cost}
+\end{equation}
+其中$O_i^{(t)}$表示智能体$i$在第$t$轮的模型输出Token数，$K_i^{(t)}$表示工具调用次数，$Z_i^{(t)}$表示工具观察结果Token数；$N_o$、$N_k$和$N_z$分别为输出Token、工具调用次数和工具Token的归一化系数，$\lambda_o,\lambda_k,\lambda_z$为三类开销的权重。该设计将工具调用带来的额外系统消耗显式纳入通信图优化过程。
+
+与普通多智能体推理不同，工具调用场景下的边成本取决于发送方智能体，而不仅取决于接收方。若一条边$e=(i,j)$被选中，则接收方$j$会读取发送方$i$的当前轮输出或上一轮记忆，因此该边会间接携带发送方的模型输出和工具观察成本。基于这一点，本文将边级成本定义为发送方成本在所选通信路径上的归因：
+\begin{equation}
+  \mathcal{C}_e^{(t)} = \mathbf{1}(z_e^{(t)}=1)c_i^{(\tau_e)},
+  \label{eq:edge-tool-cost}
+\end{equation}
+其中$z_e^{(t)}$表示边$e$在第$t$轮是否被采样并实际加入通信图；$\tau_e$表示成本归因对应的发送方轮次。对于空间边，$\tau_e=t$；对于时间边，$\tau_e=t-1$。该处理能够区分``当前轮输出传播''和``历史记忆传播''两种成本来源，使跨轮通信边不会错误归因到接收轮次的工具调用。
+
+\section{可学习通信边概率建模}
+
+本文将每条潜在通信边$e$关联一个可学习参数$\theta_e$。在每轮图构造时，边的保留概率由Sigmoid函数给出：
+\begin{equation}
+  p_e = \sigma\left(\frac{\theta_e}{\tau}\right),
+  \label{eq:edge-probability}
+\end{equation}
+其中$\tau$为温度系数。随后按照伯努利分布采样边状态：
+\begin{equation}
+  z_e \sim \operatorname{Bernoulli}(p_e).
+  \label{eq:edge-sampling}
+\end{equation}
+当$z_e=1$且该边不会破坏空间有向无环执行顺序时，系统将发送方加入接收方的前驱节点集合；当$z_e=0$时，该边不参与本轮通信。
+
+为了同时支持单图结构和多轮动态图结构，本文分别为全局空间边、全局时间边以及逐轮空间/时间边维护可学习logit参数。对于非动态图设置，所有轮次共享同一组空间边和时间边概率；对于动态图设置，每一轮维护独立的空间边概率，跨轮传递则维护对应轮间的时间边概率。这样，系统既可以学习一个全局稀疏通信结构，也可以针对不同推理阶段学习不同通信结构。
+
+在训练过程中，系统记录每条被采样或未采样边的对数概率$\log \pi_\theta(z_e)$。这些对数概率构成后续策略梯度优化目标的可导部分，使任务正确性和工具成本能够反向影响通信边概率。若某条边长期带来高任务收益且成本可控，其参数$\theta_e$会被优化为更高概率；若某条边经常携带高成本工具输出但对最终结果贡献有限，其概率会逐步下降，并在剪枝阶段被移除。
+
+\section{工具成本感知优化目标}
+
+给定一个任务样本$x$及其标准答案$y$，多智能体系统输出最终答案$\hat{y}$。本文使用任务评分函数$S(\hat{y},y)$衡量正确性，其取值范围为$[0,1]$。对于数学题和选择题，该函数通常对应答案是否匹配；对于开放问答任务，则可采用规范化匹配、别名匹配或任务专用评测器。
+
+传统通信图优化通常以任务正确性作为边策略的主要奖励。本文在此基础上引入工具成本惩罚，定义边级效用为
+\begin{equation}
+  R_e^{(t)} = S(\hat{y},y)-\mathcal{C}_e^{(t)}.
+  \label{eq:edge-reward}
+\end{equation}
+该式表示：一条通信边只有在能够提高最终任务得分、且不引入过高工具成本时，才应当获得较高效用。对于未被采样的边，工具成本项为0，其对数概率仍参与策略学习；对于被采样的边，系统根据发送方在对应轮次的输出Token、工具调用次数和工具Token计算成本惩罚。
+
+由于边采样是离散操作，本文采用策略梯度形式优化边概率。对于一次任务执行中记录到的所有边采样事件，边策略损失定义为
+\begin{equation}
+  \mathcal{L}_{\mathrm{pg}}
+  = - \sum_{(e,t) \in \mathcal{E}_{\mathrm{sample}}}
+  \log \pi_\theta(z_e^{(t)}) R_e^{(t)}.
+  \label{eq:policy-gradient-loss}
+\end{equation}
+该损失鼓励系统提高高效用边的采样概率，同时降低低效用边的采样概率。与只在样本级统一扣除工具成本不同，边级成本归因能够区分不同发送方智能体的工具使用情况，使优化过程更精细。例如，若某一代码执行智能体频繁调用工具且产生较长观察结果，但其输出对最终答案帮助有限，则与该智能体相关的出边会获得更低边级效用。
+
+此外，为避免通信图退化为过密结构，本文沿用图结构正则项约束学习到的边参数。设$\Theta_s$和$\Theta_t$分别为空间边与时间边logit矩阵，$A_s$和$A_t$分别为初始固定拓扑对应的掩码矩阵，则正则项为
+\begin{equation}
+  \mathcal{L}_{\mathrm{reg}}
+  = \|\Theta_s\|_* + \|\Theta_t\|_*
+  + \operatorname{ReLU}(\|A_s-\Theta_s\|_F-\delta)
+  + \operatorname{ReLU}(\|A_t-\Theta_t\|_F-\delta),
+  \label{eq:graph-regularization}
+\end{equation}
+其中$\|\cdot\|_*$表示核范数，$\|\cdot\|_F$表示Frobenius范数，$\delta$为允许偏离初始拓扑的边界。最终优化目标为
+\begin{equation}
+  \mathcal{L} = \mathcal{L}_{\mathrm{pg}}+\mathcal{L}_{\mathrm{reg}}.
+  \label{eq:tool-aware-total-loss}
+\end{equation}
+
+\section{Taylor一阶重要性剪枝}
+
+在边概率训练过程中，仅依赖logit大小剪枝可能存在偏差：某些边的当前概率不高，但其梯度较大，说明继续优化可能显著影响任务目标；另一些边虽然概率不低，但梯度接近零，说明其对当前目标的边际影响有限。为更准确地评估边的重要性，本文引入Taylor一阶近似。
+
+对于边参数$\theta_e$，若将其移除可近似看作对参数施加扰动$\Delta\theta_e=-\theta_e$，则损失变化的一阶近似为
+\begin{equation}
+  \Delta\mathcal{L}_e
+  \approx
+  \frac{\partial \mathcal{L}}{\partial \theta_e}\Delta\theta_e.
+  \label{eq:taylor-first-order}
+\end{equation}
+因此，本文定义边重要性为
+\begin{equation}
+  I_e = \left|\theta_e \frac{\partial \mathcal{L}}{\partial \theta_e}\right|.
+  \label{eq:taylor-importance}
+\end{equation}
+该指标同时考虑边当前参数规模和目标函数梯度，能够刻画移除该边对优化目标的一阶影响。训练过程中，在完成一次反向传播后，系统对仍处于活跃状态的边计算$I_e$，并按重要性从小到大排序，剪除比例为$\rho$的低重要性边：
+\begin{equation}
+  \mathcal{P}
+  =
+  \operatorname{argmin}_{\mathcal{S}\subseteq \mathcal{E}_{\mathrm{active}},\,|\mathcal{S}|=\rho|\mathcal{E}_{\mathrm{active}}|}
+  \sum_{e\in \mathcal{S}} I_e.
+  \label{eq:taylor-prune-set}
+\end{equation}
+剪枝后，边掩码被置为0，后续图构造不再采样这些边。
+
+Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接耦合，因此剪枝结果会同时反映任务正确性和工具调用成本，而不是只根据通信概率大小做静态排序。其次，它可以自然扩展到多轮动态图设置：系统可分别对每一轮的空间边和时间边计算重要性，从而在不同推理阶段形成不同稀疏结构。
+
+\section{训练与执行流程}
+
+本文方法的整体流程如下：
+
+\begin{enumerate}[topsep=0pt,itemsep=0pt,parsep=0pt,partopsep=0pt,leftmargin=0em,itemindent=2em,label=\arabic*.]
+  \item \textbf{初始化潜在通信图：}根据智能体数量和初始拓扑生成空间边与时间边掩码，并为每条潜在边初始化可学习logit。
+  \item \textbf{采样通信结构：}在每轮推理开始时，根据公式\ref{eq:edge-probability}和公式\ref{eq:edge-sampling}采样空间边和时间边，构造当前任务的实际通信图。
+  \item \textbf{执行工具增强推理：}每个智能体读取前驱消息和历史记忆，根据提示词决定是否调用工具，并生成最终输出。系统记录模型输出Token、工具调用次数和工具观察Token。
+  \item \textbf{计算边级效用：}根据任务答案评分得到基础正确性奖励，并将发送方工具成本归因到被选中的通信边，形成公式\ref{eq:edge-reward}中的边级效用。
+  \item \textbf{更新边概率：}使用公式\ref{eq:tool-aware-total-loss}进行反向传播，更新空间边和时间边logit。
+  \item \textbf{周期性Taylor剪枝：}每隔固定训练轮次，根据公式\ref{eq:taylor-importance}计算活跃边重要性，剪除低重要性边，更新通信掩码。
+  \item \textbf{评估稀疏图：}在验证集或测试集上运行剪枝后的通信图，统计任务准确率、工具调用次数、工具Token、模型Token成本和图稀疏率。
+\end{enumerate}
+
+在实现上，本文方法通过\texttt{--tool\_aware\_loss}开启工具成本感知训练，通过\texttt{--taylor\_prune}开启Taylor一阶剪枝。训练代码在每次图构造时记录空间边与时间边的采样状态、边索引、发送方、接收方、轮次和对数概率；评估代码则按样本、智能体和轮次统计模型Token与工具调用元数据。当前实现中，输出Token、工具调用次数和工具Token的惩罚权重分别设为$0.05$、$0.10$和$0.10$，Token与工具调用次数归一化系数分别设为$10000$和$10$；Taylor剪枝默认每2轮训练触发一次，每次剪除10\%的活跃边。
+
+训练入口已接入AIME、GAIA、GPQA、HLE、MATH500、MuSiQue和BigCodeBench等工具调用任务。其中AIME和MATH500默认启用搜索与代码执行工具，BigCodeBench默认启用代码生成工具，GAIA、GPQA和HLE等开放问答或专家问答任务则可同时启用搜索、代码执行和文本检查工具。
+
 \section{实验设置}
+
+为验证本文方法在工具调用场景下的有效性，实验选取MiniMax-M3\cite{ref60}作为基座模型，并在多个需要外部工具辅助的基准任务上进行评测。对比方法包括：
+
+\begin{itemize}[topsep=0pt,itemsep=0pt,parsep=0pt,partopsep=0pt]
+  \item \textbf{DirectAnswer：}单智能体直接回答，可选择是否启用工具。
+  \item \textbf{FullConnected：}多智能体完全连接通信，所有智能体输出均可被后续智能体读取。
+  \item \textbf{AgentPrune：}基于可学习通信边和图剪枝的多智能体通信优化方法。
+  \item \textbf{本文方法：}在AgentPrune基础上加入工具成本感知边级损失，并使用Taylor一阶重要性进行动态剪枝。
+\end{itemize}
+
+实验主要关注三类指标。第一类是任务完成质量，使用准确率或任务专用评分函数衡量；第二类是工具使用成本，包括工具调用次数和工具返回Token数；第三类是通信图成本，包括空间边与时间边稀疏率，以及模型输入输出Token和API调用成本。由于工具调用会影响后续智能体上下文长度，本文同时统计工具成本和模型Token成本，以便分析二者之间的耦合关系。
+
+\begin{table}[H]
+  \centering
+  \caption{工具调用实验任务与默认工具配置}
+  \label{tab:tool-aware-datasets}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llll}
+    \toprule
+    数据集 & 任务类型 & 默认工具 & 主要评价指标 \\
+    \midrule
+    AIME\cite{ref67} & 数学竞赛推理 & Web搜索、代码生成 & 数值答案准确率 \\
+    GAIA\cite{ref68} & 开放问答 & Web搜索、代码生成、文本检查 & 问答匹配准确率 \\
+    GPQA\cite{ref69} & 多项选择专家问答 & Web搜索、代码生成、文本检查 & 选项准确率 \\
+    HLE\cite{ref70} & 高难专家问答 & Web搜索、代码生成 & 问答匹配准确率 \\
+    MATH500\cite{ref71} & 数学推理 & Web搜索、代码生成 & 规范化答案准确率 \\
+    MuSiQue\cite{ref72} & 多跳问答 & Web搜索、代码生成 & 问答匹配准确率 \\
+    BigCodeBench\cite{ref73} & 代码生成 & 代码生成 & 代码通过率 \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}
+
 \section{实验结果和分析}
-\section{本章小节}
+
+表\ref{tab:tool-aware-main-results}展示了当前已整理日志中的MiniMax-M3工具调用实验结果。可以看到，本文方法在AIME、GAIA和GPQA上取得了当前工具调用对比组中的最高准确率。在AIME上，本文方法达到98.33\%准确率，高于FullConnected+Tools的88.33\%和AgentPrune+Tools的95.00\%；同时，其代码工具返回Token数为82,025，低于AgentPrune+Tools的90,096和FullConnected+Tools的102,033。该结果说明，在数学推理场景中，工具成本感知训练能够保留有价值的代码执行信息，同时减少冗余工具观察的传播。
+
+\begin{table}[H]
+  \centering
+  \caption{MiniMax-M3下工具成本感知通信图剪枝结果}
+  \label{tab:tool-aware-main-results}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lcccccc}
+    \toprule
+    数据集 & Direct+Tools & Full+Tools & AgentPrune+Tools & 本文方法 & 工具调用 & 工具Token \\
+    \midrule
+    AIME & 73.33\% & 88.33\% & 95.00\% & 98.33\% & 138 & 82,025 \\
+    GAIA & 25.45\% & 29.09\% & 29.70\% & 32.12\% & 1,395 & 261,923 \\
+    GPQA & 76.26\% & 87.88\% & 87.37\% & 90.40\% & 354 & 178,138 \\
+    HLE & 17.50\% & 22.50\% & 25.50\% & 22.00\% & 934 & 442,008 \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}
+
+在GAIA上，本文方法准确率为32.12\%，高于Direct+Tools、FullConnected+Tools和AgentPrune+Tools。GAIA任务通常需要跨来源信息检索、证据整合和多步推理，因此完全依赖单智能体容易出现证据覆盖不足，而完全连接通信又会引入大量重复工具观察。本文方法通过边级效用区分不同发送方的工具成本，使保留下来的通信边更倾向于连接能够提供有效证据或计算结果的智能体。
+
+在GPQA上，本文方法达到90.40\%准确率，高于FullConnected+Tools的87.88\%和AgentPrune+Tools的87.37\%。这说明在多项选择推理任务中，工具调用并非越多越好，关键在于将有辨别力的证据传递给合适的后续智能体。工具成本感知边策略能够抑制低价值工具输出继续扩散，从而减少干扰信息对最终选择的影响。
+
+HLE结果相对复杂。本文方法准确率为22.00\%，高于Direct+Tools的17.50\%，但低于AgentPrune+Tools的25.50\%，与FullConnected+Tools的22.50\%接近。该结果表明，在高难开放问答场景中，工具调用成本与任务收益之间存在更强张力。一方面，减少冗余通信能够控制工具观察传播；另一方面，部分复杂题可能确实需要更充分的证据共享，过强的成本惩罚或剪枝会造成信息不足。后续可进一步引入任务难度自适应权重，使复杂任务保留更高通信预算，而简单任务采用更强剪枝。
+
+综合来看，本文方法在多数工具调用任务中体现出较好的准确率收益，尤其适用于工具输出质量差异明显、冗余观察较多的推理任务。与普通AgentPrune相比，本文方法的优势不在于单纯减少边数，而在于将工具调用成本纳入边级学习目标，使通信图剪枝更加贴近真实部署成本。
+
+\section{本章小结}
+
+本章提出了面向工具调用场景的工具成本感知通信图剪枝方法。该方法首先将多智能体系统中的空间边和时间边建模为可学习概率，并通过采样构造任务执行时的实际通信图；随后结合任务正确性、模型输出Token、工具调用次数和工具观察Token构造边级效用，使通信边学习过程能够感知外部工具带来的额外成本；最后引入Taylor一阶重要性评估，在反向传播后剪除低重要性边，实现多轮推理过程中的动态图压缩。
+
+实验结果表明，本文方法能够在AIME、GAIA和GPQA等工具调用任务上提升准确率，并在部分场景中降低冗余工具观察传播。对于HLE等高难开放问答任务，结果显示工具成本控制与证据充分性之间仍需进一步平衡。该工作从图结构层面补充了上一章的语义消息压缩方法，共同构成面向多智能体系统高效通信的两条优化路径。
