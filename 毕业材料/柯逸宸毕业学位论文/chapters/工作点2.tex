@@ -3,7 +3,7 @@
 % This file has no copyright assigned and is placed in the Public Domain.
 %%
 
-\chapter{面向多智能体系统的图剪枝方法}
+\chapter{面向通信边冗余的图剪枝算法}
 \label{chap:tool-aware-pruning}
 
 \section{引言}
@@ -14,7 +14,7 @@
 
 在这类场景下，通信边的价值具有更强的异质性。一条边如果连接的是高质量求解智能体和最终验证智能体，可能显著提升任务正确率；但如果该边只是传播冗长的工具观察、重复的中间代码或无关搜索结果，就会增加下游上下文长度，并进一步放大系统开销。因此，面向工具调用任务的通信优化需要同时回答两个问题：第一，哪些智能体之间的通信确实有助于最终任务正确性；第二，哪些通信边会携带高成本工具信息，应当在图结构层面被抑制或剪除。
 
-现有多智能体通信图优化方法通常将边的重要性与任务效用直接关联\cite{ref43,ref48}，但较少显式区分普通推理输出和工具调用输出。本文第二个工作点针对这一不足，提出一种面向多智能体系统的图剪枝方法。该方法将智能体通信边建模为可学习概率，在训练过程中结合任务正确性、模型输出Token、工具调用次数和工具返回Token构造边级优化目标；进一步引入Taylor一阶重要性评估\cite{ref74}，对低贡献通信边进行动态剪枝，从而在多轮推理中获得更稀疏、成本更可控的通信结构。
+现有多智能体通信图优化方法通常将边的重要性与任务效用直接关联\cite{ref43,ref48}，但较少显式区分普通推理输出和工具调用输出。本文第二个工作点针对这一不足，提出一种面向通信边冗余的图剪枝算法。该方法将智能体通信边建模为可学习概率，在训练过程中结合任务正确性、模型输出Token、工具调用次数和工具返回Token构造边级优化目标；进一步引入Taylor一阶重要性评估\cite{ref74}，对低贡献通信边进行动态剪枝，从而在多轮推理中获得更稀疏、成本更可控的通信结构。
 
 \section{图剪枝算法}
 
@@ -143,7 +143,7 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
 
 \section{实验设置}
 
-为验证本文方法在工具调用场景下的有效性，实验选取Qwen3-14B和MiniMax-M3\cite{ref60}作为基座模型，并在多个需要外部工具辅助的基准任务上进行评测。其中，Qwen3-14B覆盖AIME、GAIA、GPQA、HLE、MATH500、MuSiQue和BigCodeBench七个工具任务；MiniMax-M3覆盖AIME、GAIA和GPQA三个代表性任务，用于观察更强闭源模型下面向多智能体系统的图剪枝效果。对比方法包括：
+为验证本文方法在工具调用场景下的有效性，实验选取Qwen3-14B和MiniMax-M3\cite{ref60}作为基座模型，并在多个需要外部工具辅助的基准任务上进行评测。其中，Qwen3-14B覆盖AIME、GAIA、GPQA、HLE、MATH500、MuSiQue和BigCodeBench七个工具任务；MiniMax-M3覆盖AIME、GAIA、GPQA、HLE和MuSiQue五个代表性任务，用于观察更强闭源模型下面向通信边冗余的图剪枝效果。对比方法包括：
 
 \begin{itemize}[topsep=0pt,itemsep=0pt,parsep=0pt,partopsep=0pt]
   \item \textbf{DirectAnswer：}单智能体直接回答，可选择是否启用工具。
@@ -183,7 +183,7 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
 
 \begin{table}[H]
   \centering
-  \caption{Qwen3-14B下面向多智能体系统的图剪枝结果（准确率\% / 推理成本）}
+  \caption{Qwen3-14B下面向通信边冗余的图剪枝结果（准确率\% / 推理成本）}
   \label{tab:tool-aware-qwen-results}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lcccc}
@@ -209,24 +209,24 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
   \makebox[\textwidth][c]{%
     \subcaptionbox{推理成本
     \label{fig:aime_qwen_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/aime/qwen3-14B/fig1_cost_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/aime/qwen3-14B/fig1_cost_bars.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{准确率
     \label{fig:aime_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/aime/qwen3-14B/fig2_accuracy_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/aime/qwen3-14B/fig2_accuracy_bars.png}}%
     }%
   }
   \vspace{0.5em}
   \makebox[\textwidth][c]{%
     \subcaptionbox{工具调用次数
     \label{fig:aime_qwen_tool_calls_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/aime/qwen3-14B/fig3_tool_calls_stack.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/aime/qwen3-14B/fig3_tool_calls_stack.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{工具Token数量
     \label{fig:aime_qwen_tool_tokens_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/aime/qwen3-14B/fig4_tool_tokens_stack.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/aime/qwen3-14B/fig4_tool_tokens_stack.png}}%
     }%
   }
   \caption{Qwen3-14B在AIME任务上的工具调用实验结果}
@@ -240,24 +240,24 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
   \makebox[\textwidth][c]{%
     \subcaptionbox{HLE准确率
     \label{fig:hle_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/hle/qwen3-14B/fig2_accuracy_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/hle/qwen3-14B/fig2_accuracy_bars.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{MATH500准确率
     \label{fig:math500_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/math500/qwen3-14B/fig2_accuracy_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/math500/qwen3-14B/fig2_accuracy_bars.png}}%
     }%
   }
   \vspace{0.5em}
   \makebox[\textwidth][c]{%
     \subcaptionbox{MuSiQue准确率
     \label{fig:musique_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/musique/qwen3-14B/fig2_accuracy_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/musique/qwen3-14B/fig2_accuracy_bars.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{BigCodeBench准确率
     \label{fig:bigcodebench_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/bigcodebench/qwen3-14B/fig2_accuracy_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/bigcodebench/qwen3-14B/fig2_accuracy_bars.png}}%
     }%
   }
   \caption{Qwen3-14B在扩展工具任务上的准确率结果}
@@ -266,11 +266,13 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
 
 \subsection{MiniMax-M3补充结果}
 
-表\ref{tab:tool-aware-minimax-results}展示了MiniMax-M3上的补充结果。可以看到，本文方法在AIME、GAIA和GPQA三个任务上均取得当前工具调用对比组中的最高准确率。AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnected+Tools的88.30\%和AgentPrune+Tools的95.00\%；GAIA上，本文方法达到32.00\%，同时高于Direct+Tools、FullConnected+Tools和AgentPrune+Tools，并且推理成本低于FullConnected+Tools和AgentPrune+Tools；GPQA上，本文方法达到90.00\%，比AgentPrune+Tools高3.00个百分点，且成本相对AgentPrune+Tools降低约15.64\%。
+表\ref{tab:tool-aware-minimax-results}展示了MiniMax-M3上的补充结果。可以看到，本文方法在AIME、GAIA和GPQA三个任务上均取得当前工具调用对比组中的最高准确率；在HLE和MuSiQue两个更具开放性和多跳性的任务上，本文方法未取得最高准确率，但相对AgentPrune+Tools降低了推理成本，体现出成本控制与证据充分性之间的权衡。整体来看，本文方法在五个MiniMax-M3工具任务上的平均准确率为51.57\%，略高于AgentPrune+Tools的51.00\%，平均推理成本为42.23，低于AgentPrune+Tools的47.11。
+
+AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnected+Tools的88.30\%和AgentPrune+Tools的95.00\%；GAIA上，本文方法达到32.00\%，同时高于Direct+Tools、FullConnected+Tools和AgentPrune+Tools，并且推理成本低于FullConnected+Tools和AgentPrune+Tools；GPQA上，本文方法达到90.00\%，比AgentPrune+Tools高3.00个百分点，且成本相对AgentPrune+Tools降低约15.64\%。新增的HLE和MuSiQue结果进一步说明，在高成本闭源模型上，图剪枝并不总是带来单项最高准确率，但能够揭示工具信息传播过多时的边际收益下降问题。
 
 \begin{table}[H]
   \centering
-  \caption{MiniMax-M3下面向多智能体系统的图剪枝结果（准确率\% / 推理成本）}
+  \caption{MiniMax-M3下面向通信边冗余的图剪枝结果（准确率\% / 推理成本）}
   \label{tab:tool-aware-minimax-results}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lcccc}
@@ -280,6 +282,8 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
     AIME & 73.30 / 5.87 & 88.30 / 16.18 & 95.00 / 22.99 & 98.33 / 27.19 \\
     GAIA & 25.40 / 5.87 & 29.00 / 26.11 & 30.00 / 29.36 & 32.00 / 23.16 \\
     GPQA & 76.20 / 11.03 & 87.80 / 28.06 & 87.00 / 44.75 & 90.00 / 37.75 \\
+    HLE & 17.50 / 21.00 & 22.50 / 86.43 & 26.00 / 111.93 & 22.00 / 97.46 \\
+    MuSiQue & 16.50 / 6.26 & 14.50 / 25.72 & 17.00 / 26.54 & 15.50 / 25.57 \\
     \bottomrule
   \end{tabular}
   }
@@ -290,33 +294,62 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
   \makebox[\textwidth][c]{%
     \subcaptionbox{GAIA成本
     \label{fig:gaia_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/gaia/minimax-m3/fig1_cost_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/gaia/minimax-m3/fig1_cost_bars.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{GAIA准确率
     \label{fig:gaia_minimax_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/gaia/minimax-m3/fig2_accuracy_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/gaia/minimax-m3/fig2_accuracy_bars.png}}%
     }%
   }
   \vspace{0.5em}
   \makebox[\textwidth][c]{%
     \subcaptionbox{GPQA成本
     \label{fig:gpqa_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/gpqa/minimax-m3/fig1_cost_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/gpqa/minimax-m3/fig1_cost_bars.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{GPQA准确率
     \label{fig:gpqa_minimax_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/工具调用剪枝实验结果图/gpqa/minimax-m3/fig2_accuracy_bars.png}}%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/gpqa/minimax-m3/fig2_accuracy_bars.png}}%
     }%
   }
   \caption{MiniMax-M3在GAIA和GPQA任务上的成本与准确率结果}
   \label{fig:tool-minimax-openqa-results}
 \end{figure}
 
+\begin{figure}[H]
+  \centering
+  \makebox[\textwidth][c]{%
+    \subcaptionbox{HLE成本
+    \label{fig:hle_minimax_cost_panel}}[0.46\textwidth]{%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/hle/minimax-m3/fig1_cost_bars.png}}%
+    }%
+    \hspace{0.02\textwidth}%
+    \subcaptionbox{HLE准确率
+    \label{fig:hle_minimax_accuracy_panel}}[0.46\textwidth]{%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/hle/minimax-m3/fig2_accuracy_bars.png}}%
+    }%
+  }
+  \vspace{0.5em}
+  \makebox[\textwidth][c]{%
+    \subcaptionbox{MuSiQue成本
+    \label{fig:musique_minimax_cost_panel}}[0.46\textwidth]{%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/musique/minimax-m3/fig1_cost_bars.png}}%
+    }%
+    \hspace{0.02\textwidth}%
+    \subcaptionbox{MuSiQue准确率
+    \label{fig:musique_minimax_accuracy_panel}}[0.46\textwidth]{%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信边冗余图剪枝实验结果图/musique/minimax-m3/fig2_accuracy_bars.png}}%
+    }%
+  }
+  \caption{MiniMax-M3在HLE和MuSiQue任务上的成本与准确率结果}
+  \label{fig:tool-minimax-hardqa-results}
+\end{figure}
+
 \subsection{结果讨论}
 
-综合Qwen3-14B和MiniMax-M3结果可以看出，本文方法更适用于两类场景。第一类是工具观察冗余较多、通信边价值差异明显的任务，如AIME、GAIA和MiniMax-M3下的GPQA。在这些任务中，工具成本感知边级目标能够促使系统保留与最终验证、证据整合和代码检查更相关的通信边，从而提升准确率。第二类是工具调用成本较高但任务收益有限的任务，如HLE、MATH500和BigCodeBench。在这些任务中，本文方法通常能够相对AgentPrune降低推理成本，但准确率可能与最优基线存在小幅差距。
+综合Qwen3-14B和MiniMax-M3结果可以看出，本文方法更适用于两类场景。第一类是工具观察冗余较多、通信边价值差异明显的任务，如AIME、GAIA和MiniMax-M3下的GPQA。在这些任务中，工具成本感知边级目标能够促使系统保留与最终验证、证据整合和代码检查更相关的通信边，从而提升准确率。第二类是工具调用成本较高但任务收益有限的任务，如HLE、MATH500、MuSiQue和BigCodeBench。在这些任务中，本文方法通常能够相对AgentPrune降低推理成本，但准确率可能与最优基线存在小幅差距。
 
 同时，实验也表明工具调用并非总是带来稳定收益。以Qwen3-14B的GPQA为例，Direct无工具设置达到57.50\%，高于Direct+Tools的39.00\%；这说明外部工具返回的信息若不能被有效筛选，可能反而干扰模型原有推理。本文方法虽然通过边级成本惩罚减少了部分冗余传播，但对于强知识型、多选项干扰任务，仍需要进一步引入工具观察质量评估或任务难度自适应权重。
 
@@ -324,6 +357,6 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
 
 \section{本章小结}
 
-本章提出了面向多智能体系统的图剪枝方法。该方法首先将多智能体系统中的空间边和时间边建模为可学习概率，并通过采样构造任务执行时的实际通信图；随后结合任务正确性、模型输出Token、工具调用次数和工具观察Token构造边级效用，使通信边学习过程能够感知外部工具带来的额外成本；最后引入Taylor一阶重要性评估，在反向传播后剪除低重要性边，实现多轮推理过程中的动态图压缩。
+本章提出了面向通信边冗余的图剪枝算法。该方法首先将多智能体系统中的空间边和时间边建模为可学习概率，并通过采样构造任务执行时的实际通信图；随后结合任务正确性、模型输出Token、工具调用次数和工具观察Token构造边级效用，使通信边学习过程能够感知外部工具带来的额外成本；最后引入Taylor一阶重要性评估，在反向传播后剪除低重要性边，实现多轮推理过程中的动态图压缩。
 
-实验结果表明，在MiniMax-M3上，本文方法在AIME、GAIA和GPQA三个代表性工具任务中均取得最高准确率；在Qwen3-14B上，本文方法在七个工具任务上的平均准确率略高于FullConnected+Tools和AgentPrune+Tools，并在多数任务中相对AgentPrune降低推理成本。对于GPQA、MATH500和HLE等任务，结果显示工具成本控制与证据充分性之间仍需进一步平衡。该工作从图结构层面补充了上一章的语义消息压缩方法，共同构成面向多智能体系统高效通信的两条优化路径。
+实验结果表明，在MiniMax-M3上，本文方法在AIME、GAIA和GPQA三个代表性工具任务中取得最高准确率，并在HLE和MuSiQue上相对AgentPrune+Tools降低推理成本；在Qwen3-14B上，本文方法在七个工具任务上的平均准确率略高于FullConnected+Tools和AgentPrune+Tools，并在多数任务中相对AgentPrune降低推理成本。对于GPQA、MATH500、HLE和MuSiQue等任务，结果显示工具成本控制与证据充分性之间仍需进一步平衡。该工作从图结构层面补充了上一章的语义消息压缩方法，共同构成面向多智能体系统高效通信的两条优化路径。

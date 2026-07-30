@@ -3,11 +3,11 @@
 % This file has no copyright assigned and is placed in the Public Domain.
 %%
 
-\chapter{面向多智能体系统的消息压缩框架}
+\chapter{面向语义冗余的消息压缩框架}
 
 \section{引言}
 
-上一章从相关工作角度梳理了多智能体通信拓扑优化和语义消息压缩两类研究路线。可以看到，现有方法虽然能够在一定程度上降低通信开销，但在多智能体协作场景中仍面临三类细粒度冗余：发送方完整推理与接收方角色需求不匹配，多个前驱节点传递相似或重复观点，以及多轮历史记忆持续累积导致上下文膨胀。针对这些问题，本章提出面向多智能体系统的消息压缩框架，从角色、节点和时序三个维度对通信内容进行压缩，在不改变底层大语言模型能力的前提下提升通信内容的信息密度。
+上一章从相关工作角度梳理了多智能体系统、语义冗余问题和通信边冗余问题。可以看到，现有方法虽然能够在一定程度上降低通信开销，但在多智能体协作场景中仍面临三类细粒度语义冗余：发送方完整推理与接收方角色需求不匹配，多个前驱节点传递相似或重复观点，以及多轮历史记忆持续累积导致上下文膨胀。针对这些问题，本章提出面向语义冗余的消息压缩框架，从角色、节点和时序三个维度对通信内容进行压缩，在不改变底层大语言模型能力的前提下提升通信内容的信息密度。
 
 \section{消息压缩算法}
 
@@ -148,8 +148,11 @@ $$
     \label{tab:dataset_overview}
 \end{table}
 
-\subsection{基座模型}
-为了保证实验结论的客观性与普适性，本文选取了两个主流大语言模型作为多智能体的基座。这两个模型在API调用成本存在显著差异。具体模型计费标准如表\ref{tab:base_model_api_price}所示。
+\subsection{对比基准}
+实验设置了四类对比基准。首先是Direct方法，即单智能体直接完成任务，不引入智能体间通信，用于衡量单模型基础能力和最低推理成本。其次是Fullconnect方法，上游智能体生成的原始输出直接、完整地透传给下游智能体，不进行任何截断，从而保留完整上下文内容，代表多智能体通信开销的上限及任务基础性能的对照标准。第三是AgentPrune方法，作为当前多智能体系统拓扑优化的代表性方法，该基线对智能体间的通信边进行剪枝。最后是本文方法，即引入本文设计的消息压缩模块，在智能体交互前对冗长推理和弱相关背景进行压缩，仅保留与后续推理更相关的关键信息。
+
+\subsection{实现细节}
+为了保证实验结论的客观性与普适性，本文选取三个主流大语言模型作为多智能体的基座模型。这些模型在API调用成本上存在显著差异，具体计费标准如表\ref{tab:base_model_api_price}所示。
 \vspace{26pt}
 \begin{table}[H]
     \centering
@@ -180,10 +183,6 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
 
 在所有实验中，均采用相同的系统提示词、智能体数量、超参数以及数据集划分，以确保实验结果的可比性。
 
-
-\subsection{对比方法}
-实验构建了三种通信拓扑作为对比。首先是完全拓扑基线，上游智能体生成的原始输出直接、完整地透传给下游智能体，不进行任何截断，从而保留了完整的上下文内容，其代表了系统通信开销的上限及任务基础性能的对照标准。其次是AgentPrune方法基线，作为当前多智能体系统拓扑优化的代表性方法，该基线对智能体间的通信边进行剪枝。最后是本文方法，即引入本文设计的消息压缩模块，在智能体交互前对冗长的推理和弱相关背景进行压缩，仅精准保留关键信息。
-
 \subsection{评估指标}
 本文主要从任务完成质量与通信成本两个维度，选取了以下两项核心评价指标：
 \par \textbf{准确率 (Accuracy,)：}衡量模型完成任务的有效性。针对MMLU及四项数学推理数据集（GSM8K、AQuA、MultiArith、SVAMP），提取模型最终输出的答案与标准答案进行精确匹配以计算正确率；对于HumanEval代码生成数据集，则以测试用例的通过率（Pass@1）作为准确率进行评估。
@@ -196,11 +195,11 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
 
 为保证总体结果统计的可解释性，本文在主实验中选取MiniMax-M3、Qwen3-14B和Qwen2.5-14B-Instruct作为主要分析模型，并按模型分别计算其在可用数据集上的平均表现。其中MiniMax-M3和Qwen3-14B覆盖MMLU、GSM8K、AQuA、MultiArith、SVAMP和HumanEval六个数据集；Qwen2.5-14B-Instruct目前覆盖除GSM8K外的五个数据集。总体实验不将所有模型和数据集混合为单一平均值，而是分别展示三个模型下不同方法的平均表现，以避免模型覆盖范围不同带来的统计偏差。
 
-\subsection{推理性能分析}
+\subsection{任务准确率结果}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/summary/fig1_model_average_accuracy_bars.png}}
+    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/summary/fig1_model_average_accuracy_bars.png}}
     \caption{六个数据集在不同模型下的平均准确率对比}
     \label{fig:summary_model_accuracy}
 \end{figure}
@@ -217,12 +216,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{MMLU准确率
         \label{fig:mmlu_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/mmlu/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/mmlu/fig2_accuracy_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{GSM8K准确率
         \label{fig:gsm8k_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/gsm8k/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/gsm8k/fig2_accuracy_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -230,12 +229,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{AQuA准确率
         \label{fig:aqua_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/aqua/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/aqua/fig2_accuracy_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{MultiArith准确率
         \label{fig:multiarith_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/multiarith/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/multiarith/fig2_accuracy_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -243,12 +242,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{SVAMP准确率
         \label{fig:svamp_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/svamp/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/svamp/fig2_accuracy_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{HumanEval准确率
         \label{fig:humaneval_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/humaneval/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/humaneval/fig2_accuracy_bars.png}}%
         }%
     }
     \caption{各数据集上不同模型与方法的准确率对比}
@@ -268,13 +267,11 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
 
 \noindent\textbf{HumanEval}在HumanEval数据集上，本文方法并未取得最优平均结果。三个主分析模型中，Fullconnect的平均准确率为92.20\%，Direct为90.03\%，本文方法为89.20\%，Agentprune为88.10\%。分模型看，MiniMax-M3和Qwen2.5-14B-Instruct上Fullconnect表现最好，Qwen3-14B上Direct表现最好；本文方法在MiniMax-M3上高于Agentprune，在Qwen3-14B上与Agentprune持平，在Qwen2.5-14B-Instruct上高于Direct方法1.70个百分点但低于Fullconnect。该结果说明，对于代码生成任务，仅依赖消息级协作可能不足以替代代码执行、单元测试或错误反馈机制，后续应将消息筛选与可执行验证结合起来。
 
-综合六个数据集的细分结果可以看出，本文方法的优势更适合概括为在多数任务和模型上提升或保持准确率，而不是在所有单项任务上绝对最优。尤其在MMLU、GSM8K、MultiArith和SVAMP上，本文方法体现出较好的稳定性；而在AQuA和HumanEval上，不同任务类型对协作信息的需求差异更明显，说明后续需要根据任务类型、模型能力和推理不确定性动态调整消息筛选强度。
-
-\subsection{成本分析}
+\subsection{成本对比实验结果}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/summary/fig2_model_average_cost_bars.png}}
+    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/summary/fig2_model_average_cost_bars.png}}
     \caption{六个数据集在不同模型下的平均推理成本对比}
     \label{fig:summary_model_cost}
 \end{figure}
@@ -288,12 +285,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{MMLU成本
         \label{fig:mmlu_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/mmlu/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/mmlu/fig1_cost_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{GSM8K成本
         \label{fig:gsm8k_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/gsm8k/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/gsm8k/fig1_cost_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -301,12 +298,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{AQuA成本
         \label{fig:aqua_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/aqua/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/aqua/fig1_cost_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{MultiArith成本
         \label{fig:multiarith_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/multiarith/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/multiarith/fig1_cost_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -314,12 +311,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{SVAMP成本
         \label{fig:svamp_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/svamp/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/svamp/fig1_cost_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{HumanEval成本
         \label{fig:humaneval_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/消息压缩实验结果图/humaneval/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/humaneval/fig1_cost_bars.png}}%
         }%
     }
     \caption{各数据集上不同模型的推理成本比较}
@@ -328,10 +325,14 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
 
 图\ref{fig:dataset_cost_panels}进一步展示了各数据集上的成本差异。Direct方法消耗最低，但缺少多智能体之间的信息交互；Fullconnect方法在各数据集上普遍带来更高成本，反映出全连接通信结构的token显著增加的问题；Agentprune能够通过剪枝降低部分开销，但不同任务上的成本和准确率表现仍存在波动。相比之下，本文方法通常能够在保留任务准确率的同时降低Fullconnect带来的额外成本，体现出更好的综合性价比。
 
+\subsection{结果分析}
+
+综合六个数据集的细分结果可以看出，本文方法的优势更适合概括为在多数任务和模型上提升或保持准确率，而不是在所有单项任务上绝对最优。尤其在MMLU、GSM8K、MultiArith和SVAMP上，本文方法体现出较好的稳定性；而在AQuA和HumanEval上，不同任务类型对协作信息的需求差异更明显，说明后续需要根据任务类型、模型能力和推理不确定性动态调整消息筛选强度。
+
 综上，本文方法的目标在多智能体协作场景下实现更合理的准确率--成本平衡。实验结果表明，消息级协作能够在减少冗余通信的同时保持多智能体推理收益，为构建更高效的多智能体大模型推理系统提供了一种可行方向。
 
 \section{本章小结}
 
-本章围绕多智能体系统中的通信冗余问题，提出并实现了面向角色、节点和时序三个维度的消息压缩框架。首先，本文分析了标准多智能体任务执行流程中的消息传递瓶颈，并将压缩模块嵌入智能体之间的通信链路；其次，分别设计了角色感知压缩、节点感知聚合和分歧感知压缩三个模块，以减少无关推理、重复观点和跨轮历史累积带来的上下文开销；最后，通过多个知识理解、数学推理和代码生成数据集上的实验，验证了该方法能够在多数任务中保持或提升准确率，并显著降低相对于完全通信拓扑的推理成本。
+本章围绕多智能体系统中的语义冗余问题，提出并实现了面向语义冗余的消息压缩框架。首先，本文分析了标准多智能体任务执行流程中的消息传递瓶颈，并将压缩模块嵌入智能体之间的通信链路；其次，分别设计了角色感知压缩、节点感知聚合和分歧感知压缩三个模块，以减少无关推理、重复观点和跨轮历史累积带来的上下文开销；最后，通过多个知识理解、数学推理和代码生成数据集上的实验，验证了该方法能够在多数任务中保持或提升准确率，并显著降低相对于完全通信拓扑的推理成本。
 
 实验结果表明，消息级压缩能够在不改变底层基座模型的前提下改善多智能体协作的准确率--成本平衡，为后续进一步研究任务自适应压缩强度、压缩模块消融分析以及与拓扑剪枝方法的联合优化提供了基础。
