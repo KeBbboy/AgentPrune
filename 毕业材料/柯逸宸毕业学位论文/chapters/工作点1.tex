@@ -7,9 +7,9 @@
 
 \section{引言}
 
-上一章从相关工作角度梳理了多智能体系统、语义冗余问题和通信边冗余问题。可以看到，现有方法虽然能够在一定程度上降低通信开销，但在多智能体协作场景中仍面临三类细粒度语义冗余：发送方完整推理与接收方角色需求不匹配，多个前驱节点传递相似或重复观点，以及多轮历史记忆持续累积导致上下文膨胀。针对这些问题，本章提出面向语义冗余的消息压缩框架，从角色、节点和时序三个维度对通信内容进行压缩，在不改变底层大语言模型能力的前提下提升通信内容的信息密度。
+上一章从相关工作角度梳理了多智能体系统、语义冗余问题和通信冗余问题。可以看到，现有方法虽然能够在一定程度上降低通信开销，但在多智能体协作场景中仍面临三类细粒度语义冗余问题：发送方完整推理与接收方角色需求不匹配，多个前驱节点传递相似或重复观点，以及多轮历史记忆持续累积导致上下文膨胀。针对这些问题，本章提出面向语义冗余的消息压缩框架，从角色、节点和时序三个维度对通信内容进行压缩，在不改变底层大语言模型能力的前提下提升通信内容的信息密度。
 
-\section{消息压缩算法}
+\section{消息压缩框架}
 
 本节首先描述标准多智能体系统的任务执行流程，随后给出消息压缩框架的整体执行过程，并详细介绍角色感知压缩、节点感知聚合和分歧感知压缩三个核心模块。
 
@@ -113,10 +113,10 @@ $$
 
 
 \section{实验设置}
-目前，消息压缩框架实现已完成，我们在一些数据集中进行了实验，在本章节中将会展示已经完成的实验结果，并给出对应结果的分析。
+为验证面向语义冗余的消息压缩框架在不同任务类型和不同基座模型上的有效性，本文在综合知识、数学推理和代码生成任务上开展实验，并从任务准确率与推理成本两个维度进行评估。
 
 \subsection{数据集}
-为全面客观地评估模型能力，本文从多智能体系统领域广泛认可的6个数据集，涵盖综合知识、数学推理和代码生成三个核心能力维度。具体任务特征与选取依据如表\ref{tab:dataset_overview}所示。
+为全面客观地评估模型能力，本文选取多智能体系统研究中常用的6个数据集，涵盖综合知识、数学推理和代码生成三个核心能力维度。具体任务特征与选取依据如表\ref{tab:dataset_overview}所示。
 
 
 \vspace{26pt}
@@ -175,38 +175,40 @@ $$
     \label{tab:base_model_api_price}
 \end{table}
 
-Qwen2.5-14B-Instruct：作为24年开源指令模型的代表，其在通用问答、指令遵循与文本生成等任务中表现出较高的稳定性。本研究将其设为基础对照组，旨在与 Qwen3-14B 形成严格的控制变量（参数量级一致）。通过引入该对照组，重点考察在缺乏新一代推理与指令优化机制的前提下，消息压缩策略对任务生成质量、词元（Token）消耗及调用成本的具体影响。
+Qwen2.5-14B-Instruct：作为2024年开源指令模型的代表，其在通用问答、指令遵循与文本生成等任务中表现出较高的稳定性。本研究将其设为基础对照组，旨在与Qwen3-14B形成严格的控制变量（参数量级一致）。通过引入该对照组，重点考察在缺乏新一代推理与指令优化机制的前提下，消息压缩策略对任务生成质量、词元消耗及调用成本的具体影响。
 
-Qwen3-14B：作为中等规模参数开源模型的代表，该模型在推理效率、部署成本与基础性能之间实现了较优的平衡。结合表\ref{tab:base_model_api_price}数据可知，其 API 调用成本相对低廉。选取该模型旨在探究消息压缩策略在低成本、常规算力约束下，对实际任务效能及经济成本的优化潜力。
+Qwen3-14B：作为中等规模参数开源模型的代表，该模型在推理效率、部署成本与基础性能之间实现了较优的平衡。结合表\ref{tab:base_model_api_price}数据可知，其API调用成本相对较低。选取该模型旨在探究消息压缩策略在低成本、常规算力约束下，对实际任务效能及经济成本的优化潜力。
 
-MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样性，并构建高成本模型对照场景。鉴于其 API 调用费率显著较高（输入与输出单价约为 Qwen3-14B 的 4 倍以上），在处理长文本任务时极易产生高昂的边际成本。选取该模型旨在验证消息压缩策略在面对高资源消耗型商业大模型时，能否有效降低计算冗余并实现显著的成本缩减。
+MiniMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样性，并构建高成本模型对照场景。鉴于其API调用费率较高（输入与输出单价约为Qwen3-14B的4倍以上），在处理长文本任务时容易产生较高的边际成本。选取该模型旨在验证消息压缩策略在面对高资源消耗型商业大模型时，能否有效降低计算冗余并实现成本缩减。
 
-在所有实验中，均采用相同的系统提示词、智能体数量、超参数以及数据集划分，以确保实验结果的可比性。
+在所有实验中，均采用相同的系统提示词、智能体数量、超参数以及数据集划分，以确保实验结果的可比性。本文实验图表均由统一格式的实验结果表生成，表中记录了模型、方法、输入词元数、输出词元数、推理成本和准确率等字段。其中，推理成本按照输入、输出Token数量与表\ref{tab:base_model_api_price}中的API单价换算，单位为人民币元；同一数据集内各方法采用相同评测规模，因此成本数值主要用于横向比较不同通信策略的相对开销。对于同一数据集、同一模型和同一方法，结果表仅保留一次完整评测结果，避免在论文中选择性呈现局部最优实验。
 
 \subsection{评估指标}
 本文主要从任务完成质量与通信成本两个维度，选取了以下两项核心评价指标：
-\par \textbf{准确率 (Accuracy,)：}衡量模型完成任务的有效性。针对MMLU及四项数学推理数据集（GSM8K、AQuA、MultiArith、SVAMP），提取模型最终输出的答案与标准答案进行精确匹配以计算正确率；对于HumanEval代码生成数据集，则以测试用例的通过率（Pass@1）作为准确率进行评估。
-\par \textbf{词元花费 (Token Cost)：}衡量多智能体通信过程中的经济开销。具体统计系统在完成单次完整任务时，所消耗token的价格。
+\par \textbf{准确率 (Accuracy)：}衡量模型完成任务的有效性。针对MMLU及四项数学推理数据集（GSM8K、AQuA、MultiArith、SVAMP），提取模型最终输出的答案与标准答案进行精确匹配以计算正确率；对于HumanEval代码生成数据集，则以测试用例的通过率（Pass@1）作为准确率进行评估。
+\par \textbf{推理成本 (Inference Cost)：}衡量多智能体通信过程中的经济开销。具体统计系统完成对应评测集推理时，由输入词元和输出词元产生的API调用费用，单位为人民币元。
 
 
 \section{实验结果与分析}
 
-本阶段实验在MMLU、GSM8K、AQuA、MultiArith、SVAMP和HumanEval六个数据集上展开，覆盖通用知识理解、数学推理、多项选择推理和代码生成等不同任务类型。实验对比了Direct、Fullconnect、Agentprune和本文方法。
+本阶段实验在MMLU、GSM8K、AQuA、MultiArith、SVAMP和HumanEval六个数据集上展开，覆盖通用知识理解、数学推理、多项选择推理和代码生成等不同任务类型。实验对比了Direct、Fullconnect、AgentPrune和本文方法。
 
-为保证总体结果统计的可解释性，本文在主实验中选取MiniMax-M3、Qwen3-14B和Qwen2.5-14B-Instruct作为主要分析模型，并按模型分别计算其在可用数据集上的平均表现。其中MiniMax-M3和Qwen3-14B覆盖MMLU、GSM8K、AQuA、MultiArith、SVAMP和HumanEval六个数据集；Qwen2.5-14B-Instruct目前覆盖除GSM8K外的五个数据集。总体实验不将所有模型和数据集混合为单一平均值，而是分别展示三个模型下不同方法的平均表现，以避免模型覆盖范围不同带来的统计偏差。
+为保证总体结果统计的可解释性，本文在主实验中选取MiniMax-M3、Qwen3-14B和Qwen2.5-14B-Instruct作为主要分析模型，并按模型分别计算其在可用数据集上的平均表现。三个主分析模型均覆盖MMLU、GSM8K、AQuA、MultiArith、SVAMP和HumanEval六个数据集，因此总体图中的$n=6$表示每个模型均按六个数据集求平均。总体实验不将所有模型和数据集混合为单一平均值，而是分别展示三个模型下不同方法的平均表现，以避免不同模型能力水平和价格体系带来的统计偏差。
+
+需要说明的是，本节柱状图展示的是固定评测集上的单次完整评测汇总结果，尚未包含多随机种子重复实验和置信区间。因此，本文在分析中不将0.1至0.3个百分点以内的小幅差异解释为统计显著优势，而更关注跨数据集趋势、成本下降幅度以及准确率与成本之间的综合权衡。对于AQuA和HumanEval等本文方法未取得最优准确率的数据集，正文仍保留并分析其原因，以保证实验呈现的完整性。准确率柱状图均采用0--100\%的完整纵轴范围，避免因截断纵轴放大不同方法之间的视觉差异。
 
 \subsection{任务准确率结果}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/summary/fig1_model_average_accuracy_bars.png}}
-    \caption{六个数据集在不同模型下的平均准确率对比}
+    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/summary/fig1_model_average_accuracy_bars.png}}
+    \caption{六个数据集在不同模型下的平均准确率对比（纵轴为0--100\%）}
     \label{fig:summary_model_accuracy}
 \end{figure}
 
-图\ref{fig:summary_model_accuracy}展示了三个主要模型在不同方法下的跨数据集平均准确率。整体来看，本文方法在Qwen3-14B和Qwen2.5-14B-Instruct上均取得最高平均准确率，在MiniMax-M3上与Direct方法基本持平，同时高于Fullconnect和Agentprune。这说明本文方法在不同模型能力水平下均具有较好的稳定性，尤其在中小规模模型上能够带来更明显的性能收益。
+图\ref{fig:summary_model_accuracy}展示了三个主要模型在不同方法下的跨数据集平均准确率。整体来看，本文方法在Qwen3-14B和Qwen2.5-14B-Instruct上均取得最高平均准确率，在MiniMax-M3上与Direct方法基本持平，同时高于Fullconnect和AgentPrune。这说明本文方法在不同模型能力水平下均具有较好的稳定性，尤其在中小规模模型上能够带来更明显的性能收益。
 
-具体而言，在Qwen3-14B上，本文方法的平均准确率达到93.10\%，高于Direct的92.80\%、Fullconnect的92.53\%和Agentprune的91.20\%。在Qwen2.5-14B-Instruct上，本文方法的平均准确率为88.46\%，高于Direct的86.62\%、Fullconnect的88.08\%和Agentprune的87.42\%。在MiniMax-M3上，Direct方法的平均准确率为93.72\%，本文方法为93.66\%，二者差距仅为0.06个百分点，基本处于同一水平；同时，本文方法仍高于Fullconnect和Agentprune。
+具体而言，在Qwen3-14B上，本文方法的平均准确率达到93.10\%，高于Direct的92.80\%、Fullconnect的92.53\%和AgentPrune的91.20\%。在Qwen2.5-14B-Instruct上，本文方法的平均准确率为89.38\%，高于Direct的87.78\%、Fullconnect的89.00\%和AgentPrune的88.27\%。在MiniMax-M3上，Direct方法的平均准确率为93.72\%，本文方法为93.66\%，二者差距仅为0.06个百分点，基本处于同一水平；同时，本文方法仍高于Fullconnect和AgentPrune。
 
 为了避免总体平均掩盖不同任务类型的差异，下面进一步按数据集展开分析。总体上，本文方法在MMLU、GSM8K、MultiArith和SVAMP上表现较强，在AQuA和HumanEval上则呈现出更明显的任务依赖性，说明消息级协作更适合知识理解和数学推理类任务，而在多项选择干扰项较强或代码生成需要执行反馈的任务中仍有改进空间。
 
@@ -216,12 +218,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{MMLU准确率
         \label{fig:mmlu_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/mmlu/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/mmlu/fig2_accuracy_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{GSM8K准确率
         \label{fig:gsm8k_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/gsm8k/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/gsm8k/fig2_accuracy_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -229,12 +231,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{AQuA准确率
         \label{fig:aqua_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/aqua/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/aqua/fig2_accuracy_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{MultiArith准确率
         \label{fig:multiarith_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/multiarith/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/multiarith/fig2_accuracy_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -242,55 +244,55 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{SVAMP准确率
         \label{fig:svamp_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/svamp/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/svamp/fig2_accuracy_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{HumanEval准确率
         \label{fig:humaneval_accuracy_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/humaneval/fig2_accuracy_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/humaneval/fig2_accuracy_bars.png}}%
         }%
     }
-    \caption{各数据集上不同模型与方法的准确率对比}
+    \caption{各数据集上不同模型与方法的准确率对比（纵轴为0--100\%）}
     \label{fig:dataset_accuracy_panels}
 \end{figure}
 
 
-\noindent\textbf{MMLU}在MMLU数据集上，本文方法整体表现较为稳定。在主分析的三个模型中，本文方法的平均准确率为87.10\%，高于Direct的83.80\%、Fullconnect的84.90\%和Agentprune的84.53\%。其中，Qwen2.5-14B-Instruct的提升最明显，本文方法达到84.30\%，相比Direct和Fullconnect均提升5.30个百分点，相比Agentprune提升7.20个百分点。Qwen3-14B上，本文方法达到84.90\%，与Fullconnect持平，并高于Direct和Agentprune。MiniMax-M3上，本文方法为92.10\%，与Agentprune的92.20\%基本持平，并高于Direct和Fullconnect。
+\noindent\textbf{MMLU}在MMLU数据集上，本文方法整体表现较为稳定。在主分析的三个模型中，本文方法的平均准确率为87.10\%，高于Direct的83.80\%、Fullconnect的84.90\%和AgentPrune的84.53\%。其中，Qwen2.5-14B-Instruct的提升最明显，本文方法达到84.30\%，相比Direct和Fullconnect均提升5.30个百分点，相比AgentPrune提升7.20个百分点。Qwen3-14B上，本文方法达到84.90\%，与Fullconnect持平，并高于Direct和AgentPrune。MiniMax-M3上，本文方法为92.10\%，与AgentPrune的92.20\%基本持平，并高于Direct和Fullconnect。
 
-\noindent\textbf{GSM8K}在该数据集上，本文方法在两个可用模型上的平均准确率为96.16\%，高于Direct的93.90\%、Fullconnect的92.55\%和Agentprune的93.85\%。其中，MiniMax-M3使用本文方法达到97.41\%，分别高于Direct、Fullconnect和Agentprune 5.11、6.61和0.91个百分点，说明消息级协作能够增强复杂算术推理中的答案鲁棒性。Qwen3-14B上，Direct方法为95.50\%，略高于本文方法的94.90\%；但本文方法仍高于Fullconnect和Agentprune，说明在该模型上协作信息需要进一步控制以避免轻微干扰。
+\noindent\textbf{GSM8K}在该数据集上，本文方法在三个主分析模型上的平均准确率为95.44\%，高于Direct的93.80\%、Fullconnect的92.90\%和AgentPrune的93.40\%。其中，MiniMax-M3使用本文方法达到97.41\%，分别高于Direct、Fullconnect和AgentPrune 5.11、6.61和0.91个百分点，说明消息级协作能够增强复杂算术推理中的答案鲁棒性。Qwen3-14B上，Direct方法为95.50\%，略高于本文方法的94.90\%；但本文方法仍高于Fullconnect和AgentPrune。Qwen2.5-14B-Instruct上，本文方法达到94.00\%，高于Direct和Fullconnect的93.60\%，也高于AgentPrune的92.50\%，说明新增结果进一步支持本文方法在数学推理任务上的稳定收益。
 
-\noindent\textbf{AQuA}在AQuA数据集上，结果更具任务依赖性。三个模型上，本文方法的平均准确率为85.33\%，低于Direct的86.33\%，但高于Fullconnect和Agentprune的84.90\%。分模型看，Qwen3-14B使用本文方法达到87.00\%，为该模型下最高结果，相比Direct、Fullconnect和Agentprune分别提升0.10、1.30和1.69个百分点；Qwen2.5-14B-Instruct上，本文方法为82.10\%，高于Direct和Fullconnect，但低于Agentprune；MiniMax-M3上，Direct方法达到91.20\%，明显高于其他协作方法。这说明多项选择推理任务中，额外消息可能同时带来有用信息和干扰信息，需要更强的任务自适应筛选。
+\noindent\textbf{AQuA}在AQuA数据集上，结果更具任务依赖性。三个模型上，本文方法的平均准确率为85.33\%，低于Direct的86.33\%，但高于Fullconnect和AgentPrune的84.90\%。分模型看，Qwen3-14B使用本文方法达到87.00\%，为该模型下最高结果，相比Direct、Fullconnect和AgentPrune分别提升0.10、1.30和1.69个百分点；Qwen2.5-14B-Instruct上，本文方法为82.10\%，高于Direct和Fullconnect，但低于AgentPrune；MiniMax-M3上，Direct方法达到91.20\%，明显高于其他协作方法。这说明多项选择推理任务中，额外消息可能同时带来有用信息和干扰信息，需要更强的任务自适应筛选。
 
-\noindent\textbf{MultiArith}在MultiArith数据集上，各方法整体接近饱和。本文方法在三个主分析模型上均达到100.00\%，与Direct的平均表现持平，并高于Fullconnect的99.80\%和Agentprune的98.87\%。其中，Qwen3-14B上Fullconnect为99.40\%、Agentprune为96.60\%，而本文方法保持100.00\%，说明在较简单的算术推理任务中，消息级协作至少不会破坏已有推理能力，并能够避免部分结构化协作方法带来的性能波动。
+\noindent\textbf{MultiArith}在MultiArith数据集上，各方法整体接近饱和。本文方法在三个主分析模型上均达到100.00\%，与Direct的平均表现持平，并高于Fullconnect的99.80\%和AgentPrune的98.87\%。其中，Qwen3-14B上Fullconnect为99.40\%、AgentPrune为96.60\%，而本文方法保持100.00\%，说明在较简单的算术推理任务中，消息级协作至少不会破坏已有推理能力，并能够避免部分结构化协作方法带来的性能波动。
 
-\noindent\textbf{SVAMP}相比MultiArith，SVAMP更强调语义理解和问题变体。三个主分析模型上，本文方法的平均准确率为95.21\%，与Agentprune的95.20\%基本持平，并高于Direct的94.63\%和Fullconnect的94.97\%。其中，Qwen3-14B使用本文方法达到96.00\%，高于Direct、Fullconnect和Agentprune；Qwen2.5-14B-Instruct上，本文方法达到93.30\%，与Agentprune持平；MiniMax-M3上，Agentprune达到98.30\%，高于本文方法的96.33\%。这说明本文方法在中小规模模型上的收益更明显，而强模型在部分任务上对协作结构的敏感性更高。
+\noindent\textbf{SVAMP}相比MultiArith，SVAMP更强调语义理解和问题变体。三个主分析模型上，本文方法的平均准确率为95.21\%，与AgentPrune的95.20\%基本持平，并高于Direct的94.63\%和Fullconnect的94.97\%。其中，Qwen3-14B使用本文方法达到96.00\%，高于Direct、Fullconnect和AgentPrune；Qwen2.5-14B-Instruct上，本文方法达到93.30\%，与AgentPrune持平；MiniMax-M3上，AgentPrune达到98.30\%，高于本文方法的96.33\%。这说明本文方法在中小规模模型上的收益更明显，而强模型在部分任务上对协作结构的敏感性更高。
 
-\noindent\textbf{HumanEval}在HumanEval数据集上，本文方法并未取得最优平均结果。三个主分析模型中，Fullconnect的平均准确率为92.20\%，Direct为90.03\%，本文方法为89.20\%，Agentprune为88.10\%。分模型看，MiniMax-M3和Qwen2.5-14B-Instruct上Fullconnect表现最好，Qwen3-14B上Direct表现最好；本文方法在MiniMax-M3上高于Agentprune，在Qwen3-14B上与Agentprune持平，在Qwen2.5-14B-Instruct上高于Direct方法1.70个百分点但低于Fullconnect。该结果说明，对于代码生成任务，仅依赖消息级协作可能不足以替代代码执行、单元测试或错误反馈机制，后续应将消息筛选与可执行验证结合起来。
+\noindent\textbf{HumanEval}在HumanEval数据集上，本文方法并未取得最优平均结果。三个主分析模型中，Fullconnect的平均准确率为92.20\%，Direct为90.03\%，本文方法为89.20\%，AgentPrune为88.10\%。分模型看，MiniMax-M3和Qwen2.5-14B-Instruct上Fullconnect表现最好，Qwen3-14B上Direct表现最好；本文方法在MiniMax-M3上高于AgentPrune，在Qwen3-14B上与AgentPrune持平，在Qwen2.5-14B-Instruct上高于Direct方法1.70个百分点但低于Fullconnect。该结果说明，对于代码生成任务，仅依赖消息级协作可能不足以替代代码执行、单元测试或错误反馈机制，后续应将消息筛选与可执行验证结合起来。
 
-\subsection{成本对比实验结果}
+\subsection{消耗成本结果}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/summary/fig2_model_average_cost_bars.png}}
-    \caption{六个数据集在不同模型下的平均推理成本对比}
+    \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/summary/fig2_model_average_cost_bars.png}}
+    \caption{六个数据集在不同模型下的平均推理成本对比（单位：元）}
     \label{fig:summary_model_cost}
 \end{figure}
 
-图\ref{fig:summary_model_cost}展示了三个主要模型在不同方法下的跨数据集平均推理成本。Direct方法由于不引入智能体间通信，具有最低推理成本；Fullconnect方法虽然提供了最充分的信息交互，但也带来了最高的通信开销。相比之下，本文方法通过消息粒度的信息筛选减少冗余通信，只保留对最终推理有帮助的关键信息，因此在多数数据集上能够显著降低推理成本。
+图\ref{fig:summary_model_cost}展示了三个主要模型在不同方法下的跨数据集平均推理成本。Direct方法由于不引入智能体间通信，具有最低推理成本；Fullconnect方法虽然提供了最充分的信息交互，但也带来了最高的通信开销。相比之下，本文方法通过消息粒度的信息筛选减少冗余通信，只保留对最终推理有帮助的关键信息，因此在多数数据集上能够有效降低推理成本。
 
-相比Fullconnect，本文方法在MMLU上的平均成本降低约38.83\%，在GSM8K上降低约31.10\%，在SVAMP上降低约36.19\%，在MultiArith上降低约34.31\%，在HumanEval上降低约21.65\%。AQuA上本文方法相比Fullconnect仍降低约24.23\%，但相对Agentprune的成本优势不明显，说明在部分多项选择任务中，消息筛选策略仍有进一步优化空间。
+相比Fullconnect，本文方法在MMLU上的平均成本降低约38.83\%，在GSM8K上降低约31.70\%，在SVAMP上降低约36.19\%，在MultiArith上降低约34.31\%，在HumanEval上降低约21.65\%。AQuA上本文方法相比Fullconnect仍降低约24.23\%，但相对AgentPrune的成本优势不明显，说明在部分多项选择任务中，消息筛选策略仍有进一步优化空间。
 
 \begin{figure}[H]
     \centering
     \makebox[\textwidth][c]{%
         \subcaptionbox{MMLU成本
         \label{fig:mmlu_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/mmlu/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/mmlu/fig1_cost_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{GSM8K成本
         \label{fig:gsm8k_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/gsm8k/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/gsm8k/fig1_cost_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -298,12 +300,12 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{AQuA成本
         \label{fig:aqua_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/aqua/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/aqua/fig1_cost_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{MultiArith成本
         \label{fig:multiarith_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/multiarith/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/multiarith/fig1_cost_bars.png}}%
         }%
     }
     \vspace{0.5em}
@@ -311,28 +313,28 @@ MinMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
     \makebox[\textwidth][c]{%
         \subcaptionbox{SVAMP成本
         \label{fig:svamp_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/svamp/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/svamp/fig1_cost_bars.png}}%
         }%
         \hspace{0.02\textwidth}%
         \subcaptionbox{HumanEval成本
         \label{fig:humaneval_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余消息压缩实验结果图/humaneval/fig1_cost_bars.png}}%
+            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/humaneval/fig1_cost_bars.png}}%
         }%
     }
-    \caption{各数据集上不同模型的推理成本比较}
+    \caption{各数据集上不同模型的推理成本比较（单位：元）}
     \label{fig:dataset_cost_panels}
 \end{figure}
 
-图\ref{fig:dataset_cost_panels}进一步展示了各数据集上的成本差异。Direct方法消耗最低，但缺少多智能体之间的信息交互；Fullconnect方法在各数据集上普遍带来更高成本，反映出全连接通信结构的token显著增加的问题；Agentprune能够通过剪枝降低部分开销，但不同任务上的成本和准确率表现仍存在波动。相比之下，本文方法通常能够在保留任务准确率的同时降低Fullconnect带来的额外成本，体现出更好的综合性价比。
+图\ref{fig:dataset_cost_panels}进一步展示了各数据集上的成本差异。Direct方法消耗最低，但缺少多智能体之间的信息交互；Fullconnect方法在各数据集上普遍带来更高成本，反映出全连接通信结构的token显著增加的问题；AgentPrune能够通过剪枝降低部分开销，但不同任务上的成本和准确率表现仍存在波动。相比之下，本文方法通常能够在保留任务准确率的同时降低Fullconnect带来的额外成本，体现出更好的综合性价比。
 
 \subsection{结果分析}
 
-综合六个数据集的细分结果可以看出，本文方法的优势更适合概括为在多数任务和模型上提升或保持准确率，而不是在所有单项任务上绝对最优。尤其在MMLU、GSM8K、MultiArith和SVAMP上，本文方法体现出较好的稳定性；而在AQuA和HumanEval上，不同任务类型对协作信息的需求差异更明显，说明后续需要根据任务类型、模型能力和推理不确定性动态调整消息筛选强度。
+综合六个数据集的细分结果可以看出，本文方法的优势更适合概括为在多数任务和模型上提升或保持准确率，而不是在所有单项任务上绝对最优。尤其在MMLU、GSM8K、MultiArith和SVAMP上，本文方法体现出较好的稳定性；而在AQuA和HumanEval上，不同任务类型对协作信息的需求差异更明显，说明后续需要根据任务类型、模型能力和推理不确定性动态调整消息筛选强度。由于当前实验尚未加入多次重复运行的方差统计，本文对MiniMax-M3上0.06个百分点这类极小差异只作同等水平处理，不作为方法优劣的主要依据。
 
 综上，本文方法的目标在多智能体协作场景下实现更合理的准确率--成本平衡。实验结果表明，消息级协作能够在减少冗余通信的同时保持多智能体推理收益，为构建更高效的多智能体大模型推理系统提供了一种可行方向。
 
 \section{本章小结}
 
-本章围绕多智能体系统中的语义冗余问题，提出并实现了面向语义冗余的消息压缩框架。首先，本文分析了标准多智能体任务执行流程中的消息传递瓶颈，并将压缩模块嵌入智能体之间的通信链路；其次，分别设计了角色感知压缩、节点感知聚合和分歧感知压缩三个模块，以减少无关推理、重复观点和跨轮历史累积带来的上下文开销；最后，通过多个知识理解、数学推理和代码生成数据集上的实验，验证了该方法能够在多数任务中保持或提升准确率，并显著降低相对于完全通信拓扑的推理成本。
+本章围绕多智能体系统中的语义冗余问题，提出并实现了面向语义冗余的消息压缩框架。首先，本文分析了标准多智能体任务执行流程中的消息传递瓶颈，并将压缩模块嵌入智能体之间的通信链路；其次，分别设计了角色感知压缩、节点感知聚合和分歧感知压缩三个模块，以减少无关推理、重复观点和跨轮历史累积带来的上下文开销；最后，通过多个知识理解、数学推理和代码生成数据集上的实验，验证了该方法能够在多数任务中保持或提升准确率，并降低相对于完全通信拓扑的推理成本。
 
 实验结果表明，消息级压缩能够在不改变底层基座模型的前提下改善多智能体协作的准确率--成本平衡，为后续进一步研究任务自适应压缩强度、压缩模块消融分析以及与拓扑剪枝方法的联合优化提供了基础。

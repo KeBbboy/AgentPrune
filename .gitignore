@@ -9,6 +9,25 @@
 *.ps1
 .pyc
 
+# LaTeX 编译中间产物
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.bcf
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.run.xml
+*.synctex.gz
+*.xdv
+
+# 论文打包文件
+柯逸宸毕业学位论文.zip
+
 .env
 experiments.md
 agent5_token.md
