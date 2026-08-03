@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 import warnings
 import asyncio
 import re
+from AgentDropout.context import get_selective_context_compressor
 from AgentDropout.graph.message_compression import (
     aggregate_node_aware, compress_messages_role_aware,
 )
@@ -44,6 +45,8 @@ class Node(ABC):
             An internal medthod to process the raw_input, the spatial info and temporal info to get the final inputs.
     """
 
+    UNCOMPRESSED_SELECTIVE_CONTEXT_AGENT_NAMES = {"FinalMajorVote"}
+
     def __init__(self, 
                  id: Optional[str],
                  agent_name:str="",
@@ -65,6 +68,7 @@ class Node(ABC):
         self.outputs: List[Any] = []
         self.raw_inputs: List[Any] = []
         self.role = ""
+        self.message_compressor = None
         self.last_memory: Dict[str,List[Any]] = {'inputs':[],'outputs':[],'raw_inputs':[]}
 
     @property
@@ -180,6 +184,8 @@ class Node(ABC):
         full_text = output
         if not full_text:
             return None
+        if "<think>" not in full_text and "\n" not in full_text:
+            return None
         answer, reasoning = self._split_answer_and_reasoning(full_text)
         return {
             "reasoning": reasoning,
@@ -221,7 +227,7 @@ class Node(ABC):
                     "message_type": message_type,
                 }
         # 消息压缩框架: 同步应用 role-aware 压缩 / node-aware 聚合
-        spatial_info = self._apply_message_compression_hooks(spatial_info)
+        spatial_info = self._apply_message_compression_hooks(spatial_info, source="spatial")
         return spatial_info
 
     def get_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
@@ -241,7 +247,7 @@ class Node(ABC):
                     "output": selected_output,
                     "message_type": message_type,
                 }
-        temporal_info = self._apply_message_compression_hooks(temporal_info)
+        temporal_info = self._apply_message_compression_hooks(temporal_info, source="temporal")
         return temporal_info
 
     async def aget_temporal_info(self, raw_inputs: Any = None)->Dict[str,Any]:
@@ -261,10 +267,10 @@ class Node(ABC):
                     "output": selected_output,
                     "message_type": message_type,
                 }
-        temporal_info = self._apply_message_compression_hooks(temporal_info)
+        temporal_info = self._apply_message_compression_hooks(temporal_info, source="temporal")
         return temporal_info
 
-    def _apply_message_compression_hooks(self, info: Dict[str, Any]) -> Dict[str, Any]:
+    def _apply_message_compression_hooks(self, info: Dict[str, Any], source: str = "spatial") -> Dict[str, Any]:
         """Node 层钩子: 分别调用模块 1(role_aware_compression) 和模块 2(node_aware_aggregation)。
 
         模块 3(temporal_api_summary) 在 Graph.arun 中调用, 不在 Node 层处理.
@@ -279,6 +285,23 @@ class Node(ABC):
         # 模块 1: role_aware_compression
         if cfg.role_aware_compression:
             info = compress_messages_role_aware(info, cfg, getattr(self, "role", ""))
+        # Selective Context: 复用远端分支的全局懒加载 compressor
+        if (
+            cfg.selective_context
+            and self.agent_name not in self.UNCOMPRESSED_SELECTIVE_CONTEXT_AGENT_NAMES
+        ):
+            info = self._apply_text_compressor_to_info(
+                info,
+                get_selective_context_compressor(),
+                source=source,
+            )
+        # LLMLingua-2: 只压缩普通智能体接收的前驱消息
+        if self.message_compressor is not None:
+            info = self._apply_text_compressor_to_info(
+                info,
+                self.message_compressor,
+                source=source,
+            )
         # 归一化: 为 structured payload 补一个 "output" 键, 让下游 agent
         # (AnalyzeAgent/MathSolver/FinalRefer 等) 仍然能用 info["output"]
         # 拿到字符串. 模块 1/2 的 _join_structured 返回的 dict 没有 "output"
@@ -298,6 +321,141 @@ class Node(ABC):
                         _parts.append(_p["answer"])
                     _p["output"] = "\n".join(_parts)
         return info
+
+    def _apply_text_compressor_to_info(
+        self,
+        info: Dict[str, Any],
+        compressor: Any,
+        source: str,
+    ) -> Dict[str, Any]:
+        if not info:
+            return info
+        out: Dict[str, Any] = {}
+        for key, payload in info.items():
+            if not isinstance(payload, dict):
+                out[key] = payload
+                continue
+            out[key] = self._compress_payload_dict(
+                payload,
+                compressor,
+                source=source,
+            )
+        return out
+
+    def _compress_payload_dict(
+        self,
+        payload: Dict[str, Any],
+        compressor: Any,
+        source: str,
+    ) -> Dict[str, Any]:
+        new_payload = dict(payload)
+        role = str(new_payload.get("role") or "")
+        message_type = str(new_payload.get("message_type") or "full")
+        output = new_payload.get("output")
+
+        if isinstance(output, dict):
+            new_output = self._compress_structured_message(
+                output,
+                compressor,
+                role=role,
+                message_type=message_type,
+                source=source,
+            )
+            new_payload["output"] = new_output
+            for field in ("reasoning", "answer", "full_text"):
+                if field in new_output:
+                    new_payload[field] = new_output[field]
+            return new_payload
+
+        if message_type == "structured" and (
+            isinstance(new_payload.get("reasoning"), str)
+            or isinstance(new_payload.get("full_text"), str)
+        ):
+            return self._compress_structured_message(
+                new_payload,
+                compressor,
+                role=role,
+                message_type=message_type,
+                source=source,
+            )
+
+        if isinstance(output, str):
+            new_payload["output"] = self._compress_text_message(
+                compressor,
+                output,
+                role=role,
+                message_type=message_type,
+                source=source,
+            )
+        return new_payload
+
+    def _compress_structured_message(
+        self,
+        payload: Dict[str, Any],
+        compressor: Any,
+        role: str,
+        message_type: str,
+        source: str,
+    ) -> Dict[str, Any]:
+        new_payload = dict(payload)
+        reasoning = new_payload.get("reasoning")
+        if isinstance(reasoning, str) and reasoning.strip():
+            compressed_reasoning = self._compress_text_message(
+                compressor,
+                reasoning,
+                role=role,
+                message_type=message_type,
+                source=source,
+            )
+            new_payload["reasoning"] = compressed_reasoning
+            full_text = new_payload.get("full_text")
+            if isinstance(full_text, str):
+                if reasoning in full_text:
+                    new_payload["full_text"] = full_text.replace(
+                        reasoning,
+                        compressed_reasoning,
+                        1,
+                    )
+                else:
+                    answer = new_payload.get("answer")
+                    parts = [compressed_reasoning]
+                    if isinstance(answer, str) and answer:
+                        parts.append(answer)
+                    new_payload["full_text"] = "\n".join(parts)
+            return new_payload
+
+        full_text = new_payload.get("full_text")
+        if isinstance(full_text, str) and full_text.strip():
+            compressed_full_text = self._compress_text_message(
+                compressor,
+                full_text,
+                role=role,
+                message_type=message_type,
+                source=source,
+            )
+            new_payload["full_text"] = compressed_full_text
+            new_payload["output"] = compressed_full_text
+        return new_payload
+
+    def _compress_text_message(
+        self,
+        compressor: Any,
+        text: str,
+        role: str,
+        message_type: str,
+        source: str,
+    ) -> str:
+        if hasattr(compressor, "compress_payload"):
+            compressed = compressor.compress_payload(text)
+        else:
+            compressed = compressor.compress(
+                text,
+                domain=self.domain,
+                role=role,
+                message_type=message_type,
+                source=source,
+            )
+        return compressed if isinstance(compressed, str) else text
     
     def execute(self, input:Any, **kwargs):
         self.outputs = []

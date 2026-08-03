@@ -1,6 +1,7 @@
 import shortuuid
 from typing import Any, List, Optional, Dict
 from abc import ABC
+from contextlib import contextmanager
 import numpy as np
 import torch
 import asyncio
@@ -12,6 +13,8 @@ from AgentDropout.graph.message_compression import (
     get_message_compression_config,
     apply_temporal_api_summary,
 )
+from AgentDropout.context import configure_selective_context
+from AgentDropout.utils.llmlingua2_compressor import LLMLingua2MessageCompressor
 import random
 
 class Graph(ABC):
@@ -88,12 +91,19 @@ class Graph(ABC):
             ours_message_config if ours_message_config is not None
             else get_message_compression_config()
         )
+        configure_selective_context(enabled=self.ours_message_config.selective_context)
+        self.message_compressor = self._build_llmlingua2_message_compressor(
+            self.ours_message_config
+        )
+        self.message_compression_enabled = self.ours_message_config.llmlingua2_compression
 
         self.init_nodes() # add nodes to the self.nodes
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
         # 把 graph 反向挂回每个 Node, 让 Node 能读到配置
         for _n in self.nodes.values():
             _n.bind_to_graph(self)
+        self.decision_node.bind_to_graph(self)
+        self.attach_llmlingua2_message_compressor()
 
         init_spatial_logit = torch.log(torch.tensor(initial_spatial_probability / (1 - initial_spatial_probability))) if optimized_spatial else 10.0
         init_temporal_logit = torch.log(torch.tensor(initial_temporal_probability / (1 - initial_temporal_probability))) if optimized_temporal else 10.0
@@ -123,6 +133,42 @@ class Graph(ABC):
             self.spatial_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_spatial_edges), requires_grad=optimized_spatial) * init_spatial_logit,requires_grad=optimized_spatial) for _ in range(rounds)])
             self.temporal_logits = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(len(self.potential_temporal_edges), requires_grad=optimized_temporal) * init_temporal_logit,requires_grad=optimized_temporal) for _ in range(rounds-1)])
             self.temporal_masks = torch.nn.ParameterList([torch.nn.Parameter(fixed_temporal_masks.clone(), requires_grad=False) for _ in range(rounds-1)])
+
+    def _build_llmlingua2_message_compressor(self, cfg: MessageCompressionConfig):
+        if not cfg.llmlingua2_compression:
+            return None
+        return LLMLingua2MessageCompressor(
+            model_name=cfg.llmlingua2_model_name,
+            rate=cfg.llmlingua2_rate,
+            min_tokens=cfg.llmlingua2_min_tokens,
+            compress_code=cfg.llmlingua2_compress_code,
+        )
+
+    def attach_llmlingua2_message_compressor(self):
+        node_compressor = self.message_compressor if self.message_compression_enabled else None
+        self.decision_node.message_compressor = None
+        for node in self.nodes.values():
+            node.message_compressor = node_compressor
+
+    def set_message_compression_enabled(self, enabled: bool):
+        self.message_compression_enabled = bool(enabled) and self.message_compressor is not None
+        self.attach_llmlingua2_message_compressor()
+
+    @contextmanager
+    def message_compression_disabled(self):
+        previous_enabled = self.message_compression_enabled
+        self.set_message_compression_enabled(False)
+        try:
+            yield
+        finally:
+            self.set_message_compression_enabled(previous_enabled)
+
+    def message_compression_summary(self) -> str:
+        if self.message_compressor is None:
+            return "LLMLingua-2 compression disabled."
+        if not self.message_compression_enabled:
+            return "LLMLingua-2 compression temporarily disabled."
+        return self.message_compressor.summary()
 
     @property
     def spatial_adj_matrix(self):

@@ -1,6 +1,6 @@
 """消息压缩框架 (message compression framework).
 
-3 个开关 ↔ 3 个独立模块(每个开关对应一个模块):
+消息压缩框架包含 3 个内置模块, 并在配置层统一注册额外算法开关:
 
 - :mod:`.role_aware_compression`  ← 开关 ``--role_aware_compression``
   :func:`compress_messages_role_aware` (供 Node.get_*_info 调用)
@@ -11,9 +11,9 @@
 
 对外统一入口:
 
-- :class:`MessageCompressionConfig`  —— 3 字段配置
+- :class:`MessageCompressionConfig`  —— 运行期配置
 - :func:`get_message_compression_config` / :func:`set_message_compression_config`
-- :func:`add_message_compression_arguments`  —— argparse 集成,只注册 3 个开关
+- :func:`add_message_compression_arguments`  —— argparse 集成
 - :func:`build_message_compression_config_from_args`
 """
 from AgentDropout.graph.message_compression.config import (

@@ -1,27 +1,36 @@
 """消息压缩框架的配置层.
 
-3 个开关 ↔ 3 个独立模块(每个开关对应一个模块):
+消息压缩框架配置层:
   - ``role_aware_compression``  -> :mod:`.role_aware_compression`
   - ``node_aware_aggregation``  -> :mod:`.node_aware_aggregation`
   - ``temporal_api_summary``    -> :mod:`.temporal_api_summary`
+  - ``selective_context``       -> :mod:`AgentDropout.context.selective_context`
+  - ``llmlingua2_compression``  -> :mod:`AgentDropout.utils.llmlingua2_compressor`
 
 设计要点:
-  - 仅 3 个 bool 字段, 默认全 False, 与基线行为一致
-  - argparse 只注册这 3 个开关, 不再含历史 ``temporal_summary_mode`` /
-    ``temporal_full_history_edges`` 等已下沉的开关
+  - 所有压缩算法默认关闭, 与基线行为一致
+  - argparse 集中注册现有压缩模块与新移植的两个算法开关
   - 与 ``compress_messages`` 的全局单例风格保持一致
 """
 from dataclasses import dataclass, field
 from typing import Dict, Any
 
+from AgentDropout.utils.llmlingua2_compressor import DEFAULT_LLMLINGUA2_MODEL
+
 
 @dataclass
 class MessageCompressionConfig:
-    """消息压缩框架的运行期配置 (3 个独立开关)."""
+    """消息压缩框架的运行期配置."""
 
     role_aware_compression: bool = False
     node_aware_aggregation: bool = False
     temporal_api_summary: bool = False
+    selective_context: bool = False
+    llmlingua2_compression: bool = False
+    llmlingua2_rate: float = 0.5
+    llmlingua2_model_name: str = DEFAULT_LLMLINGUA2_MODEL
+    llmlingua2_min_tokens: int = 20
+    llmlingua2_compress_code: bool = False
 
     # 内部开关, 不在 argparse 上注册, 也不写入 ``extra``. 仅供单元测试使用:
     # 当 ``True`` 时, 模块 1/2 在 ``message_type != "structured"`` 时仍抛
@@ -33,7 +42,8 @@ class MessageCompressionConfig:
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
-        # 三个开关都是 bool, 无需范围校验; 留作扩展钩子
+        if not 0 < float(self.llmlingua2_rate) <= 1:
+            raise ValueError("llmlingua2_rate must be in (0, 1].")
         return None
 
 
@@ -55,7 +65,7 @@ def parse_bool_arg(v: str) -> bool:
 
 
 def add_message_compression_arguments(parser) -> None:
-    """在 runner 的 argparse 上注册 3 个开关, 每个对应一个独立模块."""
+    """在 runner 的 argparse 上注册消息压缩相关开关."""
     parser.add_argument(
         "--role_aware_compression", type=parse_bool_arg, default=False,
         help="启用 role_aware_compression 模块: 按 self_role 截断前驱 reasoning 字段",
@@ -68,13 +78,60 @@ def add_message_compression_arguments(parser) -> None:
         "--temporal_api_summary", type=parse_bool_arg, default=False,
         help="启用 temporal_api_summary 模块: Graph.arun 每轮末尾按 answer 一致性聚合多智能体输出",
     )
-
+    parser.add_argument(
+        "--selective_context",
+        nargs="?",
+        const=True,
+        type=parse_bool_arg,
+        default=False,
+        help="启用 Selective Context: 按 self-information 删除低信息量消息片段",
+    )
+    parser.add_argument(
+        "--llmlingua2_compression",
+        nargs="?",
+        const=True,
+        type=parse_bool_arg,
+        default=False,
+        help="启用 LLMLingua-2 压缩智能体间消息",
+    )
+    parser.add_argument(
+        "--llmlingua2_rate",
+        type=float,
+        default=0.5,
+        help="LLMLingua-2 消息压缩保留率",
+    )
+    parser.add_argument(
+        "--llmlingua2_model_name",
+        type=str,
+        default=DEFAULT_LLMLINGUA2_MODEL,
+        help="LLMLingua-2 使用的 HuggingFace 模型",
+    )
+    parser.add_argument(
+        "--llmlingua2_min_tokens",
+        type=int,
+        default=20,
+        help="短于该近似 token 数的消息不做 LLMLingua-2 压缩",
+    )
+    parser.add_argument(
+        "--llmlingua2_compress_code",
+        nargs="?",
+        const=True,
+        type=parse_bool_arg,
+        default=False,
+        help="允许 LLMLingua-2 压缩 HumanEval 代码 payload",
+    )
 
 def build_message_compression_config_from_args(args) -> MessageCompressionConfig:
     cfg = MessageCompressionConfig(
         role_aware_compression=args.role_aware_compression,
         node_aware_aggregation=args.node_aware_aggregation,
         temporal_api_summary=args.temporal_api_summary,
+        selective_context=getattr(args, "selective_context", False),
+        llmlingua2_compression=getattr(args, "llmlingua2_compression", False),
+        llmlingua2_rate=getattr(args, "llmlingua2_rate", 0.5),
+        llmlingua2_model_name=getattr(args, "llmlingua2_model_name", DEFAULT_LLMLINGUA2_MODEL),
+        llmlingua2_min_tokens=getattr(args, "llmlingua2_min_tokens", 20),
+        llmlingua2_compress_code=getattr(args, "llmlingua2_compress_code", False),
     )
     cfg.validate()
     return cfg
