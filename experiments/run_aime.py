@@ -73,6 +73,54 @@ def configure_taylor_prune(graph: Graph, args, dataset_name: str) -> None:
     )
 
 
+def freeze_graph_for_inference(graph: Graph) -> Dict[str, Any]:
+    """将训练后的概率通信图一次性采样为固定推理图。"""
+
+    def _freeze_pair(logits: torch.Tensor, masks: torch.Tensor, name: str) -> Dict[str, Any]:
+        with torch.no_grad():
+            probs = torch.sigmoid(logits.detach())
+            fixed = torch.zeros_like(masks)
+            active = masks.detach() > 0
+            n = min(probs.numel(), masks.numel())
+            if n == 0:
+                return {"name": name, "active_before": 0, "kept": 0}
+
+            active_slice = active[:n]
+            sampled = (torch.rand_like(probs[:n]) < probs[:n]) & active_slice
+            if bool(active_slice.any()) and not bool(sampled.any()):
+                active_probs = probs[:n].masked_fill(~active_slice, -1.0)
+                sampled[int(torch.argmax(active_probs).item())] = True
+
+            fixed[:n] = sampled.to(dtype=masks.dtype)
+            masks.copy_(fixed)
+            logits.requires_grad_(False)
+            return {
+                "name": name,
+                "active_before": int(active_slice.sum().item()),
+                "kept": int(sampled.sum().item()),
+            }
+
+    stats: Dict[str, Any] = {"spatial": [], "temporal": []}
+
+    if graph.optimized_spatial:
+        if isinstance(graph.spatial_logits, torch.nn.ParameterList):
+            for idx, (logits, masks) in enumerate(zip(graph.spatial_logits, graph.spatial_masks)):
+                stats["spatial"].append(_freeze_pair(logits, masks, f"spatial-{idx}"))
+        else:
+            stats["spatial"].append(_freeze_pair(graph.spatial_logits, graph.spatial_masks, "spatial"))
+
+    if graph.optimized_temporal:
+        if isinstance(graph.temporal_logits, torch.nn.ParameterList):
+            for idx, (logits, masks) in enumerate(zip(graph.temporal_logits, graph.temporal_masks)):
+                stats["temporal"].append(_freeze_pair(logits, masks, f"temporal-{idx}"))
+        else:
+            stats["temporal"].append(_freeze_pair(graph.temporal_logits, graph.temporal_masks, "temporal"))
+
+    graph.optimized_spatial = False
+    graph.optimized_temporal = False
+    return stats
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run AIME with BenchmarkAgent.")
     parser.add_argument("--split", type=str, default=None)
@@ -964,6 +1012,8 @@ async def main():
         )
         print(f"AIME AgentPrune training dataset: {args.train_dataset_path}")
         await train_agentprune(graph, train_dataset, args, kwargs)
+        freeze_stats = freeze_graph_for_inference(graph)
+        print(f"Frozen graph stats: {json.dumps(freeze_stats, ensure_ascii=False)}")
         print("Final spatial logits:", graph.spatial_logits)
         print("Final temporal logits:", graph.temporal_logits)
         print("Final spatial masks:", graph.spatial_masks)

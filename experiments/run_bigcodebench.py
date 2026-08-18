@@ -22,6 +22,7 @@ from experiments.run_aime import (
     build_graph_with_kwargs,
     configure_taylor_prune,
     evaluate,
+    freeze_graph_for_inference,
     train_agentprune,
 )
 
@@ -118,6 +119,8 @@ async def main():
         train_source = args.train_dataset_path or f"{train_dataset.data_dir}/{train_dataset.spec.data_subdir}/{train_dataset.split}.jsonl"
         print(f"BigCodeBench AgentPrune training dataset: {train_source}")
         await train_agentprune(graph, train_dataset, args, kwargs)
+        freeze_stats = freeze_graph_for_inference(graph)
+        print(f"Frozen graph stats: {freeze_stats}")
     summary = await evaluate(graph, dataset, args)
     print(f"BigCodeBench Score: {summary}")
 

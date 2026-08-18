@@ -28,6 +28,10 @@
 # 论文打包文件
 柯逸宸毕业学位论文.zip
 
+# 本地调试/临时文件
+df_contents.txt
+key4_*.txt
+
 .env
 experiments.md
 agent5_token.md

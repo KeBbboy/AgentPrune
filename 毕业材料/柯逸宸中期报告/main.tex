@@ -369,7 +369,7 @@
   \label{fig:graph_pruning}
 \end{figure}
 
-    \par\indent \textbf{硬剔除与软剪枝：}AgentPrune\cite{ref43}将LLM多智能体系统表示为空间-时间通信图：同一轮智能体之间的信息交换为“空间边”，跨轮历史传递为“时间边”。它为这些边学习可剪枝的图掩码，并通过系统效用评估器判断不同边对任务结果的贡献。由于外部LLM调用和任务评估通常不可微，AgentPrune使用策略梯度近似优化掩码参数。最终，它执行一次性硬剪枝，移除低贡献边，从而同时减少同轮通信和跨轮历史上下文传递。
+    \par\indent \textbf{硬剔除与软剪枝：}AgentPrune\cite{ref43}将LLM多智能体系统表示为空间-时间通信图：同一轮智能体之间的信息交换为“空间边”，跨轮历史传递为“时间边”。它为这些边学习可剪枝的图掩码，并通过系统效用评估器判断不同边对任务结果的贡献。由于外部LLM调用和任务评估通常不可微，AgentPrune使用策略梯度对掩码参数进行优化。最终，它执行一次性硬剪枝，移除低贡献边，从而同时减少同轮通信和跨轮历史上下文传递。
     AgentDropout\cite{ref44}在边剪枝基础上进一步引入节点丢弃。它首先根据智能体贡献度或加权度识别低价值节点，执行Node Dropout，直接移除部分智能体；随后再通过Edge Dropout剪除剩余智能体之间的低贡献通信边。由于删除一个智能体会同时减少该智能体的输入prompt、输出completion以及后续通信边，因此AgentDropout的成本收益通常比单纯剪边更直接。
     SafeSieve\cite{ref45}采用渐进式软剪枝策略。它首先利用LLM语义评估和角色互补性为通信边初始化重要性分数，再结合历史任务表现不断修正边权。与简单top-k删除不同，SafeSieve使用聚类机制保持核心功能簇的连通性，避免剪枝破坏系统协作结构。因此，它更强调“逐步削弱和删除冗余边”，在保持任务性能和鲁棒性的同时降低token与部署成本。
     AGP（Adaptive Graph Pruning）\cite{ref46}同时进行节点级硬剪枝和边级软剪枝。其训练过程通常分为两步：先采样不同规模的子图，收集高性能通信结构作为监督信号；再训练GNN根据任务表示和智能体嵌入输出节点mask与边权。硬剪枝决定哪些智能体被启用，软剪枝决定启用智能体之间的信息流强度。这样，AGP能针对不同查询生成不同规模的稀疏拓扑，而不是对所有任务使用同一套固定通信结构。
@@ -688,58 +688,37 @@ MiniMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/figures/summary/fig2_model_average_cost_bars.png}}
-    \caption{六个数据集在不同模型下的平均推理成本对比}
+    \caption{六个数据集在不同模型下的平均推理成本对比（单位：元）}
     \label{fig:summary_model_cost}
 \end{figure}
 
-图\ref{fig:summary_model_cost}展示了三个主要模型在不同方法下的跨数据集平均推理成本。Direct方法由于不引入智能体间通信，具有最低推理成本；Fullconnect方法虽然提供了最充分的信息交互，但也带来了最高的通信开销。相比之下，本文方法通过消息粒度的信息筛选减少冗余通信，只保留对最终推理有帮助的关键信息，因此在多数数据集上能够显著降低推理成本。
+图\ref{fig:summary_model_cost}展示了三个主要模型在不同方法下的跨数据集平均推理成本。Direct方法不包含智能体间通信，其成本更多反映单智能体执行的低消耗下界，不能直接说明消息压缩对多智能体通信链路的优化效果。因此，后续表格不再将Direct作为成本优化对照，而是以Fullconnect和AgentPrune作为多智能体通信基线，重点观察本文方法在保留协作结构时能否降低冗余消息带来的额外开销。
 
-相比Fullconnect，本文方法在MMLU上的平均成本降低约38.83\%，在GSM8K上降低约31.10\%，在SVAMP上降低约36.19\%，在MultiArith上降低约34.31\%，在HumanEval上降低约21.65\%。AQuA上本文方法相比Fullconnect仍降低约24.23\%，但相对Agentprune的成本优势不明显，说明在部分多项选择任务中，消息筛选策略仍有进一步优化空间。
+相比Fullconnect，本文方法在六个数据集上均降低了三模型平均推理成本，其中MMLU降低约38.83\%，GSM8K降低约31.70\%，SVAMP降低约36.21\%，MultiArith降低约34.34\%，HumanEval降低约21.63\%。相比AgentPrune，本文方法在MMLU、GSM8K、MultiArith、SVAMP和HumanEval上均取得成本下降；AQuA上相对AgentPrune成本有所增加，但仍低于Fullconnect，说明多项选择推理任务中的消息筛选强度仍需进一步自适应调整。
 
-\begin{figure}[H]
+\begin{table}[H]
     \centering
-    \makebox[\textwidth][c]{%
-        \subcaptionbox{MMLU成本
-        \label{fig:mmlu_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/figures/mmlu/fig1_cost_bars.png}}%
-        }%
-        \hspace{0.02\textwidth}%
-        \subcaptionbox{GSM8K成本
-        \label{fig:gsm8k_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/figures/gsm8k/fig1_cost_bars.png}}%
-        }%
+    \caption{本文方法相对多智能体通信基线的推理成本降低情况}
+    \label{tab:dataset_cost_comparison}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrrrr}
+        \toprule
+        数据集 & Fullconnect成本 & AgentPrune成本 & 本文方法成本 & 相对Fullconnect变化 & 相对Fullconnect降幅 & 相对AgentPrune变化 & 相对AgentPrune降幅 \\
+        \midrule
+        MMLU & 7.70 & 6.27 & \textbf{4.71} & \textbf{-2.99} & \textbf{38.83\%} & \textbf{-1.56} & \textbf{24.88\%} \\
+        GSM8K & 50.71 & 42.45 & \textbf{34.63} & \textbf{-16.08} & \textbf{31.70\%} & \textbf{-7.82} & \textbf{18.42\%} \\
+        AQuA & 21.79 & 13.79 & \textbf{16.51} & \textbf{-5.28} & \textbf{24.23\%} & +2.72 & -19.72\% \\
+        MultiArith & 5.30 & 4.32 & \textbf{3.48} & \textbf{-1.82} & \textbf{34.34\%} & \textbf{-0.84} & \textbf{19.44\%} \\
+        SVAMP & 10.88 & 9.43 & \textbf{6.94} & \textbf{-3.94} & \textbf{36.21\%} & \textbf{-2.49} & \textbf{26.41\%} \\
+        HumanEval & 16.32 & 15.88 & \textbf{12.79} & \textbf{-3.53} & \textbf{21.63\%} & \textbf{-3.09} & \textbf{19.46\%} \\
+        \midrule
+        \textbf{平均} & \textbf{18.78} & \textbf{15.36} & \textbf{13.18} & \textbf{-5.61} & \textbf{29.85\%} & \textbf{-2.18} & \textbf{14.20\%} \\
+        \bottomrule
+    \end{tabular}
     }
-    \vspace{0.5em}
+\end{table}
 
-    \makebox[\textwidth][c]{%
-        \subcaptionbox{AQuA成本
-        \label{fig:aqua_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/figures/aqua/fig1_cost_bars.png}}%
-        }%
-        \hspace{0.02\textwidth}%
-        \subcaptionbox{MultiArith成本
-        \label{fig:multiarith_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/figures/multiarith/fig1_cost_bars.png}}%
-        }%
-    }
-    \vspace{0.5em}
-
-    \makebox[\textwidth][c]{%
-        \subcaptionbox{SVAMP成本
-        \label{fig:svamp_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/figures/svamp/fig1_cost_bars.png}}%
-        }%
-        \hspace{0.02\textwidth}%
-        \subcaptionbox{HumanEval成本
-        \label{fig:humaneval_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/figures/humaneval/fig1_cost_bars.png}}%
-        }%
-    }
-    \caption{各数据集上不同模型的推理成本比较}
-    \label{fig:dataset_cost_panels}
-\end{figure}
-
-图\ref{fig:dataset_cost_panels}进一步展示了各数据集上的成本差异。Direct方法消耗最低，但缺少多智能体之间的信息交互；Fullconnect方法在各数据集上普遍带来更高成本，反映出全连接通信结构的token显著增加的问题；Agentprune能够通过剪枝降低部分开销，但不同任务上的成本和准确率表现仍存在波动。相比之下，本文方法通常能够在保留任务准确率的同时降低Fullconnect带来的额外成本，体现出更好的综合性价比。
+表\ref{tab:dataset_cost_comparison}中，成本均为三个主分析模型的平均推理成本；成本变化定义为本文方法成本减去对应基线成本，负值表示成本降低；成本降幅为正表示成本下降，负值表示成本增加。可以看到，本文方法相对Fullconnect的平均成本由18.78降至13.18，平均降幅为29.85\%；相对AgentPrune的平均成本由15.36降至13.18，平均降幅为14.20\%。这说明消息级压缩的主要价值并不是与无通信Direct方法比较绝对低消耗，而是在已有多智能体通信结构内部压缩语义冗余，从而降低完全通信或结构剪枝基线中的额外Token开销。
 
 \subsubsection{小模型超过大模型的可能性分析}
 

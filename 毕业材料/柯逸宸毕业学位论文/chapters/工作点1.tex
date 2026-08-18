@@ -7,7 +7,7 @@
 
 \section{引言}
 
-上一章从相关工作角度梳理了多智能体系统、语义冗余问题和通信冗余问题。可以看到，现有方法虽然能够在一定程度上降低通信开销，但在多智能体协作场景中仍面临三类细粒度语义冗余问题：发送方完整推理与接收方角色需求不匹配，多个前驱节点传递相似或重复观点，以及多轮历史记忆持续累积导致上下文膨胀。针对这些问题，本章提出面向语义冗余的消息压缩框架，从角色、节点和时序三个维度对通信内容进行压缩，在不改变底层大语言模型能力的前提下提升通信内容的信息密度。
+上一章从相关工作角度梳理了多智能体系统、语义冗余问题和通信边冗余问题。可以看到，现有方法虽然能够在一定程度上降低通信开销，但在多智能体协作场景中仍面临三类细粒度语义冗余问题：发送方完整推理与接收方角色需求不匹配，多个前驱节点传递相似或重复观点，以及多轮历史记忆持续累积导致上下文膨胀。针对这些问题，本章提出面向语义冗余的消息压缩框架，从角色、节点和时序三个维度对通信内容进行压缩，在不改变底层大语言模型能力的前提下提升通信内容的信息密度。
 
 \section{消息压缩框架}
 
@@ -202,7 +202,7 @@ MiniMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/summary/fig1_model_average_accuracy_bars.png}}
-    \caption{六个数据集在不同模型下的平均准确率对比（纵轴为0--100\%）}
+    \caption{六个数据集在不同模型下的平均准确率对比}
     \label{fig:summary_model_accuracy}
 \end{figure}
 
@@ -252,7 +252,7 @@ MiniMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
             \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/humaneval/fig2_accuracy_bars.png}}%
         }%
     }
-    \caption{各数据集上不同模型与方法的准确率对比（纵轴为0--100\%）}
+    \caption{各数据集上不同模型与方法的准确率对比}
     \label{fig:dataset_accuracy_panels}
 \end{figure}
 
@@ -274,58 +274,54 @@ MiniMax-M3：引入该闭源商业模型旨在拓展实验基座的架构多样�
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.82\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/summary/fig2_model_average_cost_bars.png}}
-    \caption{六个数据集在不同模型下的平均推理成本对比（单位：元）}
+    \caption{六个数据集在不同模型下的平均推理成本对比}
     \label{fig:summary_model_cost}
 \end{figure}
 
-图\ref{fig:summary_model_cost}展示了三个主要模型在不同方法下的跨数据集平均推理成本。Direct方法由于不引入智能体间通信，具有最低推理成本；Fullconnect方法虽然提供了最充分的信息交互，但也带来了最高的通信开销。相比之下，本文方法通过消息粒度的信息筛选减少冗余通信，只保留对最终推理有帮助的关键信息，因此在多数数据集上能够有效降低推理成本。
+图\ref{fig:summary_model_cost}展示了三个主要模型在不同方法下的跨数据集平均推理成本。Direct方法不包含智能体间通信，其成本更多反映单智能体执行的低消耗下界，不能直接说明消息压缩对多智能体通信链路的优化效果。因此，后续表格不再将Direct作为成本优化对照，而是以Fullconnect和AgentPrune作为多智能体通信基线，重点观察本文方法在保留协作结构时能否降低冗余消息带来的额外开销。
 
-相比Fullconnect，本文方法在MMLU上的平均成本降低约38.83\%，在GSM8K上降低约31.70\%，在SVAMP上降低约36.19\%，在MultiArith上降低约34.31\%，在HumanEval上降低约21.65\%。AQuA上本文方法相比Fullconnect仍降低约24.23\%，但相对AgentPrune的成本优势不明显，说明在部分多项选择任务中，消息筛选策略仍有进一步优化空间。
+相比Fullconnect，本文方法在六个数据集上均降低了三模型平均推理成本，其中MMLU降低约38.83\%，GSM8K降低约31.70\%，SVAMP降低约36.21\%，MultiArith降低约34.34\%，HumanEval降低约21.63\%。相比AgentPrune，本文方法在MMLU、GSM8K、MultiArith、SVAMP和HumanEval上均取得成本下降；AQuA上相对AgentPrune成本有所增加，但仍低于Fullconnect，说明多项选择推理任务中的消息筛选强度仍需进一步自适应调整。
+
+\begin{table}[H]
+    \centering
+    \caption{本文方法相对多智能体通信基线的推理成本降低情况}
+    \label{tab:dataset_cost_comparison}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lrrrrrrr}
+        \toprule
+        数据集 & Fullconnect成本 & AgentPrune成本 & 本文方法成本 & 相对Fullconnect变化 & 相对Fullconnect降幅 & 相对AgentPrune变化 & 相对AgentPrune降幅 \\
+        \midrule
+        MMLU & 7.70 & 6.27 & \textbf{4.71} & \textbf{-2.99} & \textbf{38.83\%} & \textbf{-1.56} & \textbf{24.88\%} \\
+        GSM8K & 50.71 & 42.45 & \textbf{34.63} & \textbf{-16.08} & \textbf{31.70\%} & \textbf{-7.82} & \textbf{18.42\%} \\
+        AQuA & 21.79 & 13.79 & \textbf{16.51} & \textbf{-5.28} & \textbf{24.23\%} & +2.72 & -19.72\% \\
+        MultiArith & 5.30 & 4.32 & \textbf{3.48} & \textbf{-1.82} & \textbf{34.34\%} & \textbf{-0.84} & \textbf{19.44\%} \\
+        SVAMP & 10.88 & 9.43 & \textbf{6.94} & \textbf{-3.94} & \textbf{36.21\%} & \textbf{-2.49} & \textbf{26.41\%} \\
+        HumanEval & 16.32 & 15.88 & \textbf{12.79} & \textbf{-3.53} & \textbf{21.63\%} & \textbf{-3.09} & \textbf{19.46\%} \\
+        \midrule
+        \textbf{平均} & \textbf{18.78} & \textbf{15.36} & \textbf{13.18} & \textbf{-5.61} & \textbf{29.85\%} & \textbf{-2.18} & \textbf{14.20\%} \\
+        \bottomrule
+    \end{tabular}
+    }
+\end{table}
+
+表\ref{tab:dataset_cost_comparison}中，成本均为三个主分析模型的平均推理成本；成本变化定义为本文方法成本减去对应基线成本，负值表示成本降低；成本降幅为正表示成本下降，负值表示成本增加。可以看到，本文方法相对Fullconnect的平均成本由18.78降至13.18，平均降幅为29.85\%；相对AgentPrune的平均成本由15.36降至13.18，平均降幅为14.20\%。这说明消息级压缩的主要价值并不是与无通信Direct方法比较绝对低消耗，而是在已有多智能体通信结构内部压缩语义冗余，从而降低完全通信或结构剪枝基线中的额外Token开销。
+
+\subsection{小模型超过大模型的可能性分析}
+
+除比较不同方法的整体准确率和推理成本外，本文进一步关注一个实际问题：在引入消息压缩后，较小规模模型是否可能接近甚至超过更大规模模型。该问题对于多智能体系统部署具有现实意义，因为小模型通常具有更低的调用成本；如果通信优化能够弥补部分模型能力差距，则系统可以在成本受限场景中获得更高的性价比。
 
 \begin{figure}[H]
     \centering
-    \makebox[\textwidth][c]{%
-        \subcaptionbox{MMLU成本
-        \label{fig:mmlu_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/mmlu/fig1_cost_bars.png}}%
-        }%
-        \hspace{0.02\textwidth}%
-        \subcaptionbox{GSM8K成本
-        \label{fig:gsm8k_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/gsm8k/fig1_cost_bars.png}}%
-        }%
-    }
-    \vspace{0.5em}
-
-    \makebox[\textwidth][c]{%
-        \subcaptionbox{AQuA成本
-        \label{fig:aqua_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/aqua/fig1_cost_bars.png}}%
-        }%
-        \hspace{0.02\textwidth}%
-        \subcaptionbox{MultiArith成本
-        \label{fig:multiarith_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/multiarith/fig1_cost_bars.png}}%
-        }%
-    }
-    \vspace{0.5em}
-
-    \makebox[\textwidth][c]{%
-        \subcaptionbox{SVAMP成本
-        \label{fig:svamp_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/svamp/fig1_cost_bars.png}}%
-        }%
-        \hspace{0.02\textwidth}%
-        \subcaptionbox{HumanEval成本
-        \label{fig:humaneval_cost_panel}}[0.46\textwidth]{%
-            \includegraphics[width=\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/humaneval/fig1_cost_bars.png}}%
-        }%
-    }
-    \caption{各数据集上不同模型的推理成本比较（单位：元）}
-    \label{fig:dataset_cost_panels}
+    \includegraphics[width=0.90\linewidth]{\detokenize{image/第三章/语义冗余问题消息压缩实验结果图/mmlu/fig4_small_vs_large.png}}
+    \caption{MMLU上小模型相对大模型最佳基线的准确率差距}
+    \label{fig:mmlu_small_vs_large}
 \end{figure}
 
-图\ref{fig:dataset_cost_panels}进一步展示了各数据集上的成本差异。Direct方法消耗最低，但缺少多智能体之间的信息交互；Fullconnect方法在各数据集上普遍带来更高成本，反映出全连接通信结构的token显著增加的问题；AgentPrune能够通过剪枝降低部分开销，但不同任务上的成本和准确率表现仍存在波动。相比之下，本文方法通常能够在保留任务准确率的同时降低Fullconnect带来的额外成本，体现出更好的综合性价比。
+图\ref{fig:mmlu_small_vs_large}以MMLU为例，展示小模型采用本文方法后相对大模型最佳基线的准确率差值，其中负值表示小模型仍低于对应的大模型基线。结果显示，小模型+本文方法尚未在该数据集上超过大模型最佳基线，但在Qwen3系列、Qwen2.5系列和跨系列对比中，差距分别为3.90、1.90和1.30个百分点。也就是说，消息压缩不能直接消除模型规模带来的基础能力差距，但可以在一定程度上降低小模型与大模型之间的性能间隔。
+
+从机制上看，小模型更容易受到冗余上下文、重复推理和无关消息的干扰，因此消息压缩带来的收益往往更明显。当任务主要依赖可提取的关键信息、标准化推理步骤或多智能体之间的互补观点时，小模型有机会通过更高质量的通信上下文接近大模型表现，甚至在部分强噪声或高成本通信场景中超过大模型的低效协作基线。相反，对于AQuA、HumanEval等更依赖复杂选项辨析或可执行验证的任务，仅压缩消息仍不足以稳定弥补模型能力差距。
+
+因此，本章实验更支持：小模型通过通信优化具备接近大模型的潜力，但尚不能认为可以普遍超过大模型。后续若要进一步验证“小模型超过大模型”的可能性，需要在更多数据集上加入小模型+压缩方法与大模型Direct、Fullconnect、AgentPrune等基线的成对比较，并结合成本指标判断其是否形成真正的准确率--成本优势。
 
 \subsection{结果分析}
 

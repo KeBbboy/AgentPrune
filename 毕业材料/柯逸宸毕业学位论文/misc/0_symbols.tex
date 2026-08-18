@@ -4,9 +4,66 @@
 %%
 
 \begin{symbols}
-  \item[BIT] 北京理工大学的英文缩写
-  \item[\LaTeX] 一个很棒的排版系统
-  \item[\LaTeXe] 一个很棒的排版系统的最新稳定版
-  \item[ctex] 成套的中文\LaTeX{}解决方案，由一帮天才们开发
-  \item[$ e^{\pi{}i}+1=0$] 一个集自然界五大常数一体的炫酷方程
+  \item[LLM] 大语言模型（Large Language Model）
+  \item[MAS] 多智能体系统（Multi-Agent System）
+  \item[Agent] 智能体，通常以大语言模型为核心推理器，并结合规划、记忆或工具调用机制完成任务
+  \item[API] 应用程序接口（Application Programming Interface）
+  \item[Token] 大语言模型输入或输出中的词元，是本文衡量上下文长度与调用成本的基本单位
+  \item[CoT] 思维链（Chain of Thought）
+  \item[ToT] 思维树（Tree of Thoughts）
+  \item[GoT] 思维图（Graph of Thoughts）
+  \item[DAG] 有向无环图（Directed Acyclic Graph）
+  \item[Direct] 单智能体直接回答基线方法
+  \item[FullConnected] 完全连接多智能体通信基线方法
+  \item[AgentPrune] 基于可学习通信边和图剪枝的多智能体通信优化基线方法
+  \item[$G=(V,E)$] 多智能体系统的通信图，其中$V$表示智能体节点集合，$E$表示通信边集合
+  \item[$G^\ast$] 训练结束后采样得到并在推理阶段固定使用的通信图
+  \item[$V$] 通信图中的智能体节点集合
+  \item[$E$] 通信图中的通信边集合
+  \item[$\mathcal{E}^\ast$] 固定通信图$G^\ast$中的通信边集合
+  \item[$\mathcal{A}$] 多智能体系统中的智能体集合
+  \item[$n$] 多智能体系统中的智能体数量
+  \item[$A_i$] 第$i$个智能体
+  \item[$i,j,u,v$] 智能体或通信节点索引
+  \item[$t$] 多轮协作推理中的轮次索引
+  \item[$m_{u\to v}^{(t)}$] 第$t$轮中发送方智能体$u$传递给接收方智能体$v$的消息
+  \item[$r_i^{(t)}$] 第$i$个智能体在第$t$轮生成的推理文本
+  \item[$\hat{y}_i^{(t)}$] 第$i$个智能体在第$t$轮给出的候选答案
+  \item[$q_i^{(t)}$] 第$i$个智能体在第$t$轮产生的工具调用相关信息
+  \item[$s$] 角色感知压缩中的候选推理句子
+  \item[$d_v$] 接收方智能体$v$的角色描述
+  \item[$\phi(\cdot)$] 文本编码函数，用于将句子或角色描述映射为向量表示
+  \item[$\operatorname{sim}(\cdot)$] 语义相似度函数
+  \item[$\cos(\cdot)$] 余弦相似度函数
+  \item[$o_i^{(t)}$] 第$i$个智能体在第$t$轮的结构化输出，包含推理文本、候选答案和工具调用信息
+  \item[$c_i^{(t)}$] 第$i$个智能体在第$t$轮的发送方成本
+  \item[$O_i^{(t)}$] 第一类边级成本信号，表示第$i$个智能体在第$t$轮生成的模型输出Token数
+  \item[$K_i^{(t)}$] 第二类边级成本信号，表示第$i$个智能体在第$t$轮的工具调用次数
+  \item[$Z_i^{(t)}$] 第三类边级成本信号，表示第$i$个智能体在第$t$轮产生的工具观察结果Token数
+  \item[$N_o,N_k,N_z$] 输出Token数、工具调用次数和工具观察Token数的归一化系数
+  \item[$\lambda_o,\lambda_k,\lambda_z$] 输出Token数、工具调用次数和工具观察Token数对应的成本权重
+  \item[$e=(i,j)$] 由发送方智能体$i$指向接收方智能体$j$的一条潜在通信边
+  \item[$\mathcal{C}_e^{(t)}$] 通信边$e$在第$t$轮的边级成本
+  \item[$z_e^{(t)}$] 通信边$e$在第$t$轮的采样状态，取$1$表示该边被激活，取$0$表示该边不参与通信
+  \item[$z_e^\ast$] 训练结束后生成固定通信图时通信边$e$的最终采样状态
+  \item[$\tau(e,t)$] 通信边$e$在第$t$轮进行成本归因时对应的发送方轮次
+  \item[$\theta_e$] 通信边$e$对应的可学习logit参数
+  \item[$p_e$] 通信边$e$的保留概率
+  \item[$\sigma(\cdot)$] Sigmoid函数
+  \item[$\tau_p$] 边概率建模中的采样温度系数
+  \item[$\operatorname{Bernoulli}(\cdot)$] 伯努利分布
+  \item[$x$] 输入任务样本
+  \item[$y$] 输入任务样本对应的标准答案
+  \item[$\hat{y}$] 多智能体系统生成的最终答案
+  \item[$S(\hat{y},y)$] 衡量生成答案与标准答案一致性的任务评分函数
+  \item[$R_e^{(t)}$] 通信边$e$在第$t$轮的边级效用
+  \item[$\mathcal{E}_{\mathrm{sample}}$] 一次任务执行中被记录的边采样事件集合
+  \item[$\mathcal{E}_{\mathrm{active}}$] 当前仍处于活跃状态、可参与剪枝评估的通信边集合
+  \item[$\mathcal{L}_{\mathrm{pg}}$] 用于优化通信边采样概率的策略梯度损失
+  \item[$\Delta\mathcal{L}_{\mathrm{pg},e}$] 移除通信边$e$后边策略损失变化的一阶估计
+  \item[$\Delta\theta_e$] 对通信边参数$\theta_e$施加的参数扰动
+  \item[$I_e$] 基于Taylor一阶展开计算得到的通信边重要性
+  \item[$\rho$] 每次Taylor重要性剪枝中低重要性边的剪除比例
+  \item[$\mathcal{P}$] Taylor重要性剪枝得到的待剪枝通信边集合
+  \item[$\mathcal{S}$] 从活跃通信边集合中选取的候选剪枝子集
 \end{symbols}

@@ -14,104 +14,89 @@
 
 在这类场景下，通信边的价值具有更强的异质性。一条边如果连接的是高质量求解智能体和最终验证智能体，可能显著提升任务正确率；但如果该边只是传播冗长的工具观察、重复的中间代码或无关搜索结果，就会增加下游上下文长度，并进一步放大系统开销。因此，面向工具调用任务的通信优化需要同时回答两个问题：第一，哪些智能体之间的通信确实有助于最终任务正确性；第二，哪些通信边会携带高成本工具信息，应当在图结构层面被抑制或剪除。
 
-现有多智能体通信图优化方法通常将边的重要性与任务效用直接关联\cite{ref43,ref48}，但较少显式区分普通推理输出和工具调用输出。本文第二个工作点针对这一不足，提出一种面向通信边冗余的图剪枝算法。该方法将智能体通信边建模为可学习概率，在训练过程中结合任务正确性、模型输出Token、工具调用次数和工具返回Token构造边级优化目标；进一步引入Taylor一阶重要性评估\cite{ref74,ref102,ref104}，对低贡献通信边进行动态剪枝，从而在多轮推理中获得更稀疏、成本更可控的通信结构。
+现有多智能体通信图优化方法通常将边的重要性与任务效用直接关联\cite{ref43,ref48}，但较少显式区分普通推理输出和工具调用输出。针对这一不足，本章提出一种面向通信边冗余的图剪枝算法。该方法将智能体通信边建模为可学习概率，在训练过程中以任务正确性为收益项，并引入模型输出Token、工具调用次数和工具观察Token三类边级成本信号构造优化目标；进一步引入Taylor一阶重要性评估\cite{ref74,ref102,ref104}，对低贡献通信边进行动态剪枝，从而在多轮推理中获得更稀疏、成本更可控的通信结构。
+
 
 \section{图剪枝算法}
 
-\subsection{工具调用场景建模}
+\subsection{问题定义与工具成本建模}
 
-考虑一个由$n$个智能体组成的多智能体系统。每个智能体既可以直接基于大语言模型生成推理结果，也可以根据任务需要调用外部工具。系统通信图包含两类边：同一轮内部的空间边和跨轮历史传递的时间边。空间边表示同一轮中智能体输出向后继智能体传递，时间边表示上一轮智能体状态或记忆向下一轮传递。
+设多智能体系统包含$n$个智能体，记为$\mathcal{A}=\{A_i\}_{i=1}^{n}$。系统在多轮协作过程中通过通信图传递中间推理、候选答案、工具观察和历史状态。本文将通信图中的候选边划分为两类：空间边表示同一推理轮次内由发送方智能体到接收方智能体的信息传递，时间边表示相邻推理轮次之间历史状态或记忆信息的延续。与不使用外部工具的多智能体推理不同，工具调用型任务中的消息不仅包含自然语言推理，还可能携带搜索结果、代码执行输出、文本检查结果等外部观察。因此，通信边的开销不仅取决于边数量和消息长度，还与发送方在相应轮次产生的工具调用行为密切相关。
 
-设第$t$轮中智能体$i$的输出为
+设第$t$轮中智能体$A_i$的输出为
 \begin{equation}
-  o_i^{(t)} = (r_i^{(t)}, a_i^{(t)}, q_i^{(t)}),
+  o_i^{(t)} = \left(r_i^{(t)}, \hat{y}_i^{(t)}, q_i^{(t)}\right),
   \label{eq:tool-agent-output}
 \end{equation}
-其中$r_i^{(t)}$表示推理文本，$a_i^{(t)}$表示候选答案，$q_i^{(t)}$表示工具调用相关信息。工具调用信息进一步包含工具名称、调用参数、返回观察和调用轮次等元数据。为衡量工具调用带来的通信负担，本文统计三类开销：
+其中$r_i^{(t)}$表示推理文本，$\hat{y}_i^{(t)}$表示候选答案，$q_i^{(t)}$表示工具调用相关信息，包括工具类型、调用参数、返回观察以及调用轮次等元数据。为统一度量不同工具行为对通信成本的影响，本文引入三类边级成本信号，分别刻画发送方模型输出长度、工具调用次数和工具观察长度，并定义发送方成本：
 \begin{equation}
   c_i^{(t)} = \lambda_o \frac{O_i^{(t)}}{N_o}
   + \lambda_k \frac{K_i^{(t)}}{N_k}
   + \lambda_z \frac{Z_i^{(t)}}{N_z},
   \label{eq:tool-cost}
 \end{equation}
-其中$O_i^{(t)}$表示智能体$i$在第$t$轮的模型输出Token数，$K_i^{(t)}$表示工具调用次数，$Z_i^{(t)}$表示工具观察结果Token数；$N_o$、$N_k$和$N_z$分别为输出Token、工具调用次数和工具Token的归一化系数，$\lambda_o,\lambda_k,\lambda_z$为三类开销的权重。该设计将工具调用带来的额外系统消耗显式纳入通信图优化过程。
+其中$O_i^{(t)}$为智能体$A_i$在第$t$轮生成的模型输出Token数，$K_i^{(t)}$为工具调用次数，$Z_i^{(t)}$为工具观察结果Token数；$N_o$、$N_k$和$N_z$为归一化系数，$\lambda_o$、$\lambda_k$和$\lambda_z$为对应成本项的权重。通过归一化处理，三类不同量纲的边级信号可以被纳入同一优化目标，从而为后续通信边学习提供可比较的成本惩罚。
 
-与普通多智能体推理不同，工具调用场景下的边成本取决于发送方智能体，而不仅取决于接收方。若一条边$e=(i,j)$被选中，则接收方$j$会读取发送方$i$的当前轮输出或上一轮记忆，因此该边会间接携带发送方的模型输出和工具观察成本。基于这一点，本文将边级成本定义为发送方成本在所选通信路径上的归因：
+对于一条由智能体$A_i$指向智能体$A_j$的潜在通信边$e=(i,j)$，若该边在第$t$轮被激活，则接收方智能体$A_j$将读取发送方智能体$A_i$的当前输出或历史记忆。因此，边级成本应归因于发送方在对应轮次产生的模型输出和工具观察。本文定义边$e$在第$t$轮的成本为
 \begin{equation}
-  \mathcal{C}_e^{(t)} = \mathbf{1}(z_e^{(t)}=1)c_i^{(\tau_e)},
+  \mathcal{C}_e^{(t)} = \mathbf{1}\!\left(z_e^{(t)}=1\right)c_i^{(\tau(e,t))},
   \label{eq:edge-tool-cost}
 \end{equation}
-其中$z_e^{(t)}$表示边$e$在第$t$轮是否被采样并实际加入通信图；$\tau_e$表示成本归因对应的发送方轮次。对于空间边，$\tau_e=t$；对于时间边，$\tau_e=t-1$。该处理能够区分``当前轮输出传播''和``历史记忆传播''两种成本来源，使跨轮通信边不会错误归因到接收轮次的工具调用。
+其中$z_e^{(t)}$表示边$e$在第$t$轮是否被采样并加入实际通信图，$\tau(e,t)$表示成本归因对应的发送方轮次。对于空间边，$\tau(e,t)=t$；对于时间边，$\tau(e,t)=t-1$。该定义区分了当前轮输出传播和跨轮记忆传播，使边级成本能够反映工具观察在通信图中的扩散开销。
 
 \subsection{可学习通信边概率建模}
 
-本文将每条潜在通信边$e$关联一个可学习参数$\theta_e$。在每轮图构造时，边的保留概率由Sigmoid函数给出：
+为使通信结构能够根据任务反馈自适应调整，本文为每条潜在通信边$e$引入可学习参数$\theta_e$，并将边保留概率定义为
 \begin{equation}
-  p_e = \sigma\left(\frac{\theta_e}{\tau}\right),
+  p_e = \sigma\left(\frac{\theta_e}{\tau_p}\right),
   \label{eq:edge-probability}
 \end{equation}
-其中$\tau$为温度系数。随后按照伯努利分布采样边状态：
+其中$\sigma(\cdot)$为Sigmoid函数，$\tau_p$为采样温度系数。训练阶段的边状态由伯努利分布采样得到：
 \begin{equation}
-  z_e \sim \operatorname{Bernoulli}(p_e).
+  z_e^{(t)} \sim \operatorname{Bernoulli}(p_e).
   \label{eq:edge-sampling}
 \end{equation}
-当$z_e=1$且该边不会破坏空间有向无环执行顺序时，系统将发送方加入接收方的前驱节点集合；当$z_e=0$时，该边不参与本轮通信。
+若$z_e^{(t)}=1$且该边不破坏空间有向无环执行顺序，则发送方智能体被加入接收方智能体的前驱集合；若$z_e^{(t)}=0$，该边在当前轮次中不参与通信。
 
-为了同时支持单图结构和多轮动态图结构，本文分别为全局空间边、全局时间边以及逐轮空间/时间边维护可学习logit参数。对于非动态图设置，所有轮次共享同一组空间边和时间边概率；对于动态图设置，每一轮维护独立的空间边概率，跨轮传递则维护对应轮间的时间边概率。这样，系统既可以学习一个全局稀疏通信结构，也可以针对不同推理阶段学习不同通信结构。
-
-在训练过程中，系统记录每条被采样或未采样边的对数概率$\log \pi_\theta(z_e)$。这些对数概率构成后续策略梯度优化目标的可导部分，使任务正确性和工具成本能够反向影响通信边概率。若某条边长期带来高任务收益且成本可控，其参数$\theta_e$会被优化为更高概率；若某条边经常携带高成本工具输出但对最终结果贡献有限，其概率会逐步下降，并在剪枝阶段被移除。
+为兼顾通信结构的全局稳定性与推理阶段差异，本文分别为空间边和时间边维护可学习logit参数。在静态图设置下，各推理轮次共享同一组空间边和时间边概率；在动态图设置下，不同轮次维护独立的边概率参数，使系统能够在任务规划、信息整合和结果验证等阶段形成差异化通信结构。训练过程中，系统记录每次边采样事件的对数概率$\log \pi_\theta(z_e^{(t)})$，使任务正确性和工具成本能够通过策略梯度影响通信边概率。具有较高任务贡献且成本可控的边将获得更高保留概率；频繁传播高成本工具观察但对最终答案贡献有限的边，其保留概率将在训练中逐步降低。训练结束后，学习得到的概率图将被离散化为固定通信图，用于验证或测试阶段推理。
 
 \subsection{成本感知优化目标}
 
-给定一个任务样本$x$及其标准答案$y$，多智能体系统输出最终答案$\hat{y}$。本文使用任务评分函数$S(\hat{y},y)$衡量正确性，其取值范围为$[0,1]$。对于数学题和选择题，该函数通常对应答案是否匹配；对于开放问答任务，则可采用规范化匹配、别名匹配或任务专用评测器。
+给定任务样本$x$及标准答案$y$，设多智能体系统生成的最终答案为$\hat{y}$。本文采用任务评分函数$S(\hat{y},y)$衡量答案正确性，函数取值范围为$[0,1]$。对于数学推理和多项选择任务，该函数可由答案匹配结果给出；对于开放问答任务，则可由规范化匹配、别名匹配或任务专用评测器计算。
 
-传统通信图优化通常以任务正确性作为边策略的主要奖励。本文在此基础上引入工具成本惩罚，定义边级效用为
+传统通信图优化通常以最终任务得分作为通信边学习的主要信号，较少区分不同边所携带的工具调用成本。由于一次任务执行只能观察到当前采样通信图下的整体结果，本文不对单条边的严格反事实贡献作独立估计，而是构造用于策略梯度优化的边级效用信号：
 \begin{equation}
   R_e^{(t)} = S(\hat{y},y)-\mathcal{C}_e^{(t)}.
   \label{eq:edge-reward}
 \end{equation}
-该式表示：一条通信边只有在能够提高最终任务得分、且不引入过高工具成本时，才应当获得较高效用。对于未被采样的边，工具成本项为0，其对数概率仍参与策略学习；对于被采样的边，系统根据发送方在对应轮次的输出Token、工具调用次数和工具Token计算成本惩罚。
+该效用信号将最终任务得分与被采样边携带的成本惩罚结合起来，用于强化高质量、低成本的通信决策。对于未被采样的边，其工具成本项为零；对于被采样的边，系统根据发送方在对应轮次的模型输出Token、工具调用次数和工具观察Token计算成本惩罚。因此，该目标并不声称精确度量单条边的独立因果贡献，而是为通信边概率学习提供可训练、可归因的优化信号。
 
-由于边采样是离散操作，本文采用策略梯度形式优化边概率。对于一次任务执行中记录到的所有边采样事件，边策略损失定义为
+由于通信边采样属于离散结构决策，本文采用策略梯度形式优化边概率。对于一次任务执行中记录的边采样事件集合$\mathcal{E}_{\mathrm{sample}}$，边策略损失定义为
 \begin{equation}
   \mathcal{L}_{\mathrm{pg}}
   = - \sum_{(e,t) \in \mathcal{E}_{\mathrm{sample}}}
   \log \pi_\theta(z_e^{(t)}) R_e^{(t)}.
   \label{eq:policy-gradient-loss}
 \end{equation}
-该损失鼓励系统提高高效用边的采样概率，同时降低低效用边的采样概率。与只在样本级统一扣除工具成本不同，边级成本归因能够区分不同发送方智能体的工具使用情况，使优化过程更精细。例如，若某一代码执行智能体频繁调用工具且产生较长观察结果，但其输出对最终答案帮助有限，则与该智能体相关的出边会获得更低边级效用。
-
-此外，为避免通信图退化为过密结构，本文沿用图结构正则项约束学习到的边参数。设$\Theta_s$和$\Theta_t$分别为空间边与时间边logit矩阵，$A_s$和$A_t$分别为初始固定拓扑对应的掩码矩阵，则正则项为
-\begin{equation}
-  \mathcal{L}_{\mathrm{reg}}
-  = \|\Theta_s\|_* + \|\Theta_t\|_*
-  + \operatorname{ReLU}(\|A_s-\Theta_s\|_F-\delta)
-  + \operatorname{ReLU}(\|A_t-\Theta_t\|_F-\delta),
-  \label{eq:graph-regularization}
-\end{equation}
-其中$\|\cdot\|_*$表示核范数，$\|\cdot\|_F$表示Frobenius范数，$\delta$为允许偏离初始拓扑的边界。最终优化目标为
-\begin{equation}
-  \mathcal{L} = \mathcal{L}_{\mathrm{pg}}+\mathcal{L}_{\mathrm{reg}}.
-  \label{eq:tool-aware-total-loss}
-\end{equation}
+该损失鼓励系统提高高效用通信决策的出现概率，并降低低效用通信决策的出现概率。与在样本级统一扣除工具成本的方法相比，边级成本归因能够区分不同发送方智能体的工具使用差异，使通信结构学习从粗粒度任务反馈转化为细粒度边级反馈。
 
 \subsection{Taylor一阶重要性剪枝}
 
-在边概率训练过程中，仅依赖logit大小剪枝可能存在偏差：某些边的当前概率不高，但其梯度较大，说明继续优化可能显著影响任务目标；另一些边虽然概率不低，但梯度接近零，说明其对当前目标的边际影响有限。神经网络剪枝研究通常利用参数幅值、损失扰动或梯度敏感性评估结构重要性\cite{ref102,ref103,ref104}，后续面向大模型的结构剪枝和稀疏化方法也进一步验证了重要性估计对保持模型能力的重要性\cite{ref105,ref106,ref107}。受此启发，本文引入Taylor一阶近似评估通信边的重要性。
+在边概率训练过程中，仅依据logit大小进行剪枝难以准确反映边对目标函数的影响。例如，某些边的当前采样概率较低，但其梯度较大，说明继续优化可能显著改变任务目标；相反，某些边虽然采样概率较高，但梯度接近零，说明其边际贡献有限。受模型剪枝中梯度敏感性和损失扰动估计思想的启发，本文采用Taylor一阶展开评估通信边的重要性\cite{ref102,ref104,ref105}。
 
-对于边参数$\theta_e$，若将其移除可近似看作对参数施加扰动$\Delta\theta_e=-\theta_e$，则损失变化的一阶近似为
+对于边参数$\theta_e$，移除该边可表示为对参数施加扰动$\Delta\theta_e=-\theta_e$。根据Taylor一阶展开，目标函数变化的一阶估计为
 \begin{equation}
-  \Delta\mathcal{L}_e
+  \Delta\mathcal{L}_{\mathrm{pg},e}
   \approx
-  \frac{\partial \mathcal{L}}{\partial \theta_e}\Delta\theta_e.
+  \frac{\partial \mathcal{L}_{\mathrm{pg}}}{\partial \theta_e}\Delta\theta_e.
   \label{eq:taylor-first-order}
 \end{equation}
-因此，本文定义边重要性为
+据此，本文定义边重要性为
 \begin{equation}
-  I_e = \left|\theta_e \frac{\partial \mathcal{L}}{\partial \theta_e}\right|.
+  I_e = \left|\theta_e \frac{\partial \mathcal{L}_{\mathrm{pg}}}{\partial \theta_e}\right|.
   \label{eq:taylor-importance}
 \end{equation}
-该指标同时考虑边当前参数规模和目标函数梯度，能够刻画移除该边对优化目标的一阶影响。训练过程中，在完成一次反向传播后，系统对仍处于活跃状态的边计算$I_e$，并按重要性从小到大排序，剪除比例为$\rho$的低重要性边：
+该指标同时考虑边参数规模和损失梯度，可用于估计删除该通信边对边策略损失造成的一阶影响。训练过程中，系统在完成反向传播后、进入下一轮采样前，对所有仍处于活跃状态的边计算$I_e$，并按重要性从小到大排序，剪除比例为$\rho$的低重要性边：
 \begin{equation}
   \mathcal{P}
   =
@@ -119,32 +104,29 @@
   \sum_{e\in \mathcal{S}} I_e.
   \label{eq:taylor-prune-set}
 \end{equation}
-剪枝后，边掩码被置为0，后续图构造不再采样这些边。
+剪枝集合$\mathcal{P}$中的边在后续图构造中被屏蔽，不再参与采样和消息传递。
 
-Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接耦合，因此剪枝结果会同时反映任务正确性和工具调用成本，而不是只根据通信概率大小做静态排序。其次，它可以自然扩展到多轮动态图设置：系统可分别对每一轮的空间边和时间边计算重要性，从而在不同推理阶段形成不同稀疏结构。与面向模型参数的稀疏化方法不同\cite{ref108,ref109,ref110}，本文剪枝对象是多智能体通信边，其目标不是减少单个模型参数量，而是降低跨智能体消息传播和工具观察扩散带来的系统级开销。
+该剪枝策略具有两方面作用。首先，边重要性由成本感知边策略损失导出，剪枝结果同时受到任务正确性和工具调用成本惩罚项影响，而不是仅根据静态通信概率排序。其次，该策略可扩展至多轮动态图设置，对不同推理阶段的空间边和时间边分别计算重要性，从而形成阶段自适应的稀疏通信结构。与面向模型参数量压缩的稀疏化方法不同\cite{ref108,ref109,ref110}，本文剪枝对象是多智能体通信边，其目标是降低跨智能体消息传播和工具观察扩散造成的系统级开销。
 
-\subsection{训练与执行流程}
+\subsection{算法流程}
 
-本文方法的整体流程如下：
+综合上述建模与优化目标，本文方法的训练与执行过程如下。为避免训练阶段随机采样影响测试稳定性，本文将边概率学习与测试阶段推理明确分离：训练阶段通过采样通信图学习边保留倾向，训练结束后仅采样一次得到固定通信图，验证或测试阶段始终使用该固定图。
 
 \begin{enumerate}[topsep=0pt,itemsep=0pt,parsep=0pt,partopsep=0pt,leftmargin=0em,itemindent=2em,label=\arabic*.]
-  \item \textbf{初始化潜在通信图：}根据智能体数量和初始拓扑生成空间边与时间边掩码，并为每条潜在边初始化可学习logit。
-  \item \textbf{采样通信结构：}在每轮推理开始时，根据公式\ref{eq:edge-probability}和公式\ref{eq:edge-sampling}采样空间边和时间边，构造当前任务的实际通信图。
-  \item \textbf{执行工具增强推理：}每个智能体读取前驱消息和历史记忆，根据提示词决定是否调用工具，并生成最终输出。系统记录模型输出Token、工具调用次数和工具观察Token。
-  \item \textbf{计算边级效用：}根据任务答案评分得到基础正确性奖励，并将发送方工具成本归因到被选中的通信边，形成公式\ref{eq:edge-reward}中的边级效用。
-  \item \textbf{更新边概率：}使用公式\ref{eq:tool-aware-total-loss}进行反向传播，更新空间边和时间边logit。
-  \item \textbf{周期性Taylor剪枝：}每隔固定训练轮次，根据公式\ref{eq:taylor-importance}计算活跃边重要性，剪除低重要性边，更新通信掩码。
-  \item \textbf{评估稀疏图：}在验证集或测试集上运行剪枝后的通信图，统计任务准确率、工具调用次数、工具Token、模型Token成本和图稀疏率。
+  \item \textbf{潜在通信图初始化：}根据智能体数量和初始拓扑构造空间边与时间边掩码，并为每条潜在通信边初始化可学习logit参数。
+  \item \textbf{训练阶段通信图采样：}在训练集上执行多轮训练。每次训练执行前，系统根据当前边保留概率采样一个临时通信图，并在该通信图上运行多智能体推理过程。该临时通信图只用于当前训练样本或当前训练批次，不作为最终测试图直接使用。
+  \item \textbf{边级效用与参数更新：}训练样本推理结束后，根据最终答案评分获得任务正确性信号，并将发送方模型输出Token、工具调用次数和工具观察Token归因到训练时的边采样决策，得到边级效用。随后根据公式\ref{eq:policy-gradient-loss}计算边策略损失并进行反向传播，更新空间边和时间边的logit参数。
+  \item \textbf{训练阶段重要性剪枝：}在完成若干轮边概率更新后，按照固定间隔计算活跃边的Taylor一阶重要性，并根据公式\ref{eq:taylor-prune-set}剪除低重要性边，更新通信掩码。被剪除的边在后续训练采样和最终图生成中均不再参与通信。
+  \item \textbf{最终通信图生成：}训练结束后，基于学习得到的边保留概率和剪枝后的通信掩码，对空间边和时间边进行一次通信图采样，得到固定通信图$G^\ast$。形式化地，设$\mathcal{E}_{\mathrm{active}}$为剪枝后仍保留的活跃边集合，对每条$e\in\mathcal{E}_{\mathrm{active}}$采样$z_e^\ast\sim\operatorname{Bernoulli}(p_e)$，并令$\mathcal{E}^\ast=\{e\in\mathcal{E}_{\mathrm{active}}\mid z_e^\ast=1\}$、$G^\ast=(V,\mathcal{E}^\ast)$。该步骤将训练得到的概率化通信结构转化为后续推理使用的确定结构。
+  \item \textbf{固定通信图推理：}在验证集或测试集上固定使用$G^\ast$进行多智能体推理。推理阶段不再更新边参数，不再执行Taylor剪枝，也不再为每个样本重新采样通信图；系统仅按照固定通信图传递消息，并统计任务准确率、工具调用次数、工具Token、模型Token成本和边稀疏率等指标。
 \end{enumerate}
 
-在实现上，本文方法通过\texttt{--tool\_aware\_loss}开启工具成本感知训练，通过\texttt{--taylor\_prune}开启Taylor一阶剪枝。训练代码在每次图构造时记录空间边与时间边的采样状态、边索引、发送方、接收方、轮次和对数概率；评估代码则按样本、智能体和轮次统计模型Token与工具调用元数据。当前实现中，输出Token、工具调用次数和工具Token的惩罚权重分别设为$0.05$、$0.10$和$0.10$，Token与工具调用次数归一化系数分别设为$10000$和$10$；Taylor剪枝默认每2轮训练触发一次，每次剪除10\%的活跃边。
-
-训练入口已接入AIME、GAIA、GPQA、HLE、MATH500、MuSiQue和BigCodeBench等工具调用任务。其中AIME和MATH500默认启用搜索与代码执行工具，BigCodeBench默认启用代码生成工具，GAIA、GPQA和HLE等开放问答或专家问答任务则可同时启用搜索、代码执行和文本检查工具。
+上述流程将训练阶段和推理阶段明确分离。训练阶段的采样用于估计不同通信边的任务贡献和工具成本，并通过策略梯度更新边保留概率；训练完成后，系统只采样一次得到固定通信图，并在推理阶段保持该通信图不变。由此，本文方法能够在保留关键跨智能体信息流的同时，避免测试阶段通信结构持续随机变化，减少低贡献通信边和高成本工具观察的传播。
 
 \section{实验设置}
 
 \subsection{数据集}
-为验证本文方法在工具调用场景下的有效性，实验选取多个需要外部工具辅助的基准任务进行评测，覆盖数学竞赛推理、开放问答、专家问答、多跳问答和代码生成等任务类型。具体任务、默认工具配置与主要评价指标如表\ref{tab:tool-aware-datasets}所示。
+为验证本文方法在工具调用场景下的有效性，实验选取多个需要外部工具辅助的基准任务进行评测，覆盖数学竞赛推理、开放问答、专家问答、数学推理和代码生成等任务类型。具体任务、默认工具配置与主要评价指标如表\ref{tab:tool-aware-datasets}所示。
 
 \begin{table}[H]
   \centering
@@ -158,9 +140,7 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
     AIME\cite{ref67} & 数学竞赛推理 & Web搜索、代码生成 & 数值答案准确率 \\
     GAIA\cite{ref68} & 开放问答 & Web搜索、代码生成、文本检查 & 问答匹配准确率 \\
     GPQA\cite{ref69} & 多项选择专家问答 & Web搜索、代码生成、文本检查 & 选项准确率 \\
-    HLE\cite{ref70} & 高难专家问答 & Web搜索、代码生成 & 问答匹配准确率 \\
     MATH500\cite{ref71} & 数学推理 & Web搜索、代码生成 & 规范化答案准确率 \\
-    MuSiQue\cite{ref72} & 多跳问答 & Web搜索、代码生成 & 问答匹配准确率 \\
     BigCodeBench\cite{ref73} & 代码生成 & 代码生成 & 代码通过率 \\
     \bottomrule
   \end{tabular}
@@ -174,31 +154,35 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
   \item \textbf{DirectAnswer：}单智能体直接回答，可选择是否启用工具。
   \item \textbf{FullConnected：}多智能体完全连接通信，所有智能体输出均可被后续智能体读取。
   \item \textbf{AgentPrune：}基于可学习通信边和图剪枝的多智能体通信优化方法。
-  \item \textbf{本文方法：}在AgentPrune基础上加入工具成本感知边级损失，并使用Taylor一阶重要性进行动态剪枝。
+  \item \textbf{本文方法：}在AgentPrune基础上加入工具成本感知的边级效用信号，并使用Taylor一阶重要性进行动态剪枝。
 \end{itemize}
 
 \subsection{实现细节}
-本文选取Qwen3-14B和MiniMax-M3\cite{ref60}作为基座模型。其中，Qwen3-14B和MiniMax-M3均覆盖AIME、GAIA、GPQA、HLE、MATH500、MuSiQue和BigCodeBench七个工具任务，用于观察不同成本和能力水平的基座模型下面向通信边冗余的图剪枝效果。
+本文选取Qwen3-14B和MiniMax-M3\cite{ref60}作为基座模型。其中，Qwen3-14B报告AIME、GAIA、MATH500和BigCodeBench四个工具任务结果，MiniMax-M3报告AIME、GAIA、GPQA、MATH500和BigCodeBench五个工具任务结果，用于观察不同成本和能力水平的基座模型下面向通信边冗余的图剪枝效果。
 
-对于AIME和MATH500，实验默认启用搜索与代码执行工具；对于BigCodeBench，实验默认启用代码生成工具；对于GAIA、GPQA和HLE等开放问答或专家问答任务，实验同时启用搜索、代码执行和文本检查工具。对于需要训练通信边概率的AgentPrune和本文方法，训练阶段成本另行记录，不并入测试阶段成本；表中成本均为测试阶段推理成本，由输入Token、输出Token及对应模型API价格计算得到，单位为人民币元。同一数据集内各方法采用相同测试规模，因而成本数值用于比较不同通信图策略在相同任务设置下的相对推理开销。
+对于AIME和MATH500，实验默认启用搜索与代码执行工具；对于BigCodeBench，实验默认启用代码生成工具；对于GAIA和GPQA等开放问答或专家问答任务，实验同时启用搜索、代码执行和文本检查工具。考虑到本章方法主要针对工具调用、证据筛选和通信边价值差异，Qwen3-14B结果以AIME、GAIA和BigCodeBench作为主实验任务，MiniMax-M3结果以AIME、GAIA、GPQA和BigCodeBench作为主实验任务，并将MATH500作为准确率接近饱和的补充任务用于观察成本控制效果。对于需要训练通信边概率的AgentPrune和本文方法，训练阶段成本另行记录，不并入测试阶段成本；表中成本均为测试阶段推理成本，由输入Token、输出Token及对应模型API价格计算得到，单位为人民币元。同一数据集内各方法采用相同测试规模，因而成本数值用于比较不同通信图策略在相同任务设置下的相对推理开销。
+
+在本文方法的实现中，工具成本感知训练和Taylor一阶剪枝分别通过独立配置开启。系统在图构造阶段记录空间边与时间边的采样状态、边索引、发送方、接收方、轮次和对数概率；训练结束后，基于学习得到的边概率和剪枝掩码一次性采样固定通信图，并在验证或测试阶段关闭边参数更新与随机采样；在评估阶段按样本、智能体和轮次统计模型Token与工具调用元数据。三类边级成本信号中，输出Token、工具调用次数和工具Token的惩罚权重分别设为$0.05$、$0.10$和$0.10$，Token与工具调用次数的归一化系数分别设为$10000$和$10$；Taylor剪枝默认每2轮训练触发一次，每次剪除10\%的活跃边。
 
 \subsection{评估指标}
 本文主要从任务完成质量、工具使用成本和通信图成本三个维度进行评估。
-\par \textbf{准确率 (Accuracy)：}衡量模型完成任务的有效性。AIME和MATH500采用规范化数值或公式答案匹配，GPQA采用选项准确率，GAIA、HLE和MuSiQue采用问答匹配准确率，BigCodeBench采用代码通过率。
+\par \textbf{准确率 (Accuracy)：}衡量模型完成任务的有效性。AIME和MATH500采用规范化数值或公式答案匹配，GPQA采用选项准确率，GAIA采用问答匹配准确率，BigCodeBench采用代码通过率。
 \par \textbf{工具使用成本 (Tool Cost)：}衡量工具调用带来的额外开销，包括工具调用次数和工具返回Token数。该指标用于分析外部搜索、代码执行和文本检查结果在多智能体通信图中的传播成本。
 \par \textbf{推理成本 (Inference Cost)：}衡量测试阶段模型输入输出Token对应的API调用成本，单位为人民币元，同时结合空间边与时间边稀疏率观察通信图压缩效果。由于工具调用会影响后续智能体上下文长度，本文同时统计工具成本和模型Token成本，以便分析二者之间的耦合关系。
 
 \section{实验结果与分析}
 
-本章实验图表均以表\ref{tab:tool-aware-qwen-results}和表\ref{tab:tool-aware-minimax-results}中的测试阶段结果为基础绘制。正文图形用于展示代表性任务上的趋势差异，完整数值仍以结果表为准。为避免图形呈现放大方法差异，所有柱状图纵轴均从0开始；对于HLE、MuSiQue等准确率数值较低的任务，图中采用较小的纵轴上界以保证读数清晰，具体数值以柱顶标注和结果表为准。与第三章类似，本章结果为固定评测集上的单次完整评测结果，尚未包含多随机种子重复实验和置信区间，因此正文主要分析跨任务趋势和准确率--成本权衡，不将小幅差异单独解释为统计显著优势。
+本章实验图表均以表\ref{tab:tool-aware-qwen-results}和表\ref{tab:tool-aware-minimax-results}中的测试阶段结果为基础绘制。考虑到面向通信边冗余的图剪枝算法主要针对工具调用、证据筛选和通信边价值差异，Qwen3-14B结果将AIME、GAIA和BigCodeBench作为主实验任务，MiniMax-M3结果将AIME、GAIA、GPQA和BigCodeBench作为主实验任务，并将MATH500作为准确率接近饱和的补充任务。正文图形用于展示代表性任务上的趋势差异，完整数值仍以结果表为准。与第三章类似，本章结果为固定评测集上的单次完整评测结果，尚未包含多随机种子重复实验和置信区间，因此正文主要分析跨任务趋势和相对成本变化，不将小幅差异单独解释为统计显著优势。
+
+需要说明的是，本文方法并不以在所有方法中取得最低绝对调用花费为目标。Direct+Tools不包含多智能体通信结构，其低消耗主要来自单智能体执行方式，不能直接反映通信图剪枝效果；FullConnected+Tools在部分任务中也可能因输出长度或工具使用偶然较少而获得较低测试消耗。因此，正文图形不再强调绝对花费柱状对比，而是采用相对AgentPrune+Tools的准确率变化和成本变化表示方法，在已有多智能体图剪枝基线内部考察本文方法是否更有效地保留高价值通信边。
 
 \subsection{任务准确率结果}
 
-表\ref{tab:tool-aware-qwen-results}展示了Qwen3-14B在七个工具调用任务上的主要结果。每个单元格以``准确率/推理成本''形式展示。总体来看，本文方法在七个任务上的平均准确率为40.93\%，略高于FullConnected+Tools的40.49\%和AgentPrune+Tools的40.40\%；平均推理成本为5.18，高于FullConnected+Tools的4.61，但与AgentPrune+Tools的4.91接近。该结果说明，本文图剪枝方法并非单纯追求最低推理成本，而是在可控成本范围内提升通信边选择质量。
+表\ref{tab:tool-aware-qwen-results}展示了Qwen3-14B在主实验任务和补充任务上的结果。每个单元格以``准确率/推理成本''形式展示。在AIME、GAIA和BigCodeBench三个主实验任务上，本文方法的平均准确率为41.50\%，高于Direct+Tools的37.30\%、FullConnected+Tools的41.47\%和AgentPrune+Tools的39.27\%。该结果说明，在中等规模开源模型上，通信边剪枝带来的收益存在任务依赖性，不能简单概括为所有任务均取得最高准确率。
 
 \begin{table}[H]
   \centering
-  \caption{Qwen3-14B下面向通信边冗余的图剪枝结果（准确率\% / 推理成本，单位：元）}
+  \caption{Qwen3-14B下面向通信边冗余的图剪枝结果}
   \label{tab:tool-aware-qwen-results}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lcccc}
@@ -207,109 +191,29 @@ Taylor剪枝具有两个优点。首先，它与工具成本感知损失直接�
     \midrule
     AIME & 55.00 / 1.73 & 63.30 / 3.64 & 60.00 / 8.01 & 65.00 / 7.22 \\
     GAIA & 13.90 / 1.21 & 20.60 / 2.96 & 16.30 / 3.88 & 17.50 / 2.81 \\
-    GPQA & 39.00 / 2.73 & 55.50 / 6.97 & 56.00 / 3.35 & 55.00 / 8.53 \\
-    HLE & 4.00 / 3.78 & 3.00 / 6.15 & 7.50 / 2.66 & 7.00 / 2.48 \\
     MATH500 & 78.50 / 2.45 & 93.50 / 4.59 & 94.00 / 6.00 & 92.50 / 5.72 \\
-    MuSiQue & 8.00 / 0.93 & 7.00 / 2.15 & 7.50 / 2.66 & 7.50 / 2.54 \\
     BigCodeBench & 43.00 / 2.11 & 40.50 / 5.81 & 41.50 / 7.83 & 42.00 / 7.00 \\
     \bottomrule
   \end{tabular}
   }
 \end{table}
 
-从单项任务看，本文方法在AIME上取得65.00\%准确率，高于Direct+Tools的55.00\%、FullConnected+Tools的63.30\%和AgentPrune+Tools的60.00\%。这说明在数学竞赛题中，工具调用带来的代码执行和检索结果需要被选择性传播；完全连接通信虽然提高了信息覆盖度，但仍会传递部分冗余工具观察，而本文方法能够更稳定地保留高价值边。图\ref{fig:tool-aime-qwen3}进一步展示了AIME任务上成本、准确率、工具调用次数和工具Token的变化。
+从单项任务看，本文方法在AIME上取得65.00\%准确率，高于Direct+Tools的55.00\%、FullConnected+Tools的63.30\%和AgentPrune+Tools的60.00\%。这说明在数学竞赛题中，工具调用带来的代码执行和检索结果需要被选择性传播；完全连接通信虽然提高了信息覆盖度，但仍会传递部分冗余工具观察，而本文方法能够更稳定地保留高价值边。图\ref{fig:tool-aime-qwen3}进一步展示了AIME任务上的准确率结果。
 
 \begin{figure}[H]
   \centering
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{推理成本
-    \label{fig:aime_qwen_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/aime/qwen3-14B/fig1_cost_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
-    \subcaptionbox{准确率
-    \label{fig:aime_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/aime/qwen3-14B/fig2_accuracy_bars.png}}%
-    }%
-  }
-  \caption{Qwen3-14B在AIME任务上的推理成本（单位：元）与准确率结果}
+  \includegraphics[width=0.72\textwidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/aime/qwen3-14B/fig2_accuracy_bars.png}}
+  \caption{Qwen3-14B在AIME任务上的准确率结果}
   \label{fig:tool-aime-qwen3}
 \end{figure}
 
-\begin{figure}[H]
-  \centering
-  \subcaptionbox{工具调用次数
-  \label{fig:aime_qwen_tool_calls_panel}}[0.88\textwidth]{%
-    \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/aime/qwen3-14B/fig3_tool_calls_stack.png}}%
-  }
-  \vspace{0.6em}
-  \subcaptionbox{工具Token数量
-  \label{fig:aime_qwen_tool_tokens_panel}}[0.88\textwidth]{%
-    \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/aime/qwen3-14B/fig4_tool_tokens_stack.png}}%
-  }
-  \caption{Qwen3-14B在AIME任务上的工具调用次数与工具Token结果}
-  \label{fig:tool-aime-qwen3-usage}
-\end{figure}
+同时，Qwen3-14B上的结果也暴露了本方法在部分任务上的边界。例如，GAIA上本文方法准确率为17.50\%，低于FullConnected+Tools的20.60\%，但推理成本由2.96降至2.81；MATH500上本文方法准确率为92.50\%，低于AgentPrune+Tools的94.00\%，但推理成本由6.00降至5.72。为避免将该类小幅差异过度解释为方法优劣，本文将Qwen3-14B结果主要作为开源模型上的辅助验证，并在后续分析中结合MiniMax-M3结果讨论方法更适用的任务条件。
 
-在HLE、MuSiQue和BigCodeBench等任务上，本文方法的准确率与最优工具基线接近，同时相对AgentPrune+Tools保持更低推理成本。例如，HLE上本文方法准确率为7.00\%，略低于AgentPrune+Tools的7.50\%，但推理成本降低约7.00\%；BigCodeBench上本文方法达到42.00\%，高于FullConnected+Tools和AgentPrune+Tools，并使成本相对AgentPrune+Tools降低约10.58\%。在MATH500上，本文方法为92.50\%，低于AgentPrune+Tools的94.00\%，但成本降低约4.72\%。这些结果说明，工具成本惩罚能够在多个任务上抑制低价值工具信息传播，但在部分强推理任务中仍可能牺牲少量准确率。
-
-\begin{figure}[H]
-  \centering
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{HLE准确率
-    \label{fig:hle_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/hle/qwen3-14B/fig2_accuracy_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
-    \subcaptionbox{MATH500准确率
-    \label{fig:math500_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/math500/qwen3-14B/fig2_accuracy_bars.png}}%
-    }%
-  }
-  \vspace{0.5em}
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{MuSiQue准确率
-    \label{fig:musique_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/musique/qwen3-14B/fig2_accuracy_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
-    \subcaptionbox{BigCodeBench准确率
-    \label{fig:bigcodebench_qwen_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/bigcodebench/qwen3-14B/fig2_accuracy_bars.png}}%
-    }%
-  }
-  \caption{Qwen3-14B在扩展工具任务上的准确率结果}
-  \label{fig:tool-qwen-extra-results}
-\end{figure}
-
-为进一步展示Qwen3-14B在新增任务上的成本表现，图\ref{fig:tool-qwen-math-code-cost-results}给出了MATH500和BigCodeBench的推理成本对比。MATH500上，本文方法成本为5.72，低于AgentPrune+Tools的6.00，但准确率由94.00\%小幅下降至92.50\%；BigCodeBench上，本文方法成本为7.00，低于AgentPrune+Tools的7.83，同时准确率由41.50\%提升至42.00\%，并高于FullConnected+Tools的40.50\%。因此，Qwen3-14B结果同样能够支撑本文方法在代码生成任务中改善准确率--成本平衡的结论，而MATH500结果则更适合作为成本控制与准确率轻微波动之间的权衡分析。
-
-\begin{figure}[H]
-  \centering
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{MATH500成本
-    \label{fig:math500_qwen_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/math500/qwen3-14B/fig1_cost_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
-    \subcaptionbox{BigCodeBench成本
-    \label{fig:bigcodebench_qwen_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/bigcodebench/qwen3-14B/fig1_cost_bars.png}}%
-    }%
-  }
-  \caption{Qwen3-14B在MATH500和BigCodeBench任务上的推理成本结果（单位：元）}
-  \label{fig:tool-qwen-math-code-cost-results}
-\end{figure}
-
-\noindent\textbf{MiniMax-M3补充结果。}
-
-表\ref{tab:tool-aware-minimax-results}展示了MiniMax-M3上的补充结果。可以看到，本文方法在AIME、GAIA和GPQA三个任务上均取得当前工具调用对比组中的最高准确率；在MATH500和BigCodeBench两个新增任务上，本文方法虽然并非所有指标均为最优，但相对AgentPrune+Tools保持了更低推理成本，并在BigCodeBench上取得更高准确率；在HLE和MuSiQue两个更具开放性和多跳性的任务上，本文方法未取得最高准确率，但同样能够降低AgentPrune+Tools的推理成本，体现出成本控制与证据充分性之间的权衡。整体来看，本文方法在七个MiniMax-M3工具任务上的平均准确率为57.05\%，高于AgentPrune+Tools的56.07\%；平均推理成本为33.90，低于AgentPrune+Tools的37.62。
-
-AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnected+Tools的88.30\%和AgentPrune+Tools的95.00\%；GAIA上，本文方法达到32.00\%，同时高于Direct+Tools、FullConnected+Tools和AgentPrune+Tools，并且推理成本低于FullConnected+Tools和AgentPrune+Tools；GPQA上，本文方法达到90.00\%，比AgentPrune+Tools高3.00个百分点，且成本相对AgentPrune+Tools降低约15.64\%。在MATH500上，本文方法达到95.00\%，与FullConnected+Tools持平，成本相对AgentPrune+Tools降低约7.56\%；在BigCodeBench上，本文方法达到46.50\%，比AgentPrune+Tools高4.50个百分点，成本降低约4.61\%。这些结果进一步说明，在高成本闭源模型上，图剪枝并不总是带来单项最高准确率，但能够在多个任务上改善准确率--成本平衡。
+表\ref{tab:tool-aware-minimax-results}展示了MiniMax-M3上的结果。相比Qwen3-14B，MiniMax-M3具有更高的调用成本，因此更适合观察通信边剪枝带来的成本--质量权衡。在AIME、GAIA、GPQA和BigCodeBench四个主实验任务上，本文方法的平均准确率为66.71\%，高于Direct+Tools的48.10\%、FullConnected+Tools的63.03\%和AgentPrune+Tools的63.50\%；平均推理成本为25.81，低于AgentPrune+Tools的28.25。该结果表明，在高成本基座模型和工具观察较长的任务中，本文方法并非简单追求最低调用成本，而是相对既有多智能体图剪枝基线更有效地保留高价值通信边。
 
 \begin{table}[H]
   \centering
-  \caption{MiniMax-M3下面向通信边冗余的图剪枝结果（准确率\% / 推理成本，单位：元）}
+  \caption{MiniMax-M3下面向通信边冗余的图剪枝结果}
   \label{tab:tool-aware-minimax-results}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lcccc}
@@ -319,39 +223,21 @@ AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnect
     AIME & 73.30 / 5.87 & 88.30 / 16.18 & 95.00 / 22.99 & 98.33 / 27.19 \\
     GAIA & 25.40 / 5.87 & 29.00 / 26.11 & 30.00 / 29.36 & 32.00 / 23.16 \\
     GPQA & 76.20 / 11.03 & 87.80 / 28.06 & 87.00 / 44.75 & 90.00 / 37.75 \\
-    HLE & 17.50 / 21.00 & 22.50 / 86.43 & 26.00 / 111.93 & 22.00 / 97.46 \\
     MATH500 & 85.00 / 3.59 & 95.00 / 10.35 & 95.50 / 11.89 & 95.00 / 10.99 \\
-    MuSiQue & 16.50 / 6.26 & 14.50 / 25.72 & 17.00 / 26.54 & 15.50 / 25.57 \\
     BigCodeBench & 17.50 / 21.00 & 47.00 / 12.68 & 42.00 / 15.88 & 46.50 / 15.15 \\
     \bottomrule
   \end{tabular}
   }
 \end{table}
 
-\subsection{消耗成本结果}
-
-从推理成本看，工具调用场景中的成本变化不仅来自智能体之间的消息长度，也受到工具调用次数和工具返回Token数影响。Qwen3-14B结果显示，本文方法的平均推理成本为5.18，略高于FullConnected+Tools的4.61，但与AgentPrune+Tools的4.91较为接近；MiniMax-M3结果显示，本文方法的七任务平均推理成本为33.90，低于AgentPrune+Tools的37.62，说明工具成本感知目标在高成本闭源模型上更容易体现成本控制作用。
-
-进一步看，本文方法在HLE、MATH500、MuSiQue、BigCodeBench等任务上通常能够相对AgentPrune+Tools降低推理成本。例如，HLE上Qwen3-14B的本文方法成本为2.48，低于AgentPrune+Tools的2.66；BigCodeBench上Qwen3-14B的本文方法成本为7.00，低于AgentPrune+Tools的7.83。MiniMax-M3上，GAIA、GPQA、MATH500和BigCodeBench任务中本文方法的推理成本均低于AgentPrune+Tools，并在GAIA、GPQA和BigCodeBench上保持或提升准确率，说明在工具观察较长、通信边价值差异明显的任务中，成本感知剪枝能够减少低价值工具信息传播。
+AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnected+Tools的88.30\%和AgentPrune+Tools的95.00\%；GAIA上，本文方法达到32.00\%，同时高于三个对比基线，且测试消耗低于FullConnected+Tools和AgentPrune+Tools；GPQA上，本文方法达到90.00\%，高于FullConnected+Tools的87.80\%和AgentPrune+Tools的87.00\%，成本相对AgentPrune+Tools降低约15.64\%。这些结果说明，在需要检索、工具执行和证据整合的任务中，边级成本惩罚信号有助于减少低价值工具信息传播。图\ref{fig:tool-minimax-openqa-results}展示了MiniMax-M3在GAIA和GPQA任务上的准确率结果。
 
 \begin{figure}[H]
   \centering
   \makebox[\textwidth][c]{%
-    \subcaptionbox{GAIA成本
-    \label{fig:gaia_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/gaia/minimax-m3/fig1_cost_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
     \subcaptionbox{GAIA准确率
     \label{fig:gaia_minimax_accuracy_panel}}[0.46\textwidth]{%
       \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/gaia/minimax-m3/fig2_accuracy_bars.png}}%
-    }%
-  }
-  \vspace{0.5em}
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{GPQA成本
-    \label{fig:gpqa_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/gpqa/minimax-m3/fig1_cost_bars.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{GPQA准确率
@@ -359,59 +245,18 @@ AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnect
       \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/gpqa/minimax-m3/fig2_accuracy_bars.png}}%
     }%
   }
-  \caption{MiniMax-M3在GAIA和GPQA任务上的推理成本（单位：元）与准确率结果}
+  \caption{MiniMax-M3在GAIA和GPQA任务上的准确率结果}
   \label{fig:tool-minimax-openqa-results}
 \end{figure}
 
-\begin{figure}[H]
-  \centering
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{HLE成本
-    \label{fig:hle_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/hle/minimax-m3/fig1_cost_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
-    \subcaptionbox{HLE准确率
-    \label{fig:hle_minimax_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/hle/minimax-m3/fig2_accuracy_bars.png}}%
-    }%
-  }
-  \vspace{0.5em}
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{MuSiQue成本
-    \label{fig:musique_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/musique/minimax-m3/fig1_cost_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
-    \subcaptionbox{MuSiQue准确率
-    \label{fig:musique_minimax_accuracy_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/musique/minimax-m3/fig2_accuracy_bars.png}}%
-    }%
-  }
-  \caption{MiniMax-M3在HLE和MuSiQue任务上的推理成本（单位：元）与准确率结果}
-  \label{fig:tool-minimax-hardqa-results}
-\end{figure}
-
-为进一步展示新增数学推理和代码生成任务上的结果，图\ref{fig:tool-minimax-math-code-results}给出了MiniMax-M3在MATH500和BigCodeBench上的成本与准确率对比。MATH500结果表明，在准确率接近饱和的数学推理任务中，本文方法更主要体现为相对AgentPrune+Tools的成本降低；BigCodeBench结果则表明，在代码生成任务中，本文方法能够在降低AgentPrune+Tools成本的同时提升通过率。
+MATH500作为补充任务主要用于观察准确率接近饱和时的成本控制效果。MiniMax-M3上，本文方法在MATH500达到95.00\%，与FullConnected+Tools持平，略低于AgentPrune+Tools的95.50\%，但相对AgentPrune+Tools降低约7.56\%测试成本；Qwen3-14B上也呈现出类似的成本下降和准确率小幅波动。因此，MATH500不适合作为本文方法准确率优势的核心证据，更适合作为成本控制与准确率饱和之间的补充分析。BigCodeBench则更能体现代码生成工具调用场景下的边价值差异，MiniMax-M3上本文方法达到46.50\%，高于AgentPrune+Tools的42.00\%，且相对AgentPrune+Tools降低约4.61\%测试成本。
 
 \begin{figure}[H]
   \centering
   \makebox[\textwidth][c]{%
-    \subcaptionbox{MATH500成本
-    \label{fig:math500_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/math500/minimax-m3/fig1_cost_bars.png}}%
-    }%
-    \hspace{0.02\textwidth}%
     \subcaptionbox{MATH500准确率
     \label{fig:math500_minimax_accuracy_panel}}[0.46\textwidth]{%
       \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/math500/minimax-m3/fig2_accuracy_bars.png}}%
-    }%
-  }
-  \vspace{0.5em}
-  \makebox[\textwidth][c]{%
-    \subcaptionbox{BigCodeBench成本
-    \label{fig:bigcodebench_minimax_cost_panel}}[0.46\textwidth]{%
-      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/bigcodebench/minimax-m3/fig1_cost_bars.png}}%
     }%
     \hspace{0.02\textwidth}%
     \subcaptionbox{BigCodeBench准确率
@@ -419,20 +264,69 @@ AIME上，本文方法达到98.33\%，高于Direct+Tools的73.30\%、FullConnect
       \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/bigcodebench/minimax-m3/fig2_accuracy_bars.png}}%
     }%
   }
-  \caption{MiniMax-M3在MATH500和BigCodeBench任务上的推理成本（单位：元）与准确率结果}
+  \caption{MiniMax-M3在MATH500和BigCodeBench任务上的准确率结果}
   \label{fig:tool-minimax-math-code-results}
 \end{figure}
 
+\subsection{消耗成本结果}
+
+从测试阶段消耗看，工具调用场景中的成本变化不仅来自智能体之间的消息长度，也受到工具调用次数和工具返回Token数影响。若只比较各方法的绝对成本，Direct+Tools往往因不包含多智能体通信而具有天然低消耗，容易使读者将“绝对成本最低”误解为本文方法的主要优化目标。事实上，本章方法关注的是在已有多智能体通信图剪枝基础上，进一步识别并压缩低价值通信边。因此，本节以AgentPrune+Tools作为主要成本对照，先通过表\ref{tab:tool-aware-cost-reduction}量化本文方法的推理成本变化，再结合图\ref{fig:minimax_representative_tradeoff}观察质量--消耗权衡。
+
+\begin{table}[H]
+  \centering
+  \caption{本文方法相对AgentPrune+Tools的主实验推理成本对比}
+  \label{tab:tool-aware-cost-reduction}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{llcccc}
+    \toprule
+    基座模型 & 数据集 & AgentPrune+Tools成本（元） & 本文方法成本（元） & 成本变化（元） & 成本降幅 \\
+    \midrule
+    Qwen3-14B & AIME & 8.01 & 7.22 & -0.79 & 9.86\% \\
+    Qwen3-14B & GAIA & 3.88 & 2.81 & -1.07 & 27.58\% \\
+    Qwen3-14B & BigCodeBench & 7.83 & 7.00 & -0.83 & 10.60\% \\
+    Qwen3-14B & \textbf{主实验平均} & \textbf{6.57} & \textbf{5.68} & \textbf{-0.90} & \textbf{13.64\%} \\
+    \midrule
+    MiniMax-M3 & AIME & 22.99 & 27.19 & +4.20 & -18.27\% \\
+    MiniMax-M3 & GAIA & 29.36 & 23.16 & -6.20 & 21.12\% \\
+    MiniMax-M3 & GPQA & 44.75 & 37.75 & -7.00 & 15.64\% \\
+    MiniMax-M3 & BigCodeBench & 15.88 & 15.15 & -0.73 & 4.60\% \\
+    MiniMax-M3 & \textbf{主实验平均} & \textbf{28.25} & \textbf{25.81} & \textbf{-2.43} & \textbf{8.61\%} \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}
+
+表\ref{tab:tool-aware-cost-reduction}中，成本变化定义为本文方法成本减去AgentPrune+Tools成本，负值表示成本降低；成本降幅为正表示成本下降，负值表示成本增加。可以看到，Qwen3-14B三个主实验任务均取得成本下降，平均推理成本由6.57降至5.68，降幅为13.64\%。MiniMax-M3上，GAIA、GPQA和BigCodeBench三个任务均降低推理成本，四个主实验任务平均成本由28.25降至25.81，降幅为8.61\%。AIME任务的成本有所增加，但同时准确率由95.00\%提升至98.33\%，说明在部分高难数学竞赛任务中，额外工具验证可能带来更高质量收益。
+
+\begin{figure}[H]
+  \centering
+  \makebox[\textwidth][c]{%
+    \subcaptionbox{GAIA任务
+    \label{fig:minimax_gaia_tradeoff}}[0.46\textwidth]{%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/summary/fig1_minimax_tradeoff_gaia.png}}%
+    }%
+    \hspace{0.02\textwidth}%
+    \subcaptionbox{GPQA任务
+    \label{fig:minimax_gpqa_tradeoff}}[0.46\textwidth]{%
+      \includegraphics[width=\linewidth]{\detokenize{image/第四章/通信冗余问题图剪枝实验结果图/summary/fig2_minimax_tradeoff_gpqa.png}}%
+    }%
+  }
+  \caption{MiniMax-M3代表性任务上的准确率--成本权衡}
+  \label{fig:minimax_representative_tradeoff}
+\end{figure}
+
+图\ref{fig:minimax_representative_tradeoff}展示了MiniMax-M3在GAIA和GPQA两个代表性任务上的准确率--成本关系。GAIA上，本文方法相较FullConnected+Tools和AgentPrune+Tools同时取得更高准确率和更低推理成本，说明工具成本感知的边级效用信号能够减少低价值工具观察传播。GPQA上，本文方法取得最高准确率，且相对AgentPrune+Tools降低推理成本，但成本仍高于FullConnected+Tools，说明在专家问答任务中需要在证据充分性和成本控制之间做权衡。由此可见，本文方法的核心优势并不是在所有多智能体通信基线上取得最低绝对成本，而是在已有图剪枝方法基础上更合理地区分高价值通信边和低价值通信边。
+
 \subsection{结果分析}
 
-综合Qwen3-14B和MiniMax-M3结果可以看出，本文方法更适用于两类场景。第一类是工具观察冗余较多、通信边价值差异明显的任务，如AIME、GAIA、MiniMax-M3下的GPQA以及BigCodeBench。在这些任务中，工具成本感知边级目标能够促使系统保留与最终验证、证据整合和代码检查更相关的通信边，从而提升准确率或改善准确率--成本平衡。第二类是工具调用成本较高但任务收益有限的任务，如HLE、MATH500和MuSiQue。在这些任务中，本文方法通常能够相对AgentPrune降低推理成本，但准确率可能与最优基线存在小幅差距。
+综合Qwen3-14B和MiniMax-M3结果可以看出，本文方法更适用于工具观察冗余较多、通信边价值差异明显的任务，如AIME、GAIA、GPQA以及BigCodeBench。在这些任务中，工具成本感知训练信号能够促使系统保留与最终验证、证据整合和代码检查更相关的通信边，从而提升准确率或改善相对成本表现。MATH500结果则说明，当任务准确率已接近饱和时，图剪枝方法更主要体现为成本控制，准确率可能出现小幅波动。
 
-同时，实验也表明工具调用并非总是带来稳定收益。以Qwen3-14B的GPQA为例，Direct无工具设置达到57.50\%，高于Direct+Tools的39.00\%；这说明外部工具返回的信息若不能被有效筛选，可能反而干扰模型原有推理。本文方法虽然通过边级成本惩罚减少了部分冗余传播，但对于强知识型、多选项干扰任务，仍需要进一步引入工具观察质量评估或任务难度自适应权重。
+同时，实验也表明工具调用并非总是带来稳定收益。对于强知识型、多选项干扰任务，外部工具返回的信息若不能被有效筛选，可能反而干扰模型原有推理。本文方法虽然通过边级成本惩罚减少了部分冗余传播，但仍需要进一步引入工具观察质量评估或任务难度自适应权重。
 
-总体而言，本文方法的优势不在于所有任务上同时实现最高准确率和最低成本，而在于把工具调用成本纳入通信图学习目标，使剪枝结果更接近真实部署中的成本--质量权衡。相比仅根据边概率或静态拓扑进行剪枝，工具成本感知策略能够更细粒度地区分不同发送方、不同轮次和不同工具观察带来的边际价值。
+总体而言，本文方法的优势不在于所有任务上同时实现最高准确率和最低绝对成本，而在于把工具调用成本纳入通信图学习目标，使剪枝结果更接近真实部署中的成本--质量权衡。相比仅根据边概率或静态拓扑进行剪枝，工具成本感知策略能够更细粒度地区分不同发送方、不同轮次和不同工具观察带来的边际价值。
 
 \section{本章小结}
 
-本章提出了面向通信边冗余的图剪枝算法。该方法首先将多智能体系统中的空间边和时间边建模为可学习概率，并通过采样构造任务执行时的实际通信图；随后结合任务正确性、模型输出Token、工具调用次数和工具观察Token构造边级效用，使通信边学习过程能够感知外部工具带来的额外成本；最后引入Taylor一阶重要性评估，在反向传播后剪除低重要性边，实现多轮推理过程中的动态图压缩。
+本章提出了面向通信边冗余的图剪枝算法。该方法首先将多智能体系统中的空间边和时间边建模为可学习概率，并在训练阶段通过临时采样通信图学习不同边的保留倾向；随后以任务正确性为收益项，并结合模型输出Token、工具调用次数和工具观察Token三类边级成本信号构造边级效用，使通信边学习过程能够感知外部工具带来的额外成本；最后引入Taylor一阶重要性评估，在训练过程中剪除低重要性边，并在训练结束后采样得到固定通信图用于验证或测试推理。
 
-实验结果表明，在MiniMax-M3上，本文方法在AIME、GAIA和GPQA三个代表性工具任务中取得最高准确率，在MATH500上保持与FullConnected+Tools相同的准确率并降低AgentPrune+Tools成本，在BigCodeBench上相对AgentPrune+Tools同时提升准确率并降低成本；在Qwen3-14B上，本文方法在七个工具任务上的平均准确率略高于FullConnected+Tools和AgentPrune+Tools，并在多数任务中相对AgentPrune降低推理成本。对于GPQA、MATH500、HLE和MuSiQue等任务，结果显示工具成本控制与证据充分性之间仍需进一步平衡。该工作从图结构层面补充了上一章的语义消息压缩方法，共同构成面向多智能体系统高效通信的两条优化路径。
+实验结果表明，在MiniMax-M3上，本文方法在AIME、GAIA、GPQA和BigCodeBench四个主实验任务上的平均准确率高于三个对比基线，并且相对AgentPrune+Tools降低了平均推理成本；在MATH500补充任务上，本文方法保持与FullConnected+Tools相同的准确率，并降低AgentPrune+Tools成本。Qwen3-14B结果显示，中等规模开源模型上的收益更具任务依赖性，尤其在开放问答和代码生成等工具任务中仍需进一步引入工具观察质量评估。该工作从图结构层面补充了上一章的语义消息压缩方法，共同构成面向多智能体系统高效通信的两条优化路径。

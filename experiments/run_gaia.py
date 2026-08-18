@@ -38,6 +38,7 @@ from experiments.run_aime import (
     _usage_records_since,
     add_taylor_prune_argument,
     configure_taylor_prune,
+    freeze_graph_for_inference,
     train_agentprune,
 )
 
@@ -461,8 +462,8 @@ async def main():
         train_source = args.train_dataset_path or f"{train_dataset.data_dir}/{train_dataset.spec.data_subdir}/{train_dataset.split}.jsonl"
         print(f"GAIA AgentPrune training dataset: {train_source}")
         await train_agentprune(graph, train_dataset, args, kwargs)
-        graph.optimized_spatial = False
-        graph.optimized_temporal = False
+        freeze_stats = freeze_graph_for_inference(graph)
+        print(f"Frozen graph stats: {json.dumps(freeze_stats, ensure_ascii=False)}")
         print("Final spatial logits:", graph.spatial_logits)
         print("Final temporal logits:", graph.temporal_logits)
         print("Final spatial masks:", graph.spatial_masks)
